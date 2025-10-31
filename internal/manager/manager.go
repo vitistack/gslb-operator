@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/service"
+	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/pool"
 )
 
 // Responsible for managing services, on scheduling services for health checks
 type ServicesManager struct {
 	// ServicesChecks maps check intervals to services that should be checked at that interval.
-	ServicesChecks map[time.Duration][]service.Service
+	ServicesChecks map[timesutil.Duration][]service.Service
 	start          sync.Once
 	stop           sync.Once
 	pool           pool.WorkerPool
@@ -22,7 +23,7 @@ type ServicesManager struct {
 
 func NewManager(minRunningWorkers, nonBlockingBufferSize uint) *ServicesManager {
 	return &ServicesManager{
-		ServicesChecks: make(map[time.Duration][]service.Service),
+		ServicesChecks: make(map[timesutil.Duration][]service.Service),
 		pool:           *pool.NewWorkerPool(minRunningWorkers, nonBlockingBufferSize),
 		start:          sync.Once{},
 		stop:           sync.Once{},
@@ -37,7 +38,7 @@ func (sm *ServicesManager) Start() {
 	sm.pool.Start()
 	sm.start.Do(func() {
 		for duration, services := range sm.ServicesChecks {
-			ticker := time.NewTicker(duration)
+			ticker := time.NewTicker(time.Duration(duration))
 			sm.schedulerLoop(ticker, services)
 		}
 	})

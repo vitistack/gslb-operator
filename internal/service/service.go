@@ -1,20 +1,14 @@
 package service
 
-import (
-	"time"
-)
+import "github.com/vitistack/gslb-operator/internal/utils/timesutil"
 
 type Service struct {
-	Addr             string
-	Datacenter       string
-	Interval         time.Duration
+	Addr             string             `json:"address"`
+	Datacenter       string             `json:"datacenter"`
+	Interval         timesutil.Duration `json:"checkInterval"`
+	FailureThreshold int                `json:"failureTreshold"`
 	FailureCount     int
-	FailureThreshold int
 	check            func() error // TCP - half/full, HTTP(S)
-}
-
-func NewService() *Service {
-	return &Service{}
 }
 
 func (s *Service) Execute() error {
@@ -26,4 +20,8 @@ func (s *Service) OnFailure(err error) {
 	if s.FailureCount%s.FailureThreshold == 0 { // threshold reached, service is considered down
 
 	}
+}
+
+func (s *Service) SetCheck(check func() error) {
+	s.check = check
 }
