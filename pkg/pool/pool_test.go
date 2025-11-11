@@ -22,6 +22,8 @@ func (mj *MockJob) OnFailure(err error) {
 	// no need to anything
 }
 
+func (mj *MockJob) OnSuccess() {}
+
 func TestStart(t *testing.T) {
 	wp := NewWorkerPool(2, 10)
 	wp.Start()

@@ -11,6 +11,7 @@ import (
 type Job interface {
 	Execute() error
 	OnFailure(error)
+	OnSuccess()
 }
 
 type WorkerPool struct {
@@ -122,6 +123,8 @@ func (wp *WorkerPool) worker(id uint32) {
 			err := job.Execute()
 			if err != nil {
 				job.OnFailure(err)
+			}else {
+				job.OnSuccess()
 			}
 
 		case <-wp.quit:
