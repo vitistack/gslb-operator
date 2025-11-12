@@ -77,3 +77,12 @@ func (s *Service) SetHealthCheckCallback(callback HealthCallback) {
 func (s *Service) IsHealthy() bool {
 	return s.isHealthy
 }
+
+// copies private values from old, to the service pointed to by s
+func (s *Service) Copy(old *Service) *Service {
+	s.failureCount = old.failureCount
+	s.check = old.check
+	s.healthCallback = old.healthCallback
+	s.isHealthy = old.isHealthy
+	return s
+}
