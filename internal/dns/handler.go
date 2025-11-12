@@ -106,5 +106,5 @@ func (h *Handler) handleRecord(record dns.RR) {
 		}
 	})
 
-	h.manager.RegisterService(svc)
+	h.manager.RegisterService(svc, false)
 }

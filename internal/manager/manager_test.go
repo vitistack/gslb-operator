@@ -47,7 +47,7 @@ func TestRegister(t *testing.T) {
 		FailureThreshold: 3,
 	}
 
-	manager.RegisterService(svc)
+	manager.RegisterService(svc, false)
 
 	manager.mutex.RLock()
 	services, ok := manager.servicesHealthCheck[svc.Interval]
@@ -72,7 +72,7 @@ func TestStartAndStop(t *testing.T) {
 	svc := service.NewServiceFromGSLBConfig(genericGSLBConfig)
 	svc.Interval = timesutil.Duration(5 * time.Second)
 
-	manager.RegisterService(svc)
+	manager.RegisterService(svc, false)
 	manager.Start()
 
 	// Give it a moment to start
@@ -92,4 +92,3 @@ func TestStartAndStop(t *testing.T) {
 		t.Errorf("expected 0 workers after stop, got %d", manager.pool.NumWorkers())
 	}
 }
-

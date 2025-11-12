@@ -35,7 +35,7 @@ func NewManager(minRunningWorkers, nonBlockingBufferSize uint) *ServicesManager 
 // Start begins scheduling health checks for all services according to their configured intervals.
 // It ensures that the scheduling logic is only executed once, even if called multiple times.
 func (sm *ServicesManager) Start() {
-    sm.pool.Start()
+	sm.pool.Start()
 }
 
 func (sm *ServicesManager) Stop() {
@@ -48,9 +48,12 @@ func (sm *ServicesManager) Stop() {
 	})
 }
 
-func (sm *ServicesManager) RegisterService(newService *service.Service) {
-	sm.mutex.Lock()
-	defer sm.mutex.Unlock()
+func (sm *ServicesManager) RegisterService(newService *service.Service, locked bool) {
+	// TODO: Better way to do this? reflect over this
+	if !locked {
+		sm.mutex.Lock()
+		defer sm.mutex.Unlock()
+	}
 
 	exists, oldSvc, _ := sm.serviceExistsUnlocked(newService)
 
@@ -68,9 +71,12 @@ func (sm *ServicesManager) RegisterService(newService *service.Service) {
 }
 
 // removes the service from its healthcheck queue
-func (sm *ServicesManager) RemoveService(service *service.Service) error {
-	sm.mutex.Lock()
-	defer sm.mutex.Unlock()
+func (sm *ServicesManager) RemoveService(service *service.Service, locked bool) error {
+	// TODO: Better way to do this? reflect over this
+	if !locked {
+		sm.mutex.Lock()
+		defer sm.mutex.Unlock()
+	}
 
 	exists, _, removeIdx := sm.serviceExistsUnlocked(service)
 	if !exists {
@@ -93,9 +99,8 @@ func (sm *ServicesManager) RemoveService(service *service.Service) error {
 // assumes sm.mutex is held by the caller
 func (sm *ServicesManager) updateServiceUnlocked(old, new *service.Service) {
 	if old.Interval != new.Interval { // move service from old scheduler to new scheduler
-		// TODO: This breaks, becausee these functions try to hold a lock which is held by the caller of this function.
-		sm.RemoveService(old)
-		sm.RegisterService(new)
+		sm.RemoveService(old, true)
+		sm.RegisterService(new, true)
 		new.Copy(old)
 	}
 
