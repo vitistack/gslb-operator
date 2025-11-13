@@ -9,22 +9,25 @@ import (
 
 	"codeberg.org/miekg/dns"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
+	"go.uber.org/zap"
 )
 
 // Fetches a DNS zone from a dedicated server via AXFR
 type ZoneFetcher struct {
 	Zone     string
 	Server   string
+	log      *zap.Logger
 	stop     chan struct{}
 	wg       sync.WaitGroup
 	interval timesutil.Duration
 }
 
 // auto fetches after a given duration
-func NewZoneFetcherWithAutoPoll(zone, server string, pollIntervall time.Duration) *ZoneFetcher {
+func NewZoneFetcherWithAutoPoll(zone, server string, pollIntervall time.Duration, logger *zap.Logger) *ZoneFetcher {
 	return &ZoneFetcher{
 		Zone:     zone,
 		Server:   server,
+		log:      logger,
 		stop:     make(chan struct{}),
 		wg:       sync.WaitGroup{},
 		interval: timesutil.Duration(pollIntervall),
@@ -42,7 +45,7 @@ func (f *ZoneFetcher) StartAutoPoll() (records chan dns.RR, pollErrors chan erro
 	if f.stop == nil { // needs to call upgrade first, or initialize with auto poll
 		return nil, nil, errors.New("fetcher not configured for auto-poll")
 	}
-
+	
 	f.wg.Go(func() {
 		defer ticker.Stop()
 		defer close(records)
@@ -54,16 +57,17 @@ func (f *ZoneFetcher) StartAutoPoll() (records chan dns.RR, pollErrors chan erro
 				if err != nil {
 					pollErrors <- err
 				}
-
+				
 				for _, record := range dnsEnvelopeRecords {
 					records <- record
 				}
-
+				
 			case <-f.stop:
 				return
 			}
 		}
 	})
+	f.log.Info("successfully started auto-poll of DNS-zone")
 	return
 }
 
@@ -71,6 +75,7 @@ func (f *ZoneFetcher) StopPoll() {
 	if f.stop != nil {
 		close(f.stop)
 		f.wg.Wait()
+		f.log.Info("closing zone-fetcher")
 	}
 }
 
@@ -91,6 +96,7 @@ func (f *ZoneFetcher) AXFRTransfer() ([]dns.RR, error) {
 		}
 		records = append(records, envelope.Answer...)
 	}
+	f.log.Debug("Zone-Transfer Complete")
 
 	return records, nil
 }

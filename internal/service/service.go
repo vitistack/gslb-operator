@@ -6,6 +6,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/checks"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
+	"go.uber.org/zap"
 )
 
 type HealthCallback func(health bool)
@@ -19,9 +20,10 @@ type Service struct {
 	check            func() error // TCP - half/full, HTTP(S)
 	healthCallback   HealthCallback
 	isHealthy        bool
+	log              *zap.SugaredLogger
 }
 
-func NewServiceFromGSLBConfig(config model.GSLBConfig) *Service {
+func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger) *Service {
 	svc := &Service{
 		Addr:             config.Address,
 		Datacenter:       config.Datacenter,
@@ -29,6 +31,7 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig) *Service {
 		FailureThreshold: 3,
 		failureCount:     3,
 		isHealthy:        false,
+		log:              logger,
 	}
 
 	switch config.Type {
@@ -109,6 +112,7 @@ OnFailure : count = 3, healthy = false -> update DNS
 
 // called when healthcheck is successful
 func (s *Service) OnSuccess() {
+	s.log.Debugf("Health-Check on Service: %v:%v Successfull", s.Addr, s.Datacenter)
 	if s.isHealthy { // already healthy
 		s.failureCount = 0
 		return
@@ -126,6 +130,7 @@ func (s *Service) OnSuccess() {
 
 // called when healthcheck fails
 func (s *Service) OnFailure(err error) {
+	s.log.Debugf("Health-Check on Service: %v:%v failed", s.Addr, s.Datacenter)
 	if !s.isHealthy { // already unhealthy
 		s.failureCount = s.FailureThreshold
 		return

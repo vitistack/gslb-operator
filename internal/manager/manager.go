@@ -8,6 +8,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/utils"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/pool"
+	"go.uber.org/zap"
 )
 
 // Responsible for managing services, on scheduling services for health checks
@@ -15,16 +16,18 @@ type ServicesManager struct {
 	// servicesHealthCheck maps check intervals to services that should be checked at that interval.
 	servicesHealthCheck map[timesutil.Duration][]*service.Service
 	schedulers          map[timesutil.Duration]*scheduler // wrapped scheduler for services
+	log                 *zap.SugaredLogger
 	mutex               sync.RWMutex
 	stop                sync.Once
 	pool                pool.WorkerPool
 	wg                  sync.WaitGroup
 }
 
-func NewManager(minRunningWorkers, nonBlockingBufferSize uint) *ServicesManager {
+func NewManager(minRunningWorkers, nonBlockingBufferSize uint, logger *zap.Logger) *ServicesManager {
 	return &ServicesManager{
 		servicesHealthCheck: make(map[timesutil.Duration][]*service.Service),
 		schedulers:          make(map[timesutil.Duration]*scheduler),
+		log:                 logger.Sugar(),
 		mutex:               sync.RWMutex{},
 		pool:                *pool.NewWorkerPool(minRunningWorkers, nonBlockingBufferSize),
 		stop:                sync.Once{},
@@ -45,6 +48,7 @@ func (sm *ServicesManager) Stop() {
 		}
 		sm.wg.Wait()
 		sm.pool.Stop()
+		sm.log.Debug("successfully closed manager")
 	})
 }
 
@@ -68,6 +72,7 @@ func (sm *ServicesManager) RegisterService(newService *service.Service, locked b
 	}
 
 	sm.servicesHealthCheck[newService.Interval] = append(sm.servicesHealthCheck[newService.Interval], newService)
+	sm.log.Debugf("Service: %v:%v registered", newService.Addr, newService.Datacenter)
 }
 
 // removes the service from its healthcheck queue
@@ -91,6 +96,7 @@ func (sm *ServicesManager) RemoveService(service *service.Service, locked bool) 
 	} else {
 		sm.servicesHealthCheck[service.Interval] = newQueue
 	}
+	sm.log.Debugf("Service: %v:%v removed", service.Addr, service.Datacenter)
 
 	return nil
 }
@@ -112,6 +118,7 @@ func (sm *ServicesManager) updateServiceUnlocked(old, new *service.Service) {
 			break
 		}
 	}
+	sm.log.Debugf("Service: %v:%v updated", old.Addr, old.Datacenter)
 }
 
 func (sm *ServicesManager) schedulerLoop(scheduler *scheduler) {
@@ -126,6 +133,7 @@ func (sm *ServicesManager) schedulerLoop(scheduler *scheduler) {
 				sm.mutex.RUnlock()
 
 				for i := range services {
+					sm.log.Debugf("checking service: %v:%v", services[i].Addr, services[i].Datacenter)
 					err := sm.pool.Put(services[i])
 					if errors.Is(err, pool.ErrPutOnClosedPool) {
 						close(scheduler.quit) // make sure to close the schedulers channel
@@ -134,6 +142,7 @@ func (sm *ServicesManager) schedulerLoop(scheduler *scheduler) {
 				}
 
 			case <-scheduler.quit: // stops a specific scheduler
+				sm.log.Debugf("Scheduler on interval: %v closed", scheduler.interval.String())
 				return
 			}
 		}

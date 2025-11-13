@@ -7,7 +7,10 @@ import (
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
+	"go.uber.org/zap"
 )
+
+var logger, _ = zap.NewDevelopment()
 
 var genericGSLBConfig = model.GSLBConfig{
 	Address:    "192.168.1.1:80",
@@ -18,7 +21,7 @@ var genericGSLBConfig = model.GSLBConfig{
 }
 
 func TestNewManager(t *testing.T) {
-	manager := NewManager(5, 5)
+	manager := NewManager(5, 5, logger)
 
 	if manager == nil {
 		t.Fatal("NewManager returned nil")
@@ -38,7 +41,7 @@ func TestNewManager(t *testing.T) {
 }
 
 func TestRegister(t *testing.T) {
-	manager := NewManager(2, 10)
+	manager := NewManager(2, 10, logger)
 
 	svc := &service.Service{
 		Addr:             "192.168.1.1:80",
@@ -67,9 +70,9 @@ func TestRegister(t *testing.T) {
 }
 
 func TestStartAndStop(t *testing.T) {
-	manager := NewManager(2, 10)
+	manager := NewManager(2, 10, logger)
 
-	svc := service.NewServiceFromGSLBConfig(genericGSLBConfig)
+	svc := service.NewServiceFromGSLBConfig(genericGSLBConfig, manager.log)
 	svc.Interval = timesutil.Duration(5 * time.Second)
 
 	manager.RegisterService(svc, false)
