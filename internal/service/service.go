@@ -1,6 +1,8 @@
 package service
 
 import (
+	"fmt"
+	"net"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/checks"
@@ -9,25 +11,40 @@ import (
 	"go.uber.org/zap"
 )
 
-type HealthCallback func(health bool)
+type HealthChangeCallback func(healthy bool)
 
 type Service struct {
-	Addr             string
-	Datacenter       string
-	Interval         timesutil.Duration
-	FailureThreshold int
-	failureCount     int
-	check            func() error // TCP - half/full, HTTP(S)
-	healthCallback   HealthCallback
-	isHealthy        bool
-	log              *zap.SugaredLogger
+	addr                 string
+	Fqdn                 string
+	Port                 string
+	Datacenter           string
+	Interval             timesutil.Duration
+	Priority             int
+	FailureThreshold     int
+	failureCount         int
+	check                func() error // TCP - half/full, HTTP(S)
+	healthChangeCallback HealthChangeCallback
+	isHealthy            bool
+	log                  *zap.SugaredLogger
 }
 
-func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger) *Service {
+func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger) (*Service, error) {
+	ip := net.ParseIP(config.Ip)
+	if ip == nil {
+		return nil, ErrUnableToParseIpAddr
+	}
+
+	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", ip.String(), config.Port))
+	if err != nil {
+		return nil, ErrUnableToResolveAddr
+	}
 	svc := &Service{
-		Addr:             config.Address,
+		addr:             addr.String(),
+		Fqdn:             config.Fqdn,
+		Port:             config.Port,
 		Datacenter:       config.Datacenter,
-		Interval:         calculateInterval(config.Priority, config.Interval),
+		Interval:         CalculateInterval(config.Priority, config.Interval),
+		Priority:         config.Priority,
 		FailureThreshold: 3,
 		failureCount:     3,
 		isHealthy:        false,
@@ -36,24 +53,24 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger
 
 	switch config.Type {
 	case "HTTP":
-		svc.check = checks.HTTPCheck(svc.Addr, checks.DEFAULT_TIMEOUT)
+		svc.check = checks.HTTPCheck(svc.addr, checks.DEFAULT_TIMEOUT)
 
 	case "TCP-FULL":
-		svc.check = checks.TCPFull(svc.Addr, checks.DEFAULT_TIMEOUT)
+		svc.check = checks.TCPFull(svc.addr, checks.DEFAULT_TIMEOUT)
 
 	case "TCP-HALF":
-		svc.check = checks.TCPHalf(svc.Addr, checks.DEFAULT_TIMEOUT)
+		svc.check = checks.TCPHalf(svc.addr, checks.DEFAULT_TIMEOUT)
 
 	default:
-		svc.check = checks.TCPFull(svc.Addr, checks.DEFAULT_TIMEOUT)
+		svc.check = checks.TCPFull(svc.addr, checks.DEFAULT_TIMEOUT)
 	}
 
-	return svc
+	return svc, nil
 }
 
 // 5s, 15s, 45s, checks.MAX_CHECK_INTERVAL.
 // Exponential growth of duration based on priority. Up to checks.MAX_CHECK_INTERVAL
-func calculateInterval(priority int, baseInterval timesutil.Duration) timesutil.Duration {
+func CalculateInterval(priority int, baseInterval timesutil.Duration) timesutil.Duration {
 	scaleFactor := 3.0
 
 	if priority < 1 {
@@ -112,7 +129,7 @@ OnFailure : count = 3, healthy = false -> update DNS
 
 // called when healthcheck is successful
 func (s *Service) OnSuccess() {
-	s.log.Debugf("Health-Check on Service: %v:%v Successfull", s.Addr, s.Datacenter)
+	s.log.Debugf("Health-Check on Service: %v:%v Successfull", s.addr, s.Datacenter)
 	if s.isHealthy { // already healthy
 		s.failureCount = 0
 		return
@@ -124,13 +141,13 @@ func (s *Service) OnSuccess() {
 
 	if s.failureCount == 0 {
 		s.isHealthy = true
-		s.healthCallback(true)
+		s.healthChangeCallback(true)
 	}
 }
 
 // called when healthcheck fails
 func (s *Service) OnFailure(err error) {
-	s.log.Debugf("Health-Check on Service: %v:%v failed", s.Addr, s.Datacenter)
+	s.log.Debugf("Health-Check on Service: %v:%v failed", s.addr, s.Datacenter)
 	if !s.isHealthy { // already unhealthy
 		s.failureCount = s.FailureThreshold
 		return
@@ -142,7 +159,7 @@ func (s *Service) OnFailure(err error) {
 
 	if s.failureCount == s.FailureThreshold { // threshold reached, service is considered down
 		s.isHealthy = false
-		s.healthCallback(false)
+		s.healthChangeCallback(false)
 	}
 }
 
@@ -150,8 +167,8 @@ func (s *Service) SetCheck(check func() error) {
 	s.check = check
 }
 
-func (s *Service) SetHealthCheckCallback(callback HealthCallback) {
-	s.healthCallback = callback
+func (s *Service) SetHealthChangeCallback(callback HealthChangeCallback) {
+	s.healthChangeCallback = callback
 }
 
 func (s *Service) IsHealthy() bool {
@@ -163,6 +180,6 @@ func (s *Service) Copy(old *Service) *Service {
 	s.check = old.check
 	s.isHealthy = old.isHealthy
 	s.failureCount = old.failureCount
-	s.healthCallback = old.healthCallback
+	s.healthChangeCallback = old.healthChangeCallback
 	return s
 }

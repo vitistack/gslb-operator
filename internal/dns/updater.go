@@ -12,9 +12,9 @@ type Updater struct {
 }
 
 func (u *Updater) ServiceDown(svc *service.Service) {
-	log.Printf("Service: %v:%v considered down", svc.Addr, svc.Datacenter)
+	log.Printf("Service: %v:%v considered down", svc.Fqdn, svc.Datacenter)
 }
 
 func (u *Updater) ServiceUp(svc *service.Service) {
-	log.Printf("Service: %v:%v considered up", svc.Addr, svc.Datacenter)
+	log.Printf("Service: %v:%v considered up", svc.Fqdn, svc.Datacenter)
 }

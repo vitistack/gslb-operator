@@ -34,6 +34,13 @@ func NewHandler(fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater *Upd
 }
 
 func (h *Handler) Start() error {
+	h.manager.DNSUpdate = func(service *service.Service, healthy bool) {
+		if healthy {
+			h.onServiceUp(service)
+		}else {
+			h.onServiceDown(service)
+		}
+	}
 	h.manager.Start()
 
 	records, pollErrors, err := h.fetcher.StartAutoPoll()
@@ -53,7 +60,7 @@ func (h *Handler) Stop() {
 	h.wg.Wait()
 	h.fetcher.StopPoll()
 	h.manager.Stop()
-	h.log.Infof("Successfully stoped DNS - Handler")
+	h.log.Infof("Successfully stopped DNS - Handler")
 }
 
 func (h *Handler) onServiceDown(svc *service.Service) {
@@ -100,14 +107,10 @@ func (h *Handler) handleRecord(record dns.RR) {
 		return
 	}
 
-	svc := service.NewServiceFromGSLBConfig(gslbConfig, h.log)
-	svc.SetHealthCheckCallback(func(healthy bool) {
-		if !healthy {
-			h.onServiceDown(svc)
-		} else {
-			h.onServiceUp(svc)
-		}
-	})
-
+	svc, err := service.NewServiceFromGSLBConfig(gslbConfig, h.log)
+	if err != nil {
+		h.log.Errorf("could not create service: %v: %v", gslbConfig.Fqdn, err.Error())
+		return
+	}
 	h.manager.RegisterService(svc, false)
 }

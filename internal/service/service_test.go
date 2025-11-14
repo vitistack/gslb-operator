@@ -18,27 +18,27 @@ type Test struct {
 }
 
 func TestCalculateInterval(t *testing.T) {
-	interval := calculateInterval(1, timesutil.FromDuration(time.Second * 5))
+	interval := CalculateInterval(1, timesutil.FromDuration(time.Second * 5))
 	if interval != timesutil.Duration(checks.MIN_CHECK_INTERVAL) {
 		t.Errorf("expected %v, but got: %v", checks.MIN_CHECK_INTERVAL.String(), interval.String())
 	}
 
-	interval = calculateInterval(0, timesutil.FromDuration(time.Second * 5))
+	interval = CalculateInterval(0, timesutil.FromDuration(time.Second * 5))
 	if interval != timesutil.Duration(checks.MIN_CHECK_INTERVAL) {
 		t.Errorf("expected %v, but got: %v", checks.MIN_CHECK_INTERVAL.String(), interval.String())
 	}
 
-	interval = calculateInterval(2, timesutil.FromDuration(time.Second * 5))
+	interval = CalculateInterval(2, timesutil.FromDuration(time.Second * 5))
 	if interval != timesutil.FromDuration(checks.MIN_CHECK_INTERVAL*3) {
 		t.Errorf("expected %v, but got: %v", (checks.MIN_CHECK_INTERVAL * 3).String(), interval.String())
 	}
 
-	interval = calculateInterval(3, timesutil.FromDuration(time.Second * 5))
+	interval = CalculateInterval(3, timesutil.FromDuration(time.Second * 5))
 	if interval != timesutil.FromDuration(checks.MIN_CHECK_INTERVAL*9) {
 		t.Errorf("expected %v, but got: %v", (checks.MIN_CHECK_INTERVAL * 9).String(), interval.String())
 	}
 
-	interval = calculateInterval(10, timesutil.FromDuration(time.Second * 5))
+	interval = CalculateInterval(10, timesutil.FromDuration(time.Second * 5))
 	if interval != timesutil.FromDuration(checks.MAX_CHECK_INTERVAL) {
 		t.Errorf("expected %v, but got: %v", checks.MAX_CHECK_INTERVAL.String(), interval.String())
 	}
@@ -47,7 +47,7 @@ func TestCalculateInterval(t *testing.T) {
 func TestOnSuccess(t *testing.T) {
 	svc0 := Service{
 		failureCount: 0,
-		healthCallback: func(health bool) {
+		healthChangeCallback: func(health bool) {
 
 		},
 		FailureThreshold: 3,
@@ -55,7 +55,7 @@ func TestOnSuccess(t *testing.T) {
 	}
 	svc1 := Service{
 		failureCount: 1,
-		healthCallback: func(health bool) {
+		healthChangeCallback: func(health bool) {
 
 		},
 		FailureThreshold: 3,
@@ -63,7 +63,7 @@ func TestOnSuccess(t *testing.T) {
 	}
 	svc2 := Service{
 		failureCount: 2,
-		healthCallback: func(health bool) {
+		healthChangeCallback: func(health bool) {
 
 		},
 		FailureThreshold: 3,
@@ -71,7 +71,7 @@ func TestOnSuccess(t *testing.T) {
 	}
 	svc3 := Service{
 		failureCount: 3,
-		healthCallback: func(health bool) {
+		healthChangeCallback: func(health bool) {
 
 		},
 		FailureThreshold: 3,
@@ -79,7 +79,7 @@ func TestOnSuccess(t *testing.T) {
 	}
 	svc4 := Service{
 		failureCount: 0,
-		healthCallback: func(health bool) {
+		healthChangeCallback: func(health bool) {
 
 		},
 		FailureThreshold: 3,
@@ -154,7 +154,7 @@ func TestOnSuccess(t *testing.T) {
 func TestOnFailure(t *testing.T) {
 	svc0 := Service{
 		failureCount: 0,
-		healthCallback: func(health bool) {
+		healthChangeCallback: func(health bool) {
 
 		},
 		FailureThreshold: 3,
@@ -162,7 +162,7 @@ func TestOnFailure(t *testing.T) {
 	}
 	svc1 := Service{
 		failureCount: 1,
-		healthCallback: func(health bool) {
+		healthChangeCallback: func(health bool) {
 
 		},
 		FailureThreshold: 3,
@@ -170,7 +170,7 @@ func TestOnFailure(t *testing.T) {
 	}
 	svc2 := Service{
 		failureCount: 2,
-		healthCallback: func(health bool) {
+		healthChangeCallback: func(health bool) {
 
 		},
 		FailureThreshold: 3,
@@ -178,7 +178,7 @@ func TestOnFailure(t *testing.T) {
 	}
 	svc3 := Service{
 		failureCount: 3,
-		healthCallback: func(health bool) {
+		healthChangeCallback: func(health bool) {
 
 		},
 		FailureThreshold: 3,
@@ -186,7 +186,7 @@ func TestOnFailure(t *testing.T) {
 	}
 	svc4 := Service{
 		failureCount: 0,
-		healthCallback: func(health bool) {
+		healthChangeCallback: func(health bool) {
 
 		},
 		FailureThreshold: 3,

@@ -13,7 +13,9 @@ import (
 var logger, _ = zap.NewDevelopment()
 
 var genericGSLBConfig = model.GSLBConfig{
-	Address:    "192.168.1.1:80",
+	Fqdn:       "test.example.com",
+	Ip:         "192.168.1.1",
+	Port:       "80",
 	Datacenter: "dc1",
 	Interval:   timesutil.Duration(5 * time.Second),
 	Priority:   1,
@@ -43,12 +45,7 @@ func TestNewManager(t *testing.T) {
 func TestRegister(t *testing.T) {
 	manager := NewManager(2, 10, logger)
 
-	svc := &service.Service{
-		Addr:             "192.168.1.1:80",
-		Datacenter:       "dc1",
-		Interval:         timesutil.Duration(5 * time.Second),
-		FailureThreshold: 3,
-	}
+	svc, _ := service.NewServiceFromGSLBConfig(genericGSLBConfig, manager.log)
 
 	manager.RegisterService(svc, false)
 
@@ -72,7 +69,7 @@ func TestRegister(t *testing.T) {
 func TestStartAndStop(t *testing.T) {
 	manager := NewManager(2, 10, logger)
 
-	svc := service.NewServiceFromGSLBConfig(genericGSLBConfig, manager.log)
+	svc, _ := service.NewServiceFromGSLBConfig(genericGSLBConfig, manager.log)
 	svc.Interval = timesutil.Duration(5 * time.Second)
 
 	manager.RegisterService(svc, false)

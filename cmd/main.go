@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"time"
 
@@ -19,33 +18,47 @@ func main() {
 		log.Fatalf("could not create logger")
 	}
 
-	fetcher := dns.NewZoneFetcherWithAutoPoll("gslb.test.dns.nhn.no.", "nsh1.nhn.no:53", dns.DEFAULT_POLL_INTERVAL, logger)
+	//fetcher := dns.NewZoneFetcherWithAutoPoll("gslb.test.dns.nhn.no.", "nsh1.nhn.no:53", dns.DEFAULT_POLL_INTERVAL, logger)
 	mgr := manager.NewManager(10, 10, logger)
-	config := model.GSLBConfig{
-		Address:    "localhost:80",
-		Datacenter: "Abels",
+	mgr.DNSUpdate = func(s *service.Service, b bool) {
+		if b {
+			logger.Sugar().Infof("service %v considered UP", s.Fqdn)
+		} else {
+			logger.Sugar().Infof("service %v considered DOWN", s.Fqdn)
+		}
+	}
+	configActive := model.GSLBConfig{
+		Fqdn:       "localhost",
+		Ip:         "127.0.0.1",
+		Port:       "80",
+		Datacenter: "Abels1",
 		Interval:   timesutil.FromDuration(time.Second * 5),
 		Priority:   1,
 	}
-
-	svc := service.NewServiceFromGSLBConfig(config, logger.Sugar())
-	svc.SetHealthCheckCallback(func(health bool) {
-		if health {
-			logger.Sugar().Infof("Service: %v:%v is considered up", svc.Addr, svc.Datacenter)
-		} else {
-			logger.Sugar().Infof("Service: %v:%v is considered down", svc.Addr, svc.Datacenter)
+	/*
+		configPassive := model.GSLBConfig{
+			Address:    "localhost:90",
+			Datacenter: "Abels2",
+			Interval:   timesutil.FromDuration(time.Second * 5),
+			Priority:   2,
 		}
-	})
-	mgr.RegisterService(svc, false)
-	mgr.Start()
-
-	handler := dns.NewHandler(fetcher, mgr, &dns.Updater{}, logger)
-	err = handler.Start()
+	*/
+	svcA, err := service.NewServiceFromGSLBConfig(configActive, logger.Sugar())
 	if err != nil {
-		msg := fmt.Sprintf("error starting dns handler: %v", err)
-		logger.Error(msg)
+		logger.Fatal(err.Error())
 	}
-
-	time.Sleep(time.Second * 60)
-	handler.Stop()
+	//svcB := service.NewServiceFromGSLBConfig(configPassive, logger.Sugar())
+	mgr.RegisterService(svcA, false)
+	//mgr.RegisterService(svcB, false)
+	mgr.Start()
+	/*
+		handler := dns.NewHandler(fetcher, mgr, &dns.Updater{}, logger)
+		err = handler.Start()
+		if err != nil {
+			msg := fmt.Sprintf("error starting dns handler: %v", err)
+			logger.Error(msg)
+			}
+			handler.Stop()
+	*/
+	time.Sleep(dns.DEFAULT_POLL_INTERVAL)
 }
