@@ -68,11 +68,7 @@ func (sm *ServicesManager) RegisterService(newService *service.Service, locked b
 		sm.updateServiceUnlocked(oldSvc, newService)
 		return
 	} else if _, ok := sm.servicesHealthCheck[newService.Interval]; !ok { // first service on interval
-		scheduler := newScheduler(newService.Interval)
-		sm.schedulers[newService.Interval] = scheduler
-		sm.schedulerLoop(scheduler)
-		sm.servicesHealthCheck[newService.Interval] = make([]*service.Service, 0)
-		sm.log.Debugf("new scheduler on interval: %v", scheduler.interval.String())
+		sm.newScheduler(newService.Interval)
 	}
 
 	if _, ok := sm.serviceGroups[newService.Fqdn]; !ok {
@@ -112,9 +108,7 @@ func (sm *ServicesManager) RemoveService(service *service.Service, locked bool) 
 
 	newQueue := utils.RemoveIndexFromSlice(sm.servicesHealthCheck[service.Interval], removeIdx)
 	if len(newQueue) == 0 {
-		delete(sm.servicesHealthCheck, service.Interval)
-		close(sm.schedulers[service.Interval].quit) // signal scheduler to stop
-		delete(sm.schedulers, service.Interval)
+		sm.cleanupInterval(service.Interval)
 	} else {
 		sm.servicesHealthCheck[service.Interval] = newQueue
 	}
@@ -198,7 +192,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	defer sm.mutex.Unlock()
 
 	activeInterval := event.OldActive.Interval
-	demotedInterval := event.NewActive.Interval // the interval has not been updated yet, there this looks a bit backwards
+	demotedInterval := event.NewActive.Interval // the interval has not been updated yet, therefore this looks a bit backwards
 
 	sm.log.Infof("Promoting service %v:%v (interval: %v -> %v)",
 		event.NewActive.Fqdn, event.NewActive.Datacenter,
@@ -212,6 +206,24 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	sm.moveServiceToInterval(event.OldActive, demotedInterval)
 }
 
+// creates a new scheduler, and starts its loop
+func (sm *ServicesManager) newScheduler(interval timesutil.Duration) {
+	scheduler := newScheduler(interval)
+	sm.schedulers[interval] = scheduler
+	sm.schedulerLoop(scheduler)
+	sm.servicesHealthCheck[interval] = make([]*service.Service, 0)
+	sm.log.Debugf("new scheduler on interval: %v", scheduler.interval.String())
+}
+
+func (sm *ServicesManager) cleanupInterval(interval timesutil.Duration) {
+	delete(sm.servicesHealthCheck, interval)
+	if scheduler, ok := sm.schedulers[interval]; ok {
+		close(scheduler.quit)
+		delete(sm.schedulers, interval)
+	}
+	sm.log.Debugf("deleted scheduler on interval: %v", interval.String())
+}
+
 func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterval timesutil.Duration) {
 	oldInterval := svc.Interval
 
@@ -222,11 +234,7 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 				newQueue := utils.RemoveIndexFromSlice(queue, idx)
 
 				if len(newQueue) == 0 { // cleanup interval if empty
-					delete(sm.servicesHealthCheck, oldInterval)
-					if scheduler, ok := sm.schedulers[oldInterval]; ok {
-						close(scheduler.quit)
-						delete(sm.schedulers, oldInterval)
-					}
+					sm.cleanupInterval(oldInterval)
 				} else {
 					sm.servicesHealthCheck[oldInterval] = newQueue
 				}
@@ -236,11 +244,7 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 	}
 
 	if _, ok := sm.servicesHealthCheck[newInterval]; !ok {
-		scheduler := newScheduler(newInterval)
-		sm.schedulers[newInterval] = scheduler
-		sm.schedulerLoop(scheduler)
-		sm.servicesHealthCheck[newInterval] = make([]*service.Service, 0)
-		sm.log.Debugf("new scheduler on interval: %v", scheduler.interval.String())
+		sm.newScheduler(newInterval)
 	}
 	svc.Interval = newInterval
 	sm.servicesHealthCheck[newInterval] = append(sm.servicesHealthCheck[newInterval], svc)

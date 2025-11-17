@@ -19,7 +19,7 @@ type Service struct {
 	Port                 string
 	Datacenter           string
 	Interval             timesutil.Duration
-	Priority             int
+	priority             int
 	FailureThreshold     int
 	failureCount         int
 	check                func() error // TCP - half/full, HTTP(S)
@@ -44,7 +44,7 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger
 		Port:             config.Port,
 		Datacenter:       config.Datacenter,
 		Interval:         CalculateInterval(config.Priority, config.Interval),
-		Priority:         config.Priority,
+		priority:         config.Priority,
 		FailureThreshold: 3,
 		failureCount:     3,
 		isHealthy:        false,
@@ -173,6 +173,10 @@ func (s *Service) SetHealthChangeCallback(callback HealthChangeCallback) {
 
 func (s *Service) IsHealthy() bool {
 	return s.isHealthy
+}
+
+func (s *Service) GetPriority() int {
+	return s.priority
 }
 
 // copies private values from old, to the service pointed to by s
