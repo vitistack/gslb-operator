@@ -28,7 +28,7 @@ type WorkerPool struct {
 
 func NewWorkerPool(minRunningWorkers, nonBlockingBufferSize uint) *WorkerPool {
 	closed := &atomic.Bool{}
-	closed.Store(false)
+	closed.Store(true)
 
 	return &WorkerPool{
 		numRunningWorkers: 0,
@@ -45,6 +45,7 @@ func NewWorkerPool(minRunningWorkers, nonBlockingBufferSize uint) *WorkerPool {
 
 func (wp *WorkerPool) Start() {
 	wg := sync.WaitGroup{}
+	wp.closed.Store(false)
 	wp.start.Do(func() {
 		for range wp.minRunningWorkers {
 			wg.Go(func() {
