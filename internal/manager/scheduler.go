@@ -24,3 +24,7 @@ func newScheduler(duration timesutil.Duration) *scheduler {
 func (s *scheduler) Stop() {
 	s.ticker.Stop()
 }
+
+func (s *scheduler) Start() {
+	s.ticker.Reset(time.Duration(s.interval))
+}

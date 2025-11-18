@@ -45,12 +45,12 @@ func (sm *ServicesManager) Start() {
 }
 
 func (sm *ServicesManager) Stop() {
+	sm.pool.Stop()
 	sm.stop.Do(func() {
 		for _, scheduler := range sm.schedulers {
 			close(scheduler.quit)
 		}
 		sm.wg.Wait()
-		sm.pool.Stop()
 		sm.log.Debug("successfully closed manager")
 	})
 }
@@ -67,23 +67,20 @@ func (sm *ServicesManager) RegisterService(newService *service.Service, locked b
 	if exists { // update service if already exists
 		sm.updateServiceUnlocked(oldSvc, newService)
 		return
-	} else if _, ok := sm.servicesHealthCheck[newService.Interval]; !ok { // first service on interval
+	}
+	if _, ok := sm.servicesHealthCheck[newService.Interval]; !ok { // first service on interval
 		sm.newScheduler(newService.Interval)
 	}
-
-	if _, ok := sm.serviceGroups[newService.Fqdn]; !ok {
-		sm.serviceGroups[newService.Fqdn] = new(ServiceGroup)
-		newGroup := NewEmptyServiceGroup()
-		newGroup.OnPromotion = func(event *PromotionEvent) {
-			sm.log.Debugf("received promotion event for service: %v, OldActive: %v, NewActive: %v", event.Service, event.OldActive.Datacenter, event.NewActive.Datacenter)
-			sm.handlePromotion(event)
-		}
-		sm.serviceGroups[newService.Fqdn] = newGroup
+	fqdn := newService.Fqdn
+	serviceGroup, ok := sm.serviceGroups[fqdn]
+	if !ok {
+		serviceGroup = sm.newServiceGroup(fqdn)
 		sm.log.Debugf("new service group, for service: %v", newService.Fqdn)
 	}
 
 	sm.servicesHealthCheck[newService.Interval] = append(sm.servicesHealthCheck[newService.Interval], newService)
-	sm.serviceGroups[newService.Fqdn].RegisterService(newService)
+	serviceGroup.RegisterService(newService)
+
 	newService.SetHealthChangeCallback(func(healthy bool) {
 		sm.log.Debugf("received health-change for service: %v:%v", newService.Fqdn, newService.Datacenter)
 		sm.serviceGroups[newService.Fqdn].OnServiceHealthChange(newService, healthy)
@@ -95,7 +92,6 @@ func (sm *ServicesManager) RegisterService(newService *service.Service, locked b
 
 // removes the service from its healthcheck queue
 func (sm *ServicesManager) RemoveService(service *service.Service, locked bool) error {
-	// TODO: Better way to do this? reflect over this
 	if !locked {
 		sm.mutex.Lock()
 		defer sm.mutex.Unlock()
@@ -106,6 +102,11 @@ func (sm *ServicesManager) RemoveService(service *service.Service, locked bool) 
 		return ErrServiceNotFound
 	}
 
+	group := sm.serviceGroups[service.Fqdn]
+	group.RemoveService(service)
+	if len(group.Members) == 0 {
+		delete(sm.serviceGroups, service.Fqdn)
+	}
 	newQueue := utils.RemoveIndexFromSlice(sm.servicesHealthCheck[service.Interval], removeIdx)
 	if len(newQueue) == 0 {
 		sm.cleanupInterval(service.Interval)
@@ -120,10 +121,27 @@ func (sm *ServicesManager) RemoveService(service *service.Service, locked bool) 
 // updates an existing service with new configuration
 // assumes sm.mutex is held by the caller
 func (sm *ServicesManager) updateServiceUnlocked(old, new *service.Service) {
+	if old == new {
+		return
+	}
+
 	if old.Interval != new.Interval { // move service from old scheduler to new scheduler
+		new.Copy(old)
+
 		sm.RemoveService(old, true)
 		sm.RegisterService(new, true)
-		new.Copy(old)
+		return
+	}
+
+	if old.Fqdn != new.Fqdn {
+		group := sm.serviceGroups[old.Fqdn]
+		group.RemoveService(old)
+
+		newGroup, ok := sm.serviceGroups[new.Fqdn]
+		if !ok {
+			newGroup = sm.newServiceGroup(new.Fqdn)
+		}
+		newGroup.RegisterService(new)
 	}
 
 	queue := sm.servicesHealthCheck[new.Interval]
@@ -152,8 +170,7 @@ func (sm *ServicesManager) schedulerLoop(scheduler *scheduler) {
 					sm.log.Debugf("checking service: %v:%v", services[i].Fqdn, services[i].Datacenter)
 					err := sm.pool.Put(services[i])
 					if errors.Is(err, pool.ErrPutOnClosedPool) {
-						close(scheduler.quit) // make sure to close the schedulers channel
-						return
+						sm.log.Errorf("failed to execute health check, pool is closed")
 					}
 				}
 
@@ -206,13 +223,27 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	sm.moveServiceToInterval(event.OldActive, demotedInterval)
 }
 
+func (sm *ServicesManager) newServiceGroup(fqdn string) *ServiceGroup {
+	sm.serviceGroups[fqdn] = new(ServiceGroup)
+	newGroup := NewEmptyServiceGroup()
+	newGroup.OnPromotion = func(event *PromotionEvent) {
+		sm.log.Debugf("received promotion event for service: %v, OldActive: %v, NewActive: %v", event.Service, event.OldActive.Datacenter, event.NewActive.Datacenter)
+		sm.handlePromotion(event)
+	}
+	sm.serviceGroups[fqdn] = newGroup
+
+	return newGroup
+}
+
 // creates a new scheduler, and starts its loop
-func (sm *ServicesManager) newScheduler(interval timesutil.Duration) {
+func (sm *ServicesManager) newScheduler(interval timesutil.Duration) *scheduler {
 	scheduler := newScheduler(interval)
 	sm.schedulers[interval] = scheduler
-	sm.schedulerLoop(scheduler)
 	sm.servicesHealthCheck[interval] = make([]*service.Service, 0)
+	sm.schedulerLoop(scheduler)
 	sm.log.Debugf("new scheduler on interval: %v", scheduler.interval.String())
+
+	return scheduler
 }
 
 func (sm *ServicesManager) cleanupInterval(interval timesutil.Duration) {

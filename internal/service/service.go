@@ -179,7 +179,7 @@ func (s *Service) GetPriority() int {
 	return s.priority
 }
 
-// copies private values from old, to the service pointed to by s
+// copies necessary private values from old, to the service pointed to by s
 func (s *Service) Copy(old *Service) *Service {
 	s.check = old.check
 	s.isHealthy = old.isHealthy

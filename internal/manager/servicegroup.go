@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/vitistack/gslb-operator/internal/service"
+	"github.com/vitistack/gslb-operator/internal/utils"
 )
 
 type ServiceGroupMode int
@@ -23,7 +24,7 @@ type PromotionEvent struct {
 
 type ServiceGroup struct {
 	mode        ServiceGroupMode
-	Services    []*service.Service // sorted by priority
+	Members     []*service.Service // sorted by priority
 	activeIndex int                // currently active service in ActivePassive - mode
 	OnPromotion func(*PromotionEvent)
 }
@@ -31,7 +32,7 @@ type ServiceGroup struct {
 func NewEmptyServiceGroup() *ServiceGroup {
 	return &ServiceGroup{
 		mode:        ActiveActive,
-		Services:    make([]*service.Service, 0),
+		Members:     make([]*service.Service, 0),
 		activeIndex: -1,
 	}
 }
@@ -39,10 +40,10 @@ func NewEmptyServiceGroup() *ServiceGroup {
 // returns the active service in ActivePassive mode. If the active index is not properly set, we return the first healthy service
 func (sg *ServiceGroup) GetActive() (*service.Service, int) {
 	if sg.mode == ActivePassive {
-		if sg.activeIndex > -1 && sg.activeIndex < len(sg.Services) {
-			return sg.Services[sg.activeIndex], sg.activeIndex
+		if sg.activeIndex > -1 && sg.activeIndex < len(sg.Members) {
+			return sg.Members[sg.activeIndex], sg.activeIndex
 		}
-		for idx, svc := range sg.Services { // first healthy service is active when active index is not valid
+		for idx, svc := range sg.Members { // first healthy service is active when active index is not valid
 			if svc.IsHealthy() {
 				sg.activeIndex = idx
 				return svc, idx
@@ -50,7 +51,7 @@ func (sg *ServiceGroup) GetActive() (*service.Service, int) {
 		}
 	}
 
-	for idx, svc := range sg.Services {
+	for idx, svc := range sg.Members {
 		if svc.IsHealthy() {
 			return svc, idx
 		}
@@ -62,7 +63,7 @@ func (sg *ServiceGroup) OnServiceHealthChange(service *service.Service, healthy 
 	if sg.mode == ActiveActive {
 		return // Does not care when it is ActiveActive
 	}
-	active := sg.Services[sg.activeIndex]
+	active := sg.Members[sg.activeIndex]
 	if !healthy && active == service { // active has gone down!
 		sg.OnPromotion(sg.promoteNextHealthy())
 
@@ -83,18 +84,35 @@ func (sg *ServiceGroup) OnServiceHealthChange(service *service.Service, healthy 
 // This does not take in to account if the registered service has the highest priority
 // because a registered service is NEVER healthy at first
 func (sg *ServiceGroup) RegisterService(newService *service.Service) {
-	sg.Services = append(sg.Services, newService)
-	slices.SortFunc(sg.Services, func(a, b *service.Service) int {
+	if sg.memberExists(newService) {
+		return
+	}
+
+	sg.Members = append(sg.Members, newService)
+	slices.SortFunc(sg.Members, func(a, b *service.Service) int {
 		return cmp.Compare(a.GetPriority(), b.GetPriority())
 	})
 	sg.SetGroupMode()
+}
+
+func (sg *ServiceGroup) RemoveService(rmService *service.Service) {
+	for idx, member := range sg.Members {
+		if member == rmService {
+			if idx == sg.activeIndex {
+				sg.OnPromotion(sg.promoteNextHealthy())
+			}
+			sg.Members = utils.RemoveIndexFromSlice(sg.Members, idx)
+			sg.SetGroupMode()
+			return
+		}
+	}
 }
 
 func (sg *ServiceGroup) PromoteService(service *service.Service) error {
 	if !service.IsHealthy() {
 		return ErrCannotPromoteUnHealthyService
 	}
-	for i, svc := range sg.Services {
+	for i, svc := range sg.Members {
 		if svc.Datacenter == service.Datacenter { // Fqdn are equal anyway
 			sg.activeIndex = i
 			return nil
@@ -104,13 +122,13 @@ func (sg *ServiceGroup) PromoteService(service *service.Service) error {
 }
 
 func (sg *ServiceGroup) promoteNextHealthy() *PromotionEvent {
-	oldActive := sg.Services[sg.activeIndex]
+	oldActive := sg.Members[sg.activeIndex]
 
 	// Try to find next healthy service with highest priority (lowest priority number)
 	bestIdx := -1
 	bestPriority := int(^uint(0) >> 1) // max int
 
-	for i, svc := range sg.Services {
+	for i, svc := range sg.Members {
 		if i != sg.activeIndex && svc.IsHealthy() && svc.GetPriority() < bestPriority {
 			bestIdx = i
 			bestPriority = svc.GetPriority()
@@ -121,7 +139,7 @@ func (sg *ServiceGroup) promoteNextHealthy() *PromotionEvent {
 		sg.activeIndex = bestIdx
 		return &PromotionEvent{
 			Service:   oldActive.Fqdn,
-			NewActive: sg.Services[bestIdx],
+			NewActive: sg.Members[bestIdx],
 			OldActive: oldActive,
 		}
 	}
@@ -140,10 +158,10 @@ func (sg *ServiceGroup) isHigherPriorityThanActive(service, active *service.Serv
 	return service.GetPriority() < active.GetPriority()
 }
 
-// Will configure group mode, based on the state of group members (Services).
+// Will configure group mode, based on the state of group members (Members).
 // If the state of the group deviates from the requirements of its mode, the mode will change
 func (sg *ServiceGroup) SetGroupMode() {
-	numServices := len(sg.Services)
+	numServices := len(sg.Members)
 
 	// If no services, default to ActiveActive
 	if numServices <= 1 {
@@ -155,8 +173,8 @@ func (sg *ServiceGroup) SetGroupMode() {
 	// Check if all services have the same priority (ActiveActive requirement)
 	allSamePriority := true
 	if numServices > 0 {
-		firstPriority := sg.Services[0].GetPriority()
-		for _, svc := range sg.Services[1:] {
+		firstPriority := sg.Members[0].GetPriority()
+		for _, svc := range sg.Members[1:] {
 			if svc.GetPriority() != firstPriority {
 				allSamePriority = false
 				break
@@ -193,4 +211,8 @@ func (sg *ServiceGroup) SetGroupMode() {
 		sg.mode = ActiveActive
 		sg.activeIndex = -1
 	}
+}
+
+func (sg *ServiceGroup) memberExists(member *service.Service) bool {
+	return slices.Contains(sg.Members, member)
 }

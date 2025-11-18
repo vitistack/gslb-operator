@@ -22,9 +22,9 @@ func main() {
 	mgr := manager.NewManager(10, 10, logger)
 	mgr.DNSUpdate = func(s *service.Service, b bool) {
 		if b {
-			logger.Sugar().Infof("service %v considered UP", s.Fqdn)
+			logger.Sugar().Infof("service %v:%v considered UP", s.Fqdn, s.Datacenter)
 		} else {
-			logger.Sugar().Infof("service %v considered DOWN", s.Fqdn)
+			logger.Sugar().Infof("service %v:%v considered DOWN", s.Fqdn, s.Datacenter)
 		}
 	}
 	configActive := model.GSLBConfig{
@@ -35,21 +35,26 @@ func main() {
 		Interval:   timesutil.FromDuration(time.Second * 5),
 		Priority:   1,
 	}
-	/*
-		configPassive := model.GSLBConfig{
-			Address:    "localhost:90",
-			Datacenter: "Abels2",
-			Interval:   timesutil.FromDuration(time.Second * 5),
-			Priority:   2,
-		}
-	*/
+
+	configPassive := model.GSLBConfig{
+		Fqdn:       "localhost",
+		Ip:         "127.0.0.1",
+		Port:       "90",
+		Datacenter: "Abels2",
+		Interval:   timesutil.FromDuration(time.Second * 5),
+		Priority:   2,
+	}
+
 	svcA, err := service.NewServiceFromGSLBConfig(configActive, logger.Sugar())
 	if err != nil {
 		logger.Fatal(err.Error())
 	}
-	//svcB := service.NewServiceFromGSLBConfig(configPassive, logger.Sugar())
+	svcB, err := service.NewServiceFromGSLBConfig(configPassive, logger.Sugar())
+	if err != nil {
+		logger.Fatal(err.Error())
+	}
 	mgr.RegisterService(svcA, false)
-	//mgr.RegisterService(svcB, false)
+	mgr.RegisterService(svcB, false)
 	mgr.Start()
 	/*
 		handler := dns.NewHandler(fetcher, mgr, &dns.Updater{}, logger)
