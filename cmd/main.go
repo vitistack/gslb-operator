@@ -11,16 +11,12 @@ import (
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/api/handler"
-	"github.com/vitistack/gslb-operator/internal/model"
-	"github.com/vitistack/gslb-operator/pkg/persistence/store/memory"
-	"go.uber.org/zap"
+	"github.com/vitistack/gslb-operator/internal/config"
+	"github.com/vitistack/gslb-operator/internal/dns"
+	"github.com/vitistack/gslb-operator/internal/manager"
 )
 
 func main() {
-	logger, err := zap.NewDevelopment()
-	if err != nil {
-		log.Fatalf("could not create logger")
-	}
 	/*
 
 		//fetcher := dns.NewZoneFetcherWithAutoPoll("gslb.test.dns.nhn.no.", "nsh1.nhn.no:53", dns.DEFAULT_POLL_INTERVAL, logger)
@@ -71,9 +67,18 @@ func main() {
 				handler.Stop()
 				time.Sleep(dns.DEFAULT_POLL_INTERVAL)
 	*/
+	cfg, err := config.NewConfig()
+	if err != nil {
+		log.Fatalf("error loading config: %s", err.Error())
+	}
+
 	api := http.NewServeMux()
 
-	hc := handler.NewHandler(memory.NewStore[model.Spoof]())
+	hc, log, err := handler.NewHandler(cfg)
+	if err != nil {
+		fmt.Printf("unable to start service: %s", err.Error())
+		os.Exit(1)
+	}
 
 	api.HandleFunc(handler.GET_OVERRIDES, hc.GetOverrides)
 	api.HandleFunc(handler.POST_OVERRIDE, hc.CreateOverride)
@@ -83,17 +88,15 @@ func main() {
 	api.HandleFunc(handler.GET_SPOOFID, hc.GetFQDNSpoof)
 	api.HandleFunc(handler.POST_SPOOF, hc.CreateSpoof)
 
-	// TODO: env - load env variables/port flags
-	port := ":8080"
 	server := http.Server{
-		Addr:    port,
+		Addr:    cfg.API.Port,
 		Handler: api,
 	}
 	serverErr := make(chan error, 1)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
-	logger.Sugar().Infof("starting service on port%s", port)
+	log.Sugar().Infof("starting service on port%s", cfg.API.Port)
 	go func() {
 		err := server.ListenAndServe()
 		if err != nil {
@@ -101,11 +104,33 @@ func main() {
 		}
 	}()
 
+	zoneFetcher := dns.NewZoneFetcherWithAutoPoll(
+		log,
+		dns.WithServer(cfg.GSLB.NameServer),
+		dns.WithZone(cfg.GSLB.Zone),
+	)
+	mgr := manager.NewManager(
+		log,
+		manager.WithMinRunningWorkers(100),
+		manager.WithNonBlockingBufferSize(105),
+	)
+
+	dnsHandler := dns.NewHandler(
+		log,
+		zoneFetcher,
+		mgr,
+		&dns.Updater{},
+	)
+
+	dnsHandler.Start()
+
 	select {
 	case err := <-serverErr:
-		logger.Sugar().Fatalf("server crashed unexpectedly, no longer serving http: %s", err.Error())
+		dnsHandler.Stop()
+		log.Sugar().Fatalf("server crashed unexpectedly, no longer serving http: %s", err.Error())
 	case <-quit:
-		logger.Info("gracefully shutting down...")
+		dnsHandler.Stop()
+		log.Info("gracefully shutting down...")
 	}
 
 	ctx := context.Background()
