@@ -22,22 +22,48 @@ type ZoneFetcher struct {
 	interval timesutil.Duration
 }
 
+type fetcherOption func(fetcher *ZoneFetcher)
+
 // auto fetches after a given duration
-func NewZoneFetcherWithAutoPoll(zone, server string, pollIntervall time.Duration, logger *zap.Logger) *ZoneFetcher {
-	return &ZoneFetcher{
-		Zone:     zone,
-		Server:   server,
-		log:      logger,
+func NewZoneFetcherWithAutoPoll(logger *zap.Logger, opts ...fetcherOption) *ZoneFetcher {
+	fetcher := &ZoneFetcher{ // default values for testing
+		Zone:     "gslb.test.dns.nhn.no.",
+		Server:   "nsh1.nhn.no:53",
+		interval: timesutil.Duration(DEFAULT_POLL_INTERVAL),
 		stop:     make(chan struct{}),
 		wg:       sync.WaitGroup{},
-		interval: timesutil.Duration(pollIntervall),
+		log:      logger,
+	}
+
+	for _, opt := range opts { // set custom options
+		opt(fetcher)
+	}
+
+	return fetcher
+}
+
+func WithZone(zone string) fetcherOption {
+	return func(fetcher *ZoneFetcher) {
+		fetcher.Zone = zone
+	}
+}
+
+func WithServer(server string) fetcherOption {
+	return func(fetcher *ZoneFetcher) {
+		fetcher.Server = server
+	}
+}
+
+func WithFetchInterval(interval time.Duration) fetcherOption {
+	return func(fetcher *ZoneFetcher) {
+		fetcher.interval = timesutil.Duration(interval)
 	}
 }
 
 // starts the auto-fetch, and listen for errors and records on the returned channels
 // WARNING: Returns immediatly if stop is not initialized. Call Upgrade(...) to start autopoll
-func (f *ZoneFetcher) StartAutoPoll() (records chan dns.RR, pollErrors chan error, err error) {
-	records = make(chan dns.RR)
+func (f *ZoneFetcher) StartAutoPoll() (zoneBatch chan []dns.RR, pollErrors chan error, err error) {
+	zoneBatch = make(chan []dns.RR)
 	pollErrors = make(chan error)
 
 	ticker := time.NewTicker(time.Duration(f.interval))
@@ -45,29 +71,36 @@ func (f *ZoneFetcher) StartAutoPoll() (records chan dns.RR, pollErrors chan erro
 	if f.stop == nil { // needs to call upgrade first, or initialize with auto poll
 		return nil, nil, errors.New("fetcher not configured for auto-poll")
 	}
-	
+
+	f.wg.Go(func() { // initial transfer
+		records, err := f.AXFRTransfer()
+		if err != nil {
+			pollErrors <- err
+		} else {
+			zoneBatch <- records
+		}
+	})
+
 	f.wg.Go(func() {
 		defer ticker.Stop()
-		defer close(records)
+		defer close(zoneBatch)
 		defer close(pollErrors)
 		for {
 			select {
 			case <-ticker.C:
-				dnsEnvelopeRecords, err := f.AXFRTransfer()
+				records, err := f.AXFRTransfer()
 				if err != nil {
 					pollErrors <- err
+				} else {
+					zoneBatch <- records // sends complete zone transfer
 				}
-				
-				for _, record := range dnsEnvelopeRecords {
-					records <- record
-				}
-				
+
 			case <-f.stop:
 				return
 			}
 		}
 	})
-	f.log.Info("successfully started auto-poll of DNS-zone")
+	f.log.Debug("successfully started auto-poll of DNS-zone")
 	return
 }
 

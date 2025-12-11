@@ -10,5 +10,5 @@ type GSLBConfig struct {
 	Datacenter string             `json:"datacenter"`
 	Interval   timesutil.Duration `json:"interval"`
 	Priority   int                `json:"priority"`
-	Type       string             `json:"type"`
+	Type       string             `json:"check_type"`
 }

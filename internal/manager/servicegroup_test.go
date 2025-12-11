@@ -49,8 +49,8 @@ func TestMain(m *testing.M) {
 	}
 	sgLogger = logger
 
-	active, _ = service.NewServiceFromGSLBConfig(activeConfig, sgLogger.Sugar())
-	passive, _ = service.NewServiceFromGSLBConfig(passiveConfig, sgLogger.Sugar())
+	active, _ = service.NewServiceFromGSLBConfig(activeConfig, sgLogger.Sugar(), true)
+	passive, _ = service.NewServiceFromGSLBConfig(passiveConfig, sgLogger.Sugar(), true)
 	m.Run()
 }
 

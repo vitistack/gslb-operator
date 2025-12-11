@@ -2,14 +2,24 @@ package manager
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 
+	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/pool"
 	"go.uber.org/zap"
 )
+
+type managerConfig struct {
+	MinRunningWorkers     uint
+	NonBlockingBufferSize uint
+	DryRun                bool
+}
+
+type serviceManagerOption func(cfg *managerConfig)
 
 // Responsible for managing services, on scheduling services for health checks
 type ServicesManager struct {
@@ -23,18 +33,47 @@ type ServicesManager struct {
 	pool                pool.WorkerPool
 	wg                  sync.WaitGroup
 	DNSUpdate           func(*service.Service, bool)
+	dryrun              bool
 }
 
-func NewManager(minRunningWorkers, nonBlockingBufferSize uint, logger *zap.Logger) *ServicesManager {
+func NewManager(logger *zap.Logger, opts ...serviceManagerOption) *ServicesManager {
+	cfg := managerConfig{
+		MinRunningWorkers:     100,
+		NonBlockingBufferSize: 110,
+		DryRun:                false,
+	}
+
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	return &ServicesManager{
 		servicesHealthCheck: make(map[timesutil.Duration][]*service.Service),
 		schedulers:          make(map[timesutil.Duration]*scheduler),
 		serviceGroups:       make(map[string]*ServiceGroup),
 		log:                 logger.Sugar(),
 		mutex:               sync.RWMutex{},
-		pool:                *pool.NewWorkerPool(minRunningWorkers, nonBlockingBufferSize),
+		pool:                *pool.NewWorkerPool(cfg.MinRunningWorkers, cfg.NonBlockingBufferSize),
 		stop:                sync.Once{},
 		wg:                  sync.WaitGroup{},
+	}
+}
+
+func WithMinRunningWorkers(workers uint) serviceManagerOption {
+	return func(cfg *managerConfig) {
+		cfg.MinRunningWorkers = workers
+	}
+}
+
+func WithNonBlockingBufferSize(bufferSize uint) serviceManagerOption {
+	return func(cfg *managerConfig) {
+		cfg.NonBlockingBufferSize = bufferSize
+	}
+}
+
+func WithDryRun(enabled bool) serviceManagerOption {
+	return func(cfg *managerConfig) {
+		cfg.DryRun = enabled
 	}
 }
 
@@ -55,22 +94,28 @@ func (sm *ServicesManager) Stop() {
 	})
 }
 
-func (sm *ServicesManager) RegisterService(newService *service.Service, locked bool) {
+func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig, locked bool) (*service.Service, error) {
 	// TODO: Better way to do this? reflect over this
 	if !locked {
 		sm.mutex.Lock()
 		defer sm.mutex.Unlock()
+	}
+	newService, err := service.NewServiceFromGSLBConfig(serviceCfg, sm.log, sm.dryrun)
+	if err != nil {
+		return nil, fmt.Errorf("unable to register service: %s", err.Error())
 	}
 
 	exists, oldSvc, _ := sm.serviceExistsUnlocked(newService)
 
 	if exists { // update service if already exists
 		sm.updateServiceUnlocked(oldSvc, newService)
-		return
+		return newService, nil
 	}
+
 	if _, ok := sm.servicesHealthCheck[newService.Interval]; !ok { // first service on interval
 		sm.newScheduler(newService.Interval)
 	}
+
 	fqdn := newService.Fqdn
 	serviceGroup, ok := sm.serviceGroups[fqdn]
 	if !ok {
@@ -88,6 +133,7 @@ func (sm *ServicesManager) RegisterService(newService *service.Service, locked b
 	})
 
 	sm.log.Debugf("Service: %v:%v registered", newService.Fqdn, newService.Datacenter)
+	return newService, nil
 }
 
 // removes the service from its healthcheck queue
@@ -98,12 +144,12 @@ func (sm *ServicesManager) RemoveService(service *service.Service, locked bool) 
 	}
 
 	exists, _, removeIdx := sm.serviceExistsUnlocked(service)
-	if !exists {
+	if !exists { // cannpt remove something that does not exists
 		return ErrServiceNotFound
 	}
 
 	group := sm.serviceGroups[service.Fqdn]
-	group.RemoveService(service)
+	group.RemoveService(service) // registered in group
 	if len(group.Members) == 0 {
 		delete(sm.serviceGroups, service.Fqdn)
 	}
@@ -126,11 +172,7 @@ func (sm *ServicesManager) updateServiceUnlocked(old, new *service.Service) {
 	}
 
 	if old.Interval != new.Interval { // move service from old scheduler to new scheduler
-		new.Copy(old)
-
-		sm.RemoveService(old, true)
-		sm.RegisterService(new, true)
-		return
+		sm.moveServiceToInterval(old, new.Interval)
 	}
 
 	if old.Fqdn != new.Fqdn {

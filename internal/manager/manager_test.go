@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/model"
-	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"go.uber.org/zap"
 )
@@ -23,7 +22,11 @@ var genericGSLBConfig = model.GSLBConfig{
 }
 
 func TestNewManager(t *testing.T) {
-	manager := NewManager(5, 5, logger)
+	manager := NewManager(
+		logger,
+		WithMinRunningWorkers(5),
+		WithNonBlockingBufferSize(6),
+	)
 
 	if manager == nil {
 		t.Fatal("NewManager returned nil")
@@ -43,11 +46,13 @@ func TestNewManager(t *testing.T) {
 }
 
 func TestRegister(t *testing.T) {
-	manager := NewManager(2, 10, logger)
+	manager := NewManager(
+		logger,
+		WithMinRunningWorkers(2),
+		WithNonBlockingBufferSize(10),
+	)
 
-	svc, _ := service.NewServiceFromGSLBConfig(genericGSLBConfig, manager.log)
-
-	manager.RegisterService(svc, false)
+	svc, _ := manager.RegisterService(genericGSLBConfig, false)
 
 	manager.mutex.RLock()
 	services, ok := manager.servicesHealthCheck[svc.Interval]
@@ -67,12 +72,13 @@ func TestRegister(t *testing.T) {
 }
 
 func TestStartAndStop(t *testing.T) {
-	manager := NewManager(2, 10, logger)
+	manager := NewManager(
+		logger,
+		WithMinRunningWorkers(2),
+		WithNonBlockingBufferSize(10),
+	)
 
-	svc, _ := service.NewServiceFromGSLBConfig(genericGSLBConfig, manager.log)
-	svc.Interval = timesutil.Duration(5 * time.Second)
-
-	manager.RegisterService(svc, false)
+	manager.RegisterService(genericGSLBConfig, false)
 	manager.Start()
 
 	// Give it a moment to start

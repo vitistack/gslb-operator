@@ -113,6 +113,7 @@ func main() {
 		log,
 		manager.WithMinRunningWorkers(100),
 		manager.WithNonBlockingBufferSize(105),
+		manager.WithDryRun(true),
 	)
 
 	dnsHandler := dns.NewHandler(

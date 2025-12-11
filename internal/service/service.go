@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 	"time"
 
@@ -28,7 +29,7 @@ type Service struct {
 	log                  *zap.SugaredLogger
 }
 
-func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger) (*Service, error) {
+func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger, dryRun bool) (*Service, error) {
 	ip := net.ParseIP(config.Ip)
 	if ip == nil {
 		return nil, ErrUnableToParseIpAddr
@@ -51,14 +52,17 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger
 		log:              logger,
 	}
 
-	switch config.Type {
-	case "HTTP":
+	switch  {
+	case dryRun:
+		svc.check = checks.DryRun()
+
+	case config.Type == "HTTP":
 		svc.check = checks.HTTPCheck(svc.addr, checks.DEFAULT_TIMEOUT)
 
-	case "TCP-FULL":
+	case config.Type == "TCP-FULL":
 		svc.check = checks.TCPFull(svc.addr, checks.DEFAULT_TIMEOUT)
 
-	case "TCP-HALF":
+	case config.Type == "TCP-HALF":
 		svc.check = checks.TCPHalf(svc.addr, checks.DEFAULT_TIMEOUT)
 
 	default:
@@ -76,6 +80,7 @@ func CalculateInterval(priority int, baseInterval timesutil.Duration) timesutil.
 	if priority < 1 {
 		priority = 1
 	}
+
 	// Calculate: baseInterval * (scaleFactor ^ (priority - 1))
 	multiplier := 1.0
 	for i := 1; i < priority; i++ {
@@ -86,6 +91,9 @@ func CalculateInterval(priority int, baseInterval timesutil.Duration) timesutil.
 	if interval > checks.MAX_CHECK_INTERVAL {
 		return timesutil.Duration(checks.MAX_CHECK_INTERVAL)
 	}
+
+	jitter := float64(interval) * 0.1 * (2*rand.Float64() - 1)
+	interval = time.Duration(float64(interval) + jitter) // Adds a ±10% jitter to interval
 
 	return timesutil.Duration(interval)
 }
@@ -147,7 +155,7 @@ func (s *Service) OnSuccess() {
 
 // called when healthcheck fails
 func (s *Service) OnFailure(err error) {
-	s.log.Debugf("Health-Check on Service: %v:%v failed", s.addr, s.Datacenter)
+	s.log.Debugf("Health-Check on Service: %v:%v Failed", s.addr, s.Datacenter)
 	if !s.isHealthy { // already unhealthy
 		s.failureCount = s.FailureThreshold
 		return
@@ -181,7 +189,6 @@ func (s *Service) GetPriority() int {
 
 // copies necessary private values from old, to the service pointed to by s
 func (s *Service) Copy(old *Service) *Service {
-	s.check = old.check
 	s.isHealthy = old.isHealthy
 	s.failureCount = old.failureCount
 	s.healthChangeCallback = old.healthChangeCallback
