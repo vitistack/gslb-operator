@@ -119,11 +119,10 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 	if !ok {
 		return nil
 	}
-	h.log.Debug(txt.Hdr.Name)
 
 	rawData := txt.Txt[0]
 	data := strings.ReplaceAll(rawData, "\\", "")
-	svcConfig := model.GSLBConfig{}
+	svcConfig := model.GSLBConfig{Fqdn: txt.Hdr.Name}
 	err := json.Unmarshal([]byte(data), &svcConfig)
 	if err != nil {
 		h.log.Errorf("failed to parse gslb config: %v", err.Error())
