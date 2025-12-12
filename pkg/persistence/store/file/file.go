@@ -9,22 +9,18 @@ import (
 
 type Store[T any] struct {
 	lock sync.RWMutex
-	file *os.File
+	fileName string
 }
 
 func NewStore[T any](fileName string) (*Store[T], error) {
 	store, err := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
-	if os.IsNotExist(err) {
-		store, err = os.Create(fileName)
-	}
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage file: %s", err.Error())
 	}
+	store.Close()
 
 	return &Store[T]{
 		lock: sync.RWMutex{},
-		file: store,
 	}, nil
 }
 
@@ -32,7 +28,7 @@ func (s *Store[T]) Save(key string, data T) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	saved, err := os.ReadFile(s.file.Name())
+	saved, err := os.ReadFile(s.fileName)
 	if err != nil {
 		return fmt.Errorf("could not read file: %s", err.Error())
 	}
@@ -51,7 +47,7 @@ func (s *Store[T]) Save(key string, data T) error {
 		return fmt.Errorf("unable to marshall data: %s", err.Error())
 	}
 
-	err = os.WriteFile(s.file.Name(), saved, 0644)
+	err = os.WriteFile(s.fileName, saved, 0644)
 	//_, err = s.file.Write(saved)
 	if err != nil {
 		return fmt.Errorf("could not write to file: %s", err.Error())
@@ -65,7 +61,7 @@ func (s *Store[T]) Load(key string) (T, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	saved, err := os.ReadFile(s.file.Name())
+	saved, err := os.ReadFile(s.fileName)
 	if err != nil {
 		return zero, fmt.Errorf("unable to read from storage: %s", err.Error())
 	}
@@ -80,9 +76,11 @@ func (s *Store[T]) Load(key string) (T, error) {
 }
 
 func (s *Store[T]) LoadAll() ([]T, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	all := []T{}
 
-	saved, err := os.ReadFile(s.file.Name())
+	saved, err := os.ReadFile(s.fileName)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read from storage: %s", err.Error())
 	}
@@ -104,7 +102,7 @@ func (s *Store[T]) Delete(key string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	saved, err := os.ReadFile(s.file.Name())
+	saved, err := os.ReadFile(s.fileName)
 	if err != nil {
 		return fmt.Errorf("could not read file: %s", err.Error())
 	}
@@ -123,7 +121,7 @@ func (s *Store[T]) Delete(key string) error {
 		return fmt.Errorf("unable to marshall data: %s", err.Error())
 	}
 
-	err = os.WriteFile(s.file.Name(), saved, 0644)
+	err = os.WriteFile(s.fileName, saved, 0644)
 	//_, err = s.file.Write(saved)
 	if err != nil {
 		return fmt.Errorf("could not write to file: %s", err.Error())
