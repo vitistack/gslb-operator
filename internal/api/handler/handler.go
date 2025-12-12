@@ -7,12 +7,12 @@ import (
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
-	"github.com/vitistack/gslb-operator/pkg/persistence/store/memory"
+	"github.com/vitistack/gslb-operator/pkg/persistence/store/file"
 	"go.uber.org/zap"
 )
 
 type Handler struct {
-	spoofRepo persistence.Repository[model.Spoof]
+	SpoofRepo persistence.Repository[model.Spoof]
 	log       *zap.Logger
 }
 
@@ -35,7 +35,13 @@ func NewHandler(cfg *config.Config) (*Handler, *zap.Logger, error) {
 			return nil, nil, fmt.Errorf("cannot create handler: %s", err.Error())
 		}
 		h.log = hlog
-		h.spoofRepo = spoof.NewRepository(memory.NewStore[model.Spoof]())
+
+		store, err := file.NewStore[model.Spoof]("store.json")
+		if err != nil {
+			return nil, hlog, fmt.Errorf("could not create filestore: %s", err.Error())
+		}
+
+		h.SpoofRepo = spoof.NewRepository(store)
 
 	case "production", "prod", "PROD":
 

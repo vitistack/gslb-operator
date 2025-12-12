@@ -1,7 +1,6 @@
 package response
 
 import (
-	"fmt"
 	"net/http"
 )
 
@@ -25,16 +24,8 @@ var (
 			Title: string(ErrInvalidInput),
 		},
 		ErrInternalError: {
-			Code: http.StatusInternalServerError,
+			Code:  http.StatusInternalServerError,
 			Title: string(ErrInternalError),
 		},
 	}
 )
-
-func Err(w http.ResponseWriter, err Error, msg string) error {
-	respErr, ok := Errors[err]
-	if !ok {
-		return fmt.Errorf("REST error response not found: %s", err)
-	}
-	return JSON(w, respErr.Code, respErr)
-}

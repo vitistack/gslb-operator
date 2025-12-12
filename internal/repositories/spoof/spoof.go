@@ -46,11 +46,10 @@ func (r *Repository) Read(id string) (model.Spoof, error) {
 	if err != nil {
 		return model.Spoof{}, fmt.Errorf("unable to read resource with id: %s", err.Error())
 	}
-	
+
 	return spoof, nil
 }
 
 func (r *Repository) ReadAll() ([]model.Spoof, error) {
-	
-	return nil, nil
+	return r.storage.LoadAll()
 }

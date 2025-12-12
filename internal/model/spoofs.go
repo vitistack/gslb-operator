@@ -6,8 +6,8 @@ import (
 )
 
 type Spoof struct {
-	FQDN string
-	IPs  []string
+	FQDN string   `json:"fqdn"`
+	IPs  []string `json:"adresses"`
 }
 
 type SpoofResponse struct {

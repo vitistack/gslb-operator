@@ -14,6 +14,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
 	"github.com/vitistack/gslb-operator/internal/manager"
+	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
 )
 
 func main() {
@@ -104,6 +105,7 @@ func main() {
 		}
 	}()
 
+	// creating dns - handler objects
 	zoneFetcher := dns.NewZoneFetcherWithAutoPoll(
 		log,
 		dns.WithServer(cfg.GSLB.NameServer),
@@ -116,11 +118,17 @@ func main() {
 		manager.WithDryRun(true),
 	)
 
+	spoofRepo := hc.SpoofRepo.(*spoof.Repository)
+	if err != nil {
+		log.Sugar().Fatalf("could not create spoof: %s", err.Error())
+	}
 	dnsHandler := dns.NewHandler(
 		log,
 		zoneFetcher,
 		mgr,
-		&dns.Updater{},
+		dns.NewUpdater(
+			dns.UpdaterWithSpoofRepo(spoofRepo),
+		),
 	)
 
 	dnsHandler.Start()
@@ -130,8 +138,8 @@ func main() {
 		dnsHandler.Stop()
 		log.Sugar().Fatalf("server crashed unexpectedly, no longer serving http: %s", err.Error())
 	case <-quit:
-		dnsHandler.Stop()
 		log.Info("gracefully shutting down...")
+		dnsHandler.Stop()
 	}
 
 	ctx := context.Background()

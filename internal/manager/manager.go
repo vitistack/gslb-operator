@@ -47,6 +47,10 @@ func NewManager(logger *zap.Logger, opts ...serviceManagerOption) *ServicesManag
 		opt(&cfg)
 	}
 
+	if cfg.DryRun {
+		logger.Warn("dry-run enabled")
+	}
+
 	return &ServicesManager{
 		servicesHealthCheck: make(map[timesutil.Duration][]*service.Service),
 		schedulers:          make(map[timesutil.Duration]*scheduler),
@@ -56,6 +60,7 @@ func NewManager(logger *zap.Logger, opts ...serviceManagerOption) *ServicesManag
 		pool:                *pool.NewWorkerPool(cfg.MinRunningWorkers, cfg.NonBlockingBufferSize),
 		stop:                sync.Once{},
 		wg:                  sync.WaitGroup{},
+		dryrun:              cfg.DryRun,
 	}
 }
 
@@ -269,6 +274,10 @@ func (sm *ServicesManager) newServiceGroup(fqdn string) *ServiceGroup {
 	sm.serviceGroups[fqdn] = new(ServiceGroup)
 	newGroup := NewEmptyServiceGroup()
 	newGroup.OnPromotion = func(event *PromotionEvent) {
+		if event == nil {
+			sm.log.Warnf("received empty promotion event: no service to take over")
+			return
+		}
 		sm.log.Debugf("received promotion event for service: %v, OldActive: %v, NewActive: %v", event.Service, event.OldActive.Datacenter, event.NewActive.Datacenter)
 		sm.handlePromotion(event)
 	}

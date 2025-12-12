@@ -9,16 +9,18 @@ import (
 )
 
 func (h *Handler) GetSpoofs(w http.ResponseWriter, r *http.Request) {
-	spoofs, err := h.spoofRepo.ReadAll()
+	spoofs, err := h.SpoofRepo.ReadAll()
 	if err != nil {
 		response.Err(w, response.ErrInternalError, "unable to fetch spoofs from storage")
+		h.log.Sugar().Errorf("Unable to fetch all spoofs: %s", err.Error())
 		return
 	}
 
 	params := request.NewPaginationParams()
-	err = request.MarshallParams(r.URL.Query(), &params)
+	err = request.MarshallParams(r.URL.Query(), params)
 	if err != nil {
 		response.Err(w, response.ErrInvalidInput, "could not parse request parameters")
+		h.log.Sugar().Errorf("unable to parse request parameters: %s", err.Error())
 		return
 	}
 
@@ -33,10 +35,11 @@ func (h *Handler) GetFQDNSpoof(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	spoof, err := h.spoofRepo.Read(fqdn)
+	spoof, err := h.SpoofRepo.Read(fqdn)
 	if err != nil {
 		msg := "unable to fetch spoof with id: " + fqdn + " from storage"
 		response.Err(w, response.ErrInternalError, msg)
+		h.log.Sugar().Errorf("%s: %s", msg, err.Error())
 		return
 	}
 

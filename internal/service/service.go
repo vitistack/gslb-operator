@@ -155,7 +155,7 @@ func (s *Service) OnSuccess() {
 
 // called when healthcheck fails
 func (s *Service) OnFailure(err error) {
-	s.log.Debugf("Health-Check on Service: %v:%v Failed", s.addr, s.Datacenter)
+	s.log.Debugf("Health-Check on Service: %v:%v Failed: %s", s.addr, s.Datacenter, err.Error())
 	if !s.isHealthy { // already unhealthy
 		s.failureCount = s.FailureThreshold
 		return
