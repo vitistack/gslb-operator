@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/nacl/secretbox"
@@ -23,23 +25,27 @@ const (
 	NONCE_LEN = 24
 )
 
+type clientOption func(c *Client) error
+
 type Client struct {
 	conn    net.Conn //raw connection to configured Host and Port
 	key     [KEY_LEN]byte
-	Host    string
-	Port    string
+	host    net.IP
+	port    string
 	timeout time.Duration
+	retries int
 	cNonce  [NONCE_LEN]byte //ClientNonce
 	sNonce  [NONCE_LEN]byte //ServerNonce
 	wNonce  [NONCE_LEN]byte //WriteNonce
 	rNonce  [NONCE_LEN]byte //ReadNonce
 }
 
-func NewClient(key, host, port string, timeout time.Duration) (*Client, error) {
-	client := &Client{
-		Host:    host,
-		Port:    port,
-		timeout: timeout,
+func NewClient(key string, options ...clientOption) (*Client, error) {
+	client := &Client{ // init default values
+		host:    net.ParseIP("127.0.0.1"),
+		port:    "5199",
+		timeout: time.Second * 30,
+		retries: 1,
 	}
 
 	xKey, err := base64.StdEncoding.DecodeString(key)
@@ -52,44 +58,130 @@ func NewClient(key, host, port string, timeout time.Duration) (*Client, error) {
 	}
 	copy(client.key[0:KEY_LEN], xKey)
 
+	if err := client.generateClientNonce(); err != nil {
+		return nil, err
+	}
+
+	for _, opt := range options {
+		err := opt(client)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return client, nil
+}
+
+func WithHost(host string) clientOption {
+	return func(c *Client) error {
+		ip := net.ParseIP(host)
+		if ip == nil {
+			return ErrCouldNotParseAddr
+		}
+		c.host = ip
+		return nil
+	}
+}
+
+func WithPort(port string) clientOption {
+	return func(c *Client) error {
+		port = strings.TrimSpace(port)
+		if port == "" {
+			return ErrCouldNotParseAddr
+		}
+		// Ensure all characters are digits
+		for _, r := range port {
+			if r < '0' || r > '9' {
+				return ErrCouldNotParseAddr
+			}
+		}
+
+		p, err := strconv.Atoi(port)
+		if err != nil || p < 1 || p > 65535 {
+			return ErrCouldNotParseAddr
+		}
+
+		c.port = port
+		return nil
+	}
+}
+
+func WithTimeout(timeout time.Duration) clientOption {
+	return func(c *Client) error {
+		c.timeout = timeout
+		return nil
+	}
+}
+
+func WithNumRetriesOnCommandFailure(retries int) clientOption {
+	return func(c *Client) error {
+		if retries < 0 {
+			return ErrNegativeRetryCount
+		}
+		c.retries = retries
+		return nil
+	}
+}
+
+func (c *Client) generateClientNonce() error {
 	bufferNonce := make([]byte, NONCE_LEN)
-	_, err = rand.Read(bufferNonce) // initialize client nonce
+	_, err := rand.Read(bufferNonce) // initialize client nonce
 	if err != nil {
 		errors.Join(ErrFatalRandRead, err)
 	}
-	copy(client.cNonce[0:NONCE_LEN], bufferNonce)
+	copy(c.cNonce[0:NONCE_LEN], bufferNonce)
 
-	return client, client.connect()
+	return nil
 }
 
-func (c *Client) connect() error {
-	ip := net.ParseIP(c.Host)
-	if ip == nil {
-		return ErrCouldNotParseAddr
+// will reconnect to the server, by closing existing connection,  generating a new client nonce,
+// and then trying to reconnect
+func (c *Client) reconnect() error {
+	if c.conn != nil {
+		_ = c.conn.Close()
+		c.conn = nil
 	}
-	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", ip.String(), c.Port))
+
+	if err := c.generateClientNonce(); err != nil {
+		return err
+	}
+
+	return c.connect()
+}
+
+// ensures that we have a connection to the server
+func (c *Client) ensureConnected() error {
+	if c.conn == nil {
+		return c.connect()
+	}
+	return nil
+}
+
+// connect does the handshake to initialize the reading and writing nonce
+func (c *Client) connect() error {
+	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", c.host.String(), c.port))
 	if err != nil {
 		return errors.Join(ErrCouldNotParseAddr, err)
 	}
 
-	c.conn, err = net.Dial("tcp", addr.String())
+	c.conn, err = net.DialTimeout("tcp", addr.String(), c.timeout)
 	if err != nil {
 		return errors.Join(ErrWhileCreatingConnection, err)
 	}
 
-	_, err = c.conn.Write(c.cNonce[:])
+	_, err = c.conn.Write(c.cNonce[:]) // present client nonce
 	if err != nil {
 		return errors.Join(ErrCouldNotWrite, err)
 	}
 
 	buffer := make([]byte, NONCE_LEN)
-	readSize, err := c.conn.Read(buffer)
+	readSize, err := c.conn.Read(buffer) // read server nonce
 	if err != nil {
 		return errors.Join(ErrCouldNotRead, err)
 	}
 
 	if readSize != NONCE_LEN {
-		// hehe data is not complete, how to handle this shit?
+		// TODO: hehe data is not complete, how to handle?
 		return errors.Join(ErrReceivedInvalidNonce, fmt.Errorf("expected length: %v, but got: %v", NONCE_LEN, readSize))
 	}
 	copy(c.sNonce[:], buffer)
@@ -109,20 +201,23 @@ func (c *Client) connect() error {
 	copy(c.wNonce[:halfNonce], c.sNonce[:halfNonce])
 	copy(c.wNonce[halfNonce:], c.cNonce[halfNonce:])
 
-	resp, err := c.Command("")
+	resp, err := c.command("") // test handshake
 	if err != nil {
 		return errors.Join(ErrCouldNotSendCommand, err)
 	}
 
 	if resp != "" {
-		return fmt.Errorf("%w: got: %v", ErrHandShakeNotValid, resp)
+		return fmt.Errorf("%w: got response: %v", ErrHandShakeNotValid, resp)
 	}
 
 	return nil
 }
 
 func (c *Client) Disconnect() error {
-	return c.conn.Close()
+	if c.conn != nil {
+		return c.conn.Close()
+	}
+	return nil
 }
 
 func (c *Client) encrypt(cmd string) []byte {
@@ -149,18 +244,42 @@ func (c *Client) decrypt(data []byte) (string, bool) {
 	return string(decrypted), true
 }
 
-func (c *Client) Command(cmd string) (response string, err error) {
+func (c *Client) command(cmd string) (string, error) {
+	if err := c.ensureConnected(); err != nil {
+		return "", err
+	}
+
+	response, err := c.sendCommand(cmd)
+
+	attempts := 0
+	for err != nil && attempts < c.retries {
+		attempts++
+		if recErr := c.reconnect(); recErr != nil {
+			err = errors.Join(err, recErr)
+			continue
+		}
+		response, err = c.sendCommand(cmd)
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	return response, nil
+}
+
+func (c *Client) sendCommand(cmd string) (response string, err error) {
 	encoded := c.encrypt(cmd)
 
 	bufferLen := make([]byte, 4)
 	binary.BigEndian.PutUint32(bufferLen, uint32(len(encoded)))
 
-	_, err = c.conn.Write(bufferLen)
+	_, err = c.conn.Write(bufferLen) // write the length of the command
 	if err != nil {
 		return "", errors.Join(ErrCouldNotWrite, err)
 	}
 
-	_, err = c.conn.Write(encoded)
+	_, err = c.conn.Write(encoded) // write command
 	if err != nil {
 		return "", errors.Join(ErrCouldNotWrite, err)
 	}
@@ -189,4 +308,24 @@ func incrementNonce(nonce *[NONCE_LEN]byte) {
 	value := binary.BigEndian.Uint32(nonce[:4])
 	value++
 	binary.BigEndian.PutUint32(nonce[:4], value)
+}
+
+func (c *Client) AddDomainSpoof(domain string, ips []string) error {
+	// addAction(QNameRule('example.com'), SpoofAction({"192.168.1.0","192.168.1.2"}), {name="example.com"})
+	cmd := fmt.Sprintf("addAction(QNameRule('%v'), SpoofAction({", domain)
+
+	for _, ip := range ips {
+		cmd += fmt.Sprintf("'%v', ", ip)
+	}
+	idx := strings.LastIndex(cmd, ",")
+	if idx == -1 {
+		return fmt.Errorf("no trailing comma found in command: %s", cmd)
+	}
+	cmd = fmt.Sprintf("%v {name='%v'})", cmd[:idx]+"}),", domain)
+
+	return Must(c.command(cmd))
+}
+
+func (c *Client) RmDomainSpoof(domain string) error {
+	return Must(c.command(fmt.Sprintf("rmRule(%s)", domain)))
 }

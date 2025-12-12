@@ -1,6 +1,9 @@
 package dnsdist
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 var (
 	ErrCouldNotParseAddr         = errors.New("could not parse address")
@@ -13,5 +16,18 @@ var (
 	ErrInvalidNoncePair          = errors.New("invalid nonce client/server pair")
 	ErrCouldNotSendCommand       = errors.New("could not send command")
 	ErrHandShakeNotValid         = errors.New("handshake failed")
-	ErrCouldNotDecrypt            = errors.New("could not decrypt")
+	ErrCouldNotDecrypt           = errors.New("could not decrypt")
+	ErrCommandFailed             = errors.New("dnsdist command failed")
+	ErrNegativeRetryCount        = errors.New("cannot have negative retry count")
 )
+
+func Must(resp string, err error) error {
+	if err != nil {
+		return err
+	}
+	lower := strings.ToLower(resp)
+	if strings.Contains(lower, "error") {
+		return ErrCommandFailed
+	}
+	return nil
+}
