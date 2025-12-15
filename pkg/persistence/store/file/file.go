@@ -21,6 +21,7 @@ func NewStore[T any](fileName string) (*Store[T], error) {
 
 	return &Store[T]{
 		lock: sync.RWMutex{},
+		fileName: fileName,
 	}, nil
 }
 
