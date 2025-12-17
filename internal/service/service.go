@@ -52,7 +52,7 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger
 		log:              logger,
 	}
 
-	switch  {
+	switch {
 	case dryRun:
 		svc.check = checks.DryRun()
 
@@ -185,6 +185,14 @@ func (s *Service) IsHealthy() bool {
 
 func (s *Service) GetPriority() int {
 	return s.priority
+}
+
+func (s *Service) GetIP() (string, error) {
+	ip, _, err := net.SplitHostPort(s.addr)
+	if err != nil {
+		return "", fmt.Errorf("could not read ip from network address: %s: %s", s.addr, err.Error())
+	}
+	return ip, nil
 }
 
 // copies necessary private values from old, to the service pointed to by s

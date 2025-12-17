@@ -39,6 +39,32 @@ func MarshallParams[T any](urlValues url.Values, dest *T) error {
 	return nil
 }
 
+func UnMarshallParams[T any](params *T) url.Values {
+	values := make(url.Values)
+	val := reflect.ValueOf(params).Elem()
+	valType := val.Type()
+
+	if valType.Kind() != reflect.Struct {
+		return values
+	}
+
+	numFields := val.NumField()
+	for i := range numFields {
+		field := val.Field(i)
+		fieldType := valType.Field(i)
+
+		tag, ok := fieldType.Tag.Lookup("param")
+		if ok {
+			val, ok := field.Interface().(string)
+			if ok {
+				values.Add(tag, val)
+			}
+		}
+	}
+
+	return values
+}
+
 // populates the field with the value of value
 func setField(field reflect.Value, value string) error {
 	if !field.CanSet() {

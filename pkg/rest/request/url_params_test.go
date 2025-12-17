@@ -2,6 +2,7 @@ package request
 
 import (
 	"net/url"
+	"reflect"
 	"testing"
 )
 
@@ -55,6 +56,33 @@ func TestMarshallParams(t *testing.T) {
 				t.Fatal("MarshallParams() succeeded unexpectedly")
 			}
 			t.Log(tt.dest)
+		})
+	}
+}
+
+func TestUnMarshallParams(t *testing.T) {
+	t1 := make(url.Values)
+	t1.Add("arg2", "hello-world")
+	tests := []struct {
+		name string // description of this test case
+		// Named input parameters for target function.
+		params Params
+		want   url.Values
+	}{
+		{
+			name: "one-set-parameter",
+			want: t1,
+			params: Params{
+				Arg2: "hello-world",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := UnMarshallParams(&tt.params)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("UnMarshallParams() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }

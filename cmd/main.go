@@ -87,6 +87,7 @@ func main() {
 
 	api.HandleFunc(handler.GET_SPOOFS, hc.GetSpoofs)
 	api.HandleFunc(handler.GET_SPOOFID, hc.GetFQDNSpoof)
+	api.HandleFunc(handler.GET_SPOOFS_HASH, hc.GetSpoofsHash)
 	api.HandleFunc(handler.POST_SPOOF, hc.CreateSpoof)
 
 	server := http.Server{
@@ -119,16 +120,18 @@ func main() {
 	)
 
 	spoofRepo := hc.SpoofRepo.(*spoof.Repository)
+	updater, err := dns.NewUpdater(
+		log,
+		dns.UpdaterWithSpoofRepo(spoofRepo),
+	)
 	if err != nil {
-		log.Sugar().Fatalf("could not create spoof: %s", err.Error())
+		log.Sugar().Fatalf("unable to create updater: %s", err.Error())
 	}
 	dnsHandler := dns.NewHandler(
 		log,
 		zoneFetcher,
 		mgr,
-		dns.NewUpdater(
-			dns.UpdaterWithSpoofRepo(spoofRepo),
-		),
+		updater,
 	)
 
 	dnsHandler.Start()

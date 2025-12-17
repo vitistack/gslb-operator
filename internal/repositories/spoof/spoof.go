@@ -17,8 +17,8 @@ func NewRepository(storage persistence.Store[model.Spoof]) *Repository {
 	}
 }
 
-func (r *Repository) Create(new *model.Spoof) error {
-	err := r.storage.Save(new.FQDN, *new)
+func (r *Repository) Create(key string, new *model.Spoof) error {
+	err := r.storage.Save(key, *new)
 	if err != nil {
 		return fmt.Errorf("unable to store entry: %s", err.Error())
 	}

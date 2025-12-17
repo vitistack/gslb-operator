@@ -14,7 +14,7 @@ type Client struct {
 	http.Client
 }
 
-func NewClient(timeout time.Duration, opts ...clientOption) (HTTPClient, error) {
+func NewClient(timeout time.Duration, opts ...clientOption) (*HTTPClient, error) {
 	baseClient := &Client{
 		http.Client{
 			Timeout: timeout,
@@ -38,7 +38,7 @@ func NewClient(timeout time.Duration, opts ...clientOption) (HTTPClient, error) 
 		}
 	}
 
-	return ctx.wrapped, nil
+	return &ctx.wrapped, nil
 }
 
 
