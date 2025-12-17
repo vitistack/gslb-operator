@@ -1,32 +1,81 @@
 package config
 
 import (
+	"log"
+
 	"github.com/vitistack/gslb-operator/pkg/loaders"
 )
 
+var cfg *Config
+
+func init() {
+	var err error
+	cfg, err = newConfig()
+	if err != nil {
+		log.Fatalf("unable to load config: %s", err)
+	}
+}
+
 type Config struct {
-	Server Server
-	API    API
-	GSLB   GSLB
+	server Server
+	api    API
+	gslb   GSLB
+}
+
+func GetInstance() *Config {
+	return cfg
+}
+
+func (c *Config) Server() *Server {
+	return &c.server
+}
+
+func (c *Config) API() *API {
+	return &c.api
+}
+
+func (c *Config) GSLB() *GSLB {
+	return &c.gslb
 }
 
 // Server configuration
 type Server struct {
-	Environment string `env:"SRV_ENV" flag:"env"`
+	env        string `env:"SRV_ENV" flag:"env"`
+	datacenter string `env:"SRV_DATACENTER" flag:"datacenter"`
+}
+
+func (s *Server) Env() string {
+	return s.env
+}
+
+func (s *Server) Datacenter() string {
+	return s.datacenter
 }
 
 // API configuration
 type API struct {
-	Port string `env:"API_PORT" flag:"port"`
+	port string `env:"API_PORT" flag:"port"`
+}
+
+func (a *API) Port() string {
+	return a.port
 }
 
 // GSLB configuration
 type GSLB struct {
-	Zone       string `env:"GSLB_ZONE" flag:"gslb-zone"`
-	NameServer string `env:"GSLB_NAMESERVER" flag:"gslb-nameserver"`
+	zone       string `env:"GSLB_ZONE" flag:"gslb-zone"`
+	nameServer string `env:"GSLB_NAMESERVER" flag:"gslb-nameserver"`
 }
 
-func NewConfig() (*Config, error) {
+func (g *GSLB) Zone() string {
+	return g.zone
+}
+
+func (g *GSLB) NameServer() string {
+	return g.nameServer
+}
+
+func newConfig() (*Config, error) {
 	loader := loaders.NewChainLoader(
 		loaders.NewEnvloader(),
 		loaders.NewFileLoader(".env"),
@@ -35,10 +84,10 @@ func NewConfig() (*Config, error) {
 
 	// creating default config variables where possible
 	serverCfg := Server{
-		Environment: "prod",
+		env: "prod",
 	}
 	apiCfg := API{
-		Port: ":8080",
+		port: ":8080",
 	}
 	gslbCfg := GSLB{}
 
@@ -56,8 +105,8 @@ func NewConfig() (*Config, error) {
 	}
 
 	return &Config{
-		Server: serverCfg,
-		API:    apiCfg,
-		GSLB:   gslbCfg,
+		server: serverCfg,
+		api:    apiCfg,
+		gslb:   gslbCfg,
 	}, nil
 }

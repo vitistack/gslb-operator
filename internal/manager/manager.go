@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils"
@@ -12,14 +13,6 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/pool"
 	"go.uber.org/zap"
 )
-
-type managerConfig struct {
-	MinRunningWorkers     uint
-	NonBlockingBufferSize uint
-	DryRun                bool
-}
-
-type serviceManagerOption func(cfg *managerConfig)
 
 // Responsible for managing services, on scheduling services for health checks
 type ServicesManager struct {
@@ -61,24 +54,6 @@ func NewManager(logger *zap.Logger, opts ...serviceManagerOption) *ServicesManag
 		stop:                sync.Once{},
 		wg:                  sync.WaitGroup{},
 		dryrun:              cfg.DryRun,
-	}
-}
-
-func WithMinRunningWorkers(workers uint) serviceManagerOption {
-	return func(cfg *managerConfig) {
-		cfg.MinRunningWorkers = workers
-	}
-}
-
-func WithNonBlockingBufferSize(bufferSize uint) serviceManagerOption {
-	return func(cfg *managerConfig) {
-		cfg.NonBlockingBufferSize = bufferSize
-	}
-}
-
-func WithDryRun(enabled bool) serviceManagerOption {
-	return func(cfg *managerConfig) {
-		cfg.DryRun = enabled
 	}
 }
 
@@ -132,9 +107,8 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig, locked b
 	serviceGroup.RegisterService(newService)
 
 	newService.SetHealthChangeCallback(func(healthy bool) {
-		sm.log.Debugf("received health-change for service: %v:%v", newService.Fqdn, newService.Datacenter)
+		sm.log.Debugf("received health-change for service: %v:%v (healthy: %v)", newService.Fqdn, newService.Datacenter, healthy)
 		sm.serviceGroups[newService.Fqdn].OnServiceHealthChange(newService, healthy)
-		sm.DNSUpdate(newService, healthy)
 	})
 
 	sm.log.Debugf("Service: %v:%v registered", newService.Fqdn, newService.Datacenter)
@@ -255,31 +229,63 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
-	activeInterval := event.OldActive.Interval
-	demotedInterval := event.NewActive.Interval // the interval has not been updated yet, therefore this looks a bit backwards
+	msg := "received promotion event for service: " + event.Service + ": "
+	if event.OldActive != nil { // can be nil if there was no existing active service in the service-group
+		msg += "OldActive: " + event.OldActive.Datacenter + ", "
+	}
+	if event.NewActive != nil {
+		msg += "NewActive: " + event.NewActive.Datacenter
+	}
+	sm.log.Debug(msg)
 
-	sm.log.Infof("Promoting service %v:%v (interval: %v -> %v)",
-		event.NewActive.Fqdn, event.NewActive.Datacenter,
-		event.NewActive.Interval, activeInterval)
+	var activeInterval timesutil.Duration
+	var demotedInterval timesutil.Duration
 
-	sm.log.Infof("Demoting service %v:%v (interval: %v -> %v)",
-		event.OldActive.Fqdn, event.OldActive.Datacenter,
-		event.OldActive.Interval, demotedInterval)
+	if event.OldActive != nil {
+		activeInterval = event.OldActive.Interval
+	} else {
+		activeInterval = event.NewActive.Interval
+	}
 
-	sm.moveServiceToInterval(event.NewActive, activeInterval)
-	sm.moveServiceToInterval(event.OldActive, demotedInterval)
+	if event.NewActive != nil {
+		demotedInterval = event.NewActive.Interval // the interval has not been updated yet, therefore this looks a bit backwards
+	} else {
+		demotedInterval = event.OldActive.Interval
+	}
+
+	if event.NewActive != nil {
+		sm.log.Infof("Promoting service %v:%v (interval: %v -> %v)",
+			event.NewActive.Fqdn, event.NewActive.Datacenter,
+			event.NewActive.Interval, activeInterval)
+		sm.moveServiceToInterval(event.NewActive, activeInterval)
+	}
+
+	if event.OldActive != nil {
+		sm.log.Infof("Demoting service %v:%v (interval: %v -> %v)",
+			event.OldActive.Fqdn, event.OldActive.Datacenter,
+			event.OldActive.Interval, demotedInterval)
+		sm.moveServiceToInterval(event.OldActive, demotedInterval)
+	}
 }
 
 func (sm *ServicesManager) newServiceGroup(fqdn string) *ServiceGroup {
 	sm.serviceGroups[fqdn] = new(ServiceGroup)
-	newGroup := NewEmptyServiceGroup()
+	datacenter := config.GetInstance().Server().Datacenter()
+	newGroup := NewEmptyServiceGroup(datacenter)
+	
 	newGroup.OnPromotion = func(event *PromotionEvent) {
-		if event == nil {
-			sm.log.Warnf("received empty promotion event: no service to take over")
+		if event.NewActive == nil {
+			sm.log.Warnf("no active service available for service: %s: ", event.Service)
 			return
 		}
-		sm.log.Debugf("received promotion event for service: %v, OldActive: %v, NewActive: %v", event.Service, event.OldActive.Datacenter, event.NewActive.Datacenter)
 		sm.handlePromotion(event)
+
+		if event.OldActive != nil {
+			sm.DNSUpdate(event.OldActive, false) // TODO: how can this be handled better?
+		}
+		if event.NewActive != nil {
+			sm.DNSUpdate(event.NewActive, true)
+		}
 	}
 	sm.serviceGroups[fqdn] = newGroup
 

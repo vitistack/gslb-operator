@@ -16,7 +16,7 @@ type Handler struct {
 	log       *zap.Logger
 }
 
-func NewHandler(cfg *config.Config) (*Handler, *zap.Logger, error) {
+func NewHandler() (*Handler, *zap.Logger, error) {
 	h := &Handler{}
 	/*
 		logCfg := zap.NewProductionEncoderConfig()
@@ -24,7 +24,7 @@ func NewHandler(cfg *config.Config) (*Handler, *zap.Logger, error) {
 		logCfg.TimeKey = "ts"
 		logCfg.EncodeTime = zapcore.TimeEncoderOfLayout("2006.01.02 15:04:05")
 	*/
-	switch cfg.Server.Environment {
+	switch config.GetInstance().Server().Env() {
 	case "development", "dev", "DEV":
 		hlog, err := zap.NewDevelopment(
 			//zap.EncoderConfig(logCfg),

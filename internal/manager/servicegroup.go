@@ -2,6 +2,7 @@ package manager
 
 import (
 	"cmp"
+	"log"
 	"slices"
 
 	"github.com/vitistack/gslb-operator/internal/service"
@@ -16,6 +17,9 @@ const (
 	ActiveActivePassive // TODO: decide if this is necessary
 )
 
+// PrmotionEvent is an event that occurs when there is a new Active service in a service group.
+// It is triggered using the OnPromotion function of the ServiceGroup belonging to that service.
+// The new active service is always healthy, unless no services are healthy in the service group. Then the active service is the one with highest priority.
 type PromotionEvent struct {
 	Service   string
 	NewActive *service.Service
@@ -23,17 +27,19 @@ type PromotionEvent struct {
 }
 
 type ServiceGroup struct {
-	mode        ServiceGroupMode
-	Members     []*service.Service // sorted by priority
-	activeIndex int                // currently active service in ActivePassive - mode
-	OnPromotion func(*PromotionEvent)
+	mode                  ServiceGroupMode
+	Members               []*service.Service // sorted by priority
+	activeIndex           int                // currently active service in ActivePassive - mode
+	OnPromotion           func(*PromotionEvent)
+	prioritizedDatacenter string
 }
 
-func NewEmptyServiceGroup() *ServiceGroup {
+func NewEmptyServiceGroup(datacenter string) *ServiceGroup {
 	return &ServiceGroup{
-		mode:        ActiveActive,
-		Members:     make([]*service.Service, 0),
-		activeIndex: -1,
+		mode:                  ActiveActive,
+		Members:               make([]*service.Service, 0),
+		activeIndex:           -1,
+		prioritizedDatacenter: datacenter,
 	}
 }
 
@@ -42,13 +48,15 @@ func (sg *ServiceGroup) GetActive() (*service.Service, int) {
 	if sg.mode == ActivePassive {
 		if sg.activeIndex > -1 && sg.activeIndex < len(sg.Members) {
 			return sg.Members[sg.activeIndex], sg.activeIndex
+		} else {
+			return sg.Members[0], 0
 		}
-		for idx, svc := range sg.Members { // first healthy service is active when active index is not valid
-			if svc.IsHealthy() {
-				sg.activeIndex = idx
-				return svc, idx
-			}
-		}
+		//for idx, svc := range sg.Members { // first healthy service is active when active index is not valid
+		//	if svc.IsHealthy() {
+		//		sg.activeIndex = idx
+		//		return svc, idx
+		//	}
+		//}
 	}
 
 	for idx, svc := range sg.Members {
@@ -60,24 +68,40 @@ func (sg *ServiceGroup) GetActive() (*service.Service, int) {
 }
 
 func (sg *ServiceGroup) OnServiceHealthChange(service *service.Service, healthy bool) {
-	if sg.mode == ActiveActive {
+	if sg.mode == ActiveActive { // TODO: prioritise different locations/availability-zones
+
+		if healthy && service.Datacenter == sg.prioritizedDatacenter {
+			sg.OnPromotion(&PromotionEvent{
+				Service:   service.Fqdn,
+				OldActive: nil,
+				NewActive: service,
+			})
+		}
+
+
 		return // Does not care when it is ActiveActive
 	}
 	active := sg.Members[sg.activeIndex]
 	if !healthy && active == service { // active has gone down!
 		sg.OnPromotion(sg.promoteNextHealthy())
 
-	} else if healthy && sg.isHigherPriorityThanActive(service, active) {
+	} else if healthy && sg.triggerPromotion(service, active) {
 		err := sg.PromoteService(service)
 		if err != nil {
 			// TODO: this should in theory never hit, but how to handle?
+			log.Printf("un-handled error while promoting service: %s", err.Error())
+		}
+		event := &PromotionEvent{
+			Service:   service.Fqdn,
+			OldActive: nil,
+			NewActive: service,
 		}
 
-		sg.OnPromotion(&PromotionEvent{
-			Service:   service.Fqdn,
-			OldActive: active,
-			NewActive: service,
-		})
+		if service != active {
+			event.OldActive = active
+		}
+
+		sg.OnPromotion(event)
 	}
 }
 
@@ -143,11 +167,16 @@ func (sg *ServiceGroup) promoteNextHealthy() *PromotionEvent {
 			OldActive: oldActive,
 		}
 	}
-	return nil
+
+	return &PromotionEvent{
+		Service:   oldActive.Fqdn,
+		NewActive: nil,
+		OldActive: oldActive,
+	}
 }
 
-func (sg *ServiceGroup) isHigherPriorityThanActive(service, active *service.Service) bool {
-	if !active.IsHealthy() { // if active not healthy then everyother healthy service is prioritized
+func (sg *ServiceGroup) triggerPromotion(service, active *service.Service) bool {
+	if !active.IsHealthy() { // if active not healthy then all other healthy services are prioritized
 		return true
 	}
 
@@ -155,7 +184,7 @@ func (sg *ServiceGroup) isHigherPriorityThanActive(service, active *service.Serv
 		return false
 	}
 
-	return service.GetPriority() < active.GetPriority()
+	return service.GetPriority() <= active.GetPriority()
 }
 
 // Will configure group mode, based on the state of group members (Members).
@@ -172,13 +201,11 @@ func (sg *ServiceGroup) SetGroupMode() {
 
 	// Check if all services have the same priority (ActiveActive requirement)
 	allSamePriority := true
-	if numServices > 0 {
-		firstPriority := sg.Members[0].GetPriority()
-		for _, svc := range sg.Members[1:] {
-			if svc.GetPriority() != firstPriority {
-				allSamePriority = false
-				break
-			}
+	firstPriority := sg.Members[0].GetPriority()
+	for _, svc := range sg.Members[1:] {
+		if svc.GetPriority() != firstPriority {
+			allSamePriority = false
+			break
 		}
 	}
 

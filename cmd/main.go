@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,7 +13,9 @@ import (
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
 	"github.com/vitistack/gslb-operator/internal/manager"
+	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
+	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 )
 
 func main() {
@@ -68,14 +69,11 @@ func main() {
 				handler.Stop()
 				time.Sleep(dns.DEFAULT_POLL_INTERVAL)
 	*/
-	cfg, err := config.NewConfig()
-	if err != nil {
-		log.Fatalf("error loading config: %s", err.Error())
-	}
+	cfg := config.GetInstance()
 
 	api := http.NewServeMux()
 
-	hc, log, err := handler.NewHandler(cfg)
+	hc, log, err := handler.NewHandler()
 	if err != nil {
 		fmt.Printf("unable to start service: %s", err.Error())
 		os.Exit(1)
@@ -91,14 +89,14 @@ func main() {
 	api.HandleFunc(handler.POST_SPOOF, hc.CreateSpoof)
 
 	server := http.Server{
-		Addr:    cfg.API.Port,
+		Addr:    cfg.API().Port(),
 		Handler: api,
 	}
 	serverErr := make(chan error, 1)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
-	log.Sugar().Infof("starting service on port%s", cfg.API.Port)
+	log.Sugar().Infof("starting service on port%s", cfg.API().Port())
 	go func() {
 		err := server.ListenAndServe()
 		if err != nil {
@@ -109,15 +107,35 @@ func main() {
 	// creating dns - handler objects
 	zoneFetcher := dns.NewZoneFetcherWithAutoPoll(
 		log,
-		dns.WithServer(cfg.GSLB.NameServer),
-		dns.WithZone(cfg.GSLB.Zone),
+		dns.WithServer(cfg.GSLB().NameServer()),
+		dns.WithZone(cfg.GSLB().Zone()),
 	)
 	mgr := manager.NewManager(
 		log,
 		manager.WithMinRunningWorkers(100),
 		manager.WithNonBlockingBufferSize(105),
-		manager.WithDryRun(true),
+		//manager.WithDryRun(true),
 	)
+
+	mgr.RegisterService(model.GSLBConfig{
+		Fqdn:       "test.nhn.no",
+		Ip:         "127.0.0.1",
+		Port:       "80",
+		Datacenter: "Abels1",
+		Interval:   timesutil.FromDuration(time.Second * 5),
+		Priority:   1,
+		Type:       "TCP-FULL",
+	}, false)
+
+	mgr.RegisterService(model.GSLBConfig{
+		Fqdn:       "test.nhn.no",
+		Ip:         "127.0.0.1",
+		Port:       "90",
+		Datacenter: "Abels2",
+		Interval:   timesutil.FromDuration(time.Second * 5),
+		Priority:   2,
+		Type:       "TCP-FULL",
+	}, false)
 
 	spoofRepo := hc.SpoofRepo.(*spoof.Repository)
 	updater, err := dns.NewUpdater(
