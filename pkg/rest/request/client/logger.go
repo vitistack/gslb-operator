@@ -26,10 +26,10 @@ func (li *LogInterception) RoundTrip(req *http.Request) (*http.Response, error) 
 		trip = http.DefaultTransport
 	}
 
-	li.logger.Debug("making %s request to: %s", req.Method, req.URL.String())
+	li.logger.Debugf("making %s request to: %s", req.Method, req.URL.String())
 	resp, err := trip.RoundTrip(req)
 	if err != nil {
-		li.logger.Errorf("%s request to: %s failed: %s: status-code: %d", req.Method, req.URL.String(), err.Error(), resp.StatusCode)
+		li.logger.Errorf("%s request to: %s failed: %s", req.Method, req.URL.String(), err.Error())
 	} else {
 		li.logger.Debugf("%s request to: %s succeeded with status-code: %d", req.Method, req.URL.String(), resp.StatusCode)
 	}
