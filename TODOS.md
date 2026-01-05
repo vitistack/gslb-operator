@@ -20,3 +20,16 @@
 - relation to what datacenter the operator runs in, to only create dns spoofs on the service running in that datacenter in active/active
 
 - rewrite servicemanager update existing service
+
+- define constants for different check-types!
+
+- FIX: Service group promotions:
+    active and passive are up.
+    active goes down -> passive failover
+    passive goes down -> no one to failover
+    active comes up -> both are checked at same interval afterwards.
+        FIX: service group needs to change the way active is handled, and promotion events also propably needs to be changed aswell
+    this happends no matter what after a failover
+
+    ActiveActive:
+        - no promotion events are triggered

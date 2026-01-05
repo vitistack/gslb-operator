@@ -57,6 +57,7 @@ func (h *Handler) Start() error {
 	return nil
 }
 
+// TODO: Panics when called while in a zone transfer from zone-fetcher!!!
 func (h *Handler) Stop() {
 	close(h.stopFetcher)
 	h.wg.Wait()

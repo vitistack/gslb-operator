@@ -72,19 +72,18 @@ func (f *ZoneFetcher) StartAutoPoll() (zoneBatch chan []dns.RR, pollErrors chan 
 		return nil, nil, errors.New("fetcher not configured for auto-poll")
 	}
 
-	f.wg.Go(func() { // initial transfer
-		records, err := f.AXFRTransfer()
+	f.wg.Go(func() {
+		defer ticker.Stop()
+		defer close(zoneBatch)
+		defer close(pollErrors)
+
+		records, err := f.AXFRTransfer() // initial transfer
 		if err != nil {
 			pollErrors <- err
 		} else {
 			zoneBatch <- records
 		}
-	})
 
-	f.wg.Go(func() {
-		defer ticker.Stop()
-		defer close(zoneBatch)
-		defer close(pollErrors)
 		for {
 			select {
 			case <-ticker.C:
@@ -100,7 +99,6 @@ func (f *ZoneFetcher) StartAutoPoll() (zoneBatch chan []dns.RR, pollErrors chan 
 			}
 		}
 	})
-	f.log.Debug("successfully started auto-poll of DNS-zone")
 	return
 }
 
@@ -108,7 +106,7 @@ func (f *ZoneFetcher) StopPoll() {
 	if f.stop != nil {
 		close(f.stop)
 		f.wg.Wait()
-		f.log.Info("closing zone-fetcher")
+		f.log.Debug("closing zone-fetcher")
 	}
 }
 
@@ -119,7 +117,7 @@ func (f *ZoneFetcher) AXFRTransfer() ([]dns.RR, error) {
 
 	env, err := client.TransferIn(context.TODO(), msg, "tcp", f.Server)
 	if err != nil {
-		return nil, fmt.Errorf("could not transfer zone: %v from server: %v%w", f.Zone, f.Server, err)
+		return nil, fmt.Errorf("could not transfer zone: %v from server: %v:%w", f.Zone, f.Server, err)
 	}
 
 	records := make([]dns.RR, 0)
