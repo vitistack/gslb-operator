@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils"
@@ -92,8 +91,8 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig, locked b
 		return newService, nil
 	}
 
-	if _, ok := sm.servicesHealthCheck[newService.Interval]; !ok { // first service on interval
-		sm.newScheduler(newService.Interval)
+	if _, ok := sm.servicesHealthCheck[newService.ScheduledInterval]; !ok { // first service on interval
+		sm.newScheduler(newService.ScheduledInterval)
 	}
 
 	fqdn := newService.Fqdn
@@ -103,7 +102,7 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig, locked b
 		sm.log.Debugf("new service group, for service: %v", newService.Fqdn)
 	}
 
-	sm.servicesHealthCheck[newService.Interval] = append(sm.servicesHealthCheck[newService.Interval], newService)
+	sm.servicesHealthCheck[newService.ScheduledInterval] = append(sm.servicesHealthCheck[newService.ScheduledInterval], newService)
 	serviceGroup.RegisterService(newService)
 
 	newService.SetHealthChangeCallback(func(healthy bool) {
@@ -132,11 +131,11 @@ func (sm *ServicesManager) RemoveService(service *service.Service, locked bool) 
 	if len(group.Members) == 0 {
 		delete(sm.serviceGroups, service.Fqdn)
 	}
-	newQueue := utils.RemoveIndexFromSlice(sm.servicesHealthCheck[service.Interval], removeIdx)
+	newQueue := utils.RemoveIndexFromSlice(sm.servicesHealthCheck[service.ScheduledInterval], removeIdx)
 	if len(newQueue) == 0 {
-		sm.cleanupInterval(service.Interval)
+		sm.cleanupInterval(service.ScheduledInterval)
 	} else {
-		sm.servicesHealthCheck[service.Interval] = newQueue
+		sm.servicesHealthCheck[service.ScheduledInterval] = newQueue
 	}
 	sm.log.Debugf("Service: %v:%v removed", service.Fqdn, service.Datacenter)
 
@@ -150,8 +149,8 @@ func (sm *ServicesManager) updateServiceUnlocked(old, new *service.Service) {
 		return
 	}
 
-	if old.Interval != new.Interval { // move service from old scheduler to new scheduler
-		sm.moveServiceToInterval(old, new.Interval)
+	if old.ScheduledInterval != new.ScheduledInterval { // move service from old scheduler to new scheduler
+		sm.moveServiceToInterval(old, new.ScheduledInterval)
 	}
 
 	if old.Fqdn != new.Fqdn {
@@ -165,7 +164,7 @@ func (sm *ServicesManager) updateServiceUnlocked(old, new *service.Service) {
 		newGroup.RegisterService(new)
 	}
 
-	queue := sm.servicesHealthCheck[new.Interval]
+	queue := sm.servicesHealthCheck[new.ScheduledInterval]
 	for idx, svc := range queue {
 		if svc.Fqdn == new.Fqdn && svc.Datacenter == new.Datacenter {
 			new.Copy(svc)
@@ -207,7 +206,7 @@ func (sm *ServicesManager) schedulerLoop(scheduler *scheduler) {
 // NEEDS TO HOLD sm.mutex BEFORE A CALL TO THIS FUNCTION IS MADE
 // A service is considered to exist if a registered service has the same Fqdn and Datacenter field as the service parameter
 func (sm *ServicesManager) serviceExistsUnlocked(service *service.Service) (exists bool, svc *service.Service, index int) {
-	queue, ok := sm.servicesHealthCheck[service.Interval]
+	queue, ok := sm.servicesHealthCheck[service.ScheduledInterval]
 	if !ok {
 		exists = false
 		return exists, nil, -1
@@ -225,67 +224,73 @@ func (sm *ServicesManager) serviceExistsUnlocked(service *service.Service) (exis
 	return false, nil, -1
 }
 
+// re-schedules the relevant services in the PromotionEvent
 func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
+	// No-op: nothing to change
+	if event.NewActive == event.OldActive {
+		sm.log.Debugf("promotion no-op for service %s (unchanged active)", event.Service)
+		return
+	}
+
+	var baseInterval timesutil.Duration
+	var demotedInterval timesutil.Duration
+
 	msg := "received promotion event for service: " + event.Service + ": "
-	if event.OldActive != nil { // can be nil if there was no existing active service in the service-group
-		msg += "OldActive: " + event.OldActive.Datacenter + ", "
+	if event.OldActive != nil { // set baseInterval
+		msg += " OldActive: " + event.OldActive.Datacenter + " "
+		baseInterval = event.OldActive.GetBaseInterval()
 	}
 	if event.NewActive != nil {
 		msg += "NewActive: " + event.NewActive.Datacenter
+		if baseInterval == 0 {
+			baseInterval = event.NewActive.GetBaseInterval()
+		}
 	}
 	sm.log.Debug(msg)
 
-	var activeInterval timesutil.Duration
-	var demotedInterval timesutil.Duration
+	if event.OldActive != nil && event.NewActive != nil { // just swap, and do dns updates
+		demotedInterval = event.NewActive.ScheduledInterval
 
-	if event.OldActive != nil {
-		activeInterval = event.OldActive.Interval
-	} else {
-		activeInterval = event.NewActive.Interval
-	}
-
-	if event.NewActive != nil {
-		demotedInterval = event.NewActive.Interval // the interval has not been updated yet, therefore this looks a bit backwards
-	} else {
-		demotedInterval = event.OldActive.Interval
-	}
-
-	if event.NewActive != nil {
-		sm.log.Infof("Promoting service %v:%v (interval: %v -> %v)",
-			event.NewActive.Fqdn, event.NewActive.Datacenter,
-			event.NewActive.Interval, activeInterval)
-		sm.moveServiceToInterval(event.NewActive, activeInterval)
-	}
-
-	if event.OldActive != nil {
 		sm.log.Infof("Demoting service %v:%v (interval: %v -> %v)",
 			event.OldActive.Fqdn, event.OldActive.Datacenter,
-			event.OldActive.Interval, demotedInterval)
+			event.OldActive.ScheduledInterval, demotedInterval)
 		sm.moveServiceToInterval(event.OldActive, demotedInterval)
+		sm.DNSUpdate(event.OldActive, false)
+
+		sm.log.Infof("Promoting service %v:%v (interval: %v -> %v)",
+			event.NewActive.Fqdn, event.NewActive.Datacenter,
+			event.NewActive.ScheduledInterval, baseInterval)
+		sm.moveServiceToInterval(event.NewActive, baseInterval)
+		sm.DNSUpdate(event.NewActive, true)
+		return
+	}
+
+	if event.NewActive != nil { // first service to come up when all services are down
+		sm.log.Infof("Promoting service %s:%s to new active", event.NewActive.Fqdn, event.NewActive.Datacenter)
+		sm.moveServiceToInterval(event.NewActive, baseInterval)
+		sm.DNSUpdate(event.NewActive, true)
+		return
+	}
+
+	if event.OldActive != nil { // no service to take over
+		sm.log.Warnf("No sites available for %s", event.Service)
+		sm.DNSUpdate(event.OldActive, false)
+		return
 	}
 }
 
 func (sm *ServicesManager) newServiceGroup(fqdn string) *ServiceGroup {
 	sm.serviceGroups[fqdn] = new(ServiceGroup)
-	datacenter := config.GetInstance().Server().Datacenter()
-	newGroup := NewEmptyServiceGroup(datacenter)
-	
+	newGroup := NewEmptyServiceGroup()
+
 	newGroup.OnPromotion = func(event *PromotionEvent) {
 		if event.NewActive == nil {
-			sm.log.Warnf("no active service available for service: %s: ", event.Service)
-			return
+			sm.log.Warnf("no active sites available for: %s", event.Service)
 		}
 		sm.handlePromotion(event)
-
-		if event.OldActive != nil {
-			sm.DNSUpdate(event.OldActive, false) // TODO: how can this be handled better?
-		}
-		if event.NewActive != nil {
-			sm.DNSUpdate(event.NewActive, true)
-		}
 	}
 	sm.serviceGroups[fqdn] = newGroup
 
@@ -313,7 +318,10 @@ func (sm *ServicesManager) cleanupInterval(interval timesutil.Duration) {
 }
 
 func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterval timesutil.Duration) {
-	oldInterval := svc.Interval
+	oldInterval := svc.ScheduledInterval
+	if oldInterval == newInterval {
+		return // already scheduled on this interval
+	}
 
 	if queue, ok := sm.servicesHealthCheck[oldInterval]; ok {
 		// remove from old interval queue
@@ -334,6 +342,7 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 	if _, ok := sm.servicesHealthCheck[newInterval]; !ok {
 		sm.newScheduler(newInterval)
 	}
-	svc.Interval = newInterval
+
 	sm.servicesHealthCheck[newInterval] = append(sm.servicesHealthCheck[newInterval], svc)
+	svc.ScheduledInterval = newInterval
 }

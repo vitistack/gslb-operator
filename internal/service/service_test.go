@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/checks"
+	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
+	"go.uber.org/zap"
 )
 
 type Test struct {
@@ -18,27 +20,27 @@ type Test struct {
 }
 
 func TestCalculateInterval(t *testing.T) {
-	interval := CalculateInterval(1, timesutil.FromDuration(time.Second * 5))
+	interval := CalculateInterval(1, timesutil.FromDuration(time.Second*5))
 	if interval != timesutil.Duration(checks.MIN_CHECK_INTERVAL) {
 		t.Errorf("expected %v, but got: %v", checks.MIN_CHECK_INTERVAL.String(), interval.String())
 	}
 
-	interval = CalculateInterval(0, timesutil.FromDuration(time.Second * 5))
+	interval = CalculateInterval(0, timesutil.FromDuration(time.Second*5))
 	if interval != timesutil.Duration(checks.MIN_CHECK_INTERVAL) {
 		t.Errorf("expected %v, but got: %v", checks.MIN_CHECK_INTERVAL.String(), interval.String())
 	}
 
-	interval = CalculateInterval(2, timesutil.FromDuration(time.Second * 5))
+	interval = CalculateInterval(2, timesutil.FromDuration(time.Second*5))
 	if interval != timesutil.FromDuration(checks.MIN_CHECK_INTERVAL*3) {
 		t.Errorf("expected %v, but got: %v", (checks.MIN_CHECK_INTERVAL * 3).String(), interval.String())
 	}
 
-	interval = CalculateInterval(3, timesutil.FromDuration(time.Second * 5))
+	interval = CalculateInterval(3, timesutil.FromDuration(time.Second*5))
 	if interval != timesutil.FromDuration(checks.MIN_CHECK_INTERVAL*9) {
 		t.Errorf("expected %v, but got: %v", (checks.MIN_CHECK_INTERVAL * 9).String(), interval.String())
 	}
 
-	interval = CalculateInterval(10, timesutil.FromDuration(time.Second * 5))
+	interval = CalculateInterval(10, timesutil.FromDuration(time.Second*5))
 	if interval != timesutil.FromDuration(checks.MAX_CHECK_INTERVAL) {
 		t.Errorf("expected %v, but got: %v", checks.MAX_CHECK_INTERVAL.String(), interval.String())
 	}
@@ -257,5 +259,92 @@ func TestOnFailure(t *testing.T) {
 
 	if !svc0.isHealthy {
 		t.Fatalf("Expected health: %v, but got: %v. After 3x OnSuccess() before OnFailure()", true, svc0.IsHealthy())
+	}
+}
+
+func TestService_GetBaseInterval(t *testing.T) {
+	log, _ := zap.NewDevelopment()
+	tests := []struct {
+		name string // description of this test case
+		// Named input parameters for receiver constructor.
+		config model.GSLBConfig
+		logger *zap.SugaredLogger
+		dryRun bool
+		want   timesutil.Duration
+	}{
+		{
+			name: "baseinterval-5-priority-1",
+			config: model.GSLBConfig{
+				Fqdn:       "test.nhn.no",
+				Ip:         "127.0.0.1",
+				Port:       "80",
+				Datacenter: "Abels1",
+				Interval:   timesutil.FromDuration(time.Second * 5),
+				Priority:   1,
+				Type:       "TCP-FULL",
+			},
+			logger: log.Sugar(),
+			dryRun: true,
+			want:   timesutil.FromDuration(time.Second * 5),
+		},
+		{
+			name: "baseinterval-5-priority-2",
+			config: model.GSLBConfig{
+				Fqdn:       "test.nhn.no",
+				Ip:         "127.0.0.1",
+				Port:       "80",
+				Datacenter: "Abels1",
+				Interval:   timesutil.FromDuration(time.Second * 5),
+				Priority:   2,
+				Type:       "TCP-FULL",
+			},
+			logger: log.Sugar(),
+			dryRun: true,
+			want:   timesutil.FromDuration(time.Second * 5),
+		},
+		{
+			name: "baseinterval-5-priority-3",
+			config: model.GSLBConfig{
+				Fqdn:       "test.nhn.no",
+				Ip:         "127.0.0.1",
+				Port:       "80",
+				Datacenter: "Abels1",
+				Interval:   timesutil.FromDuration(time.Second * 5),
+				Priority:   3,
+				Type:       "TCP-FULL",
+			},
+			logger: log.Sugar(),
+			dryRun: true,
+			want:   timesutil.FromDuration(time.Second * 5),
+		},
+		{
+			name: "baseinterval-5-priority-4",
+			config: model.GSLBConfig{
+				Fqdn:       "test.nhn.no",
+				Ip:         "127.0.0.1",
+				Port:       "80",
+				Datacenter: "Abels1",
+				Interval:   timesutil.FromDuration(time.Second * 5),
+				Priority:   4,
+				Type:       "TCP-FULL",
+			},
+			logger: log.Sugar(),
+			dryRun: true,
+			want:   timesutil.FromDuration(time.Second * 5),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := NewServiceFromGSLBConfig(tt.config, tt.logger, tt.dryRun)
+			if err != nil {
+				t.Fatalf("could not construct receiver type: %v", err)
+			}
+			got := s.GetBaseInterval()
+
+			log.Sugar().Debug(got, tt.want, s.ScheduledInterval)
+			if got != tt.want {
+				t.Errorf("GetBaseInterval() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

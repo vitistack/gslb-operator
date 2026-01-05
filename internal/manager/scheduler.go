@@ -7,17 +7,19 @@ import (
 )
 
 // wrapper for scheduling services' ticker and quit
+// TODO: sub-interval scheduling, e.g. wait 1s then schedule a new task on new timer
 type scheduler struct {
 	interval timesutil.Duration
 	ticker   *time.Ticker
 	quit     chan struct{}
+	//OnTick   func()
 }
 
 func newScheduler(duration timesutil.Duration) *scheduler {
 	return &scheduler{
 		interval: duration,
-		ticker: time.NewTicker(time.Duration(duration)),
-		quit:   make(chan struct{}),
+		ticker:   time.NewTicker(time.Duration(duration)),
+		quit:     make(chan struct{}),
 	}
 }
 

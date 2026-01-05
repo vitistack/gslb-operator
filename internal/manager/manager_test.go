@@ -55,7 +55,7 @@ func TestRegister(t *testing.T) {
 	svc, _ := manager.RegisterService(genericGSLBConfig, false)
 
 	manager.mutex.RLock()
-	services, ok := manager.servicesHealthCheck[svc.Interval]
+	services, ok := manager.servicesHealthCheck[svc.ScheduledInterval]
 	manager.mutex.RUnlock()
 
 	if !ok {

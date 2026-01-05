@@ -19,7 +19,8 @@ type Service struct {
 	Fqdn                 string
 	Port                 string
 	Datacenter           string
-	Interval             timesutil.Duration
+	ScheduledInterval    timesutil.Duration
+	defaultInterval      timesutil.Duration
 	priority             int
 	FailureThreshold     int
 	failureCount         int
@@ -39,17 +40,19 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger
 	if err != nil {
 		return nil, ErrUnableToResolveAddr
 	}
+	interval := CalculateInterval(config.Priority, config.Interval)
 	svc := &Service{
-		addr:             addr.String(),
-		Fqdn:             config.Fqdn,
-		Port:             config.Port,
-		Datacenter:       config.Datacenter,
-		Interval:         CalculateInterval(config.Priority, config.Interval),
-		priority:         config.Priority,
-		FailureThreshold: 3,
-		failureCount:     3,
-		isHealthy:        false,
-		log:              logger,
+		addr:              addr.String(),
+		Fqdn:              config.Fqdn,
+		Port:              config.Port,
+		Datacenter:        config.Datacenter,
+		ScheduledInterval: interval,
+		defaultInterval:   interval,
+		priority:          config.Priority,
+		FailureThreshold:  3,
+		failureCount:      3,
+		isHealthy:         false,
+		log:               logger,
 	}
 
 	switch {
@@ -96,6 +99,20 @@ func CalculateInterval(priority int, baseInterval timesutil.Duration) timesutil.
 	interval = time.Duration(float64(interval) + jitter) // Adds a ±10% jitter to interval
 
 	return timesutil.Duration(interval)
+}
+
+// this is different from s.Interval. Because that is the interval the service is currently scheduled
+// its base intervall is the intervall which resides in the services' GSLB - config in the dns - zone
+func (s *Service) GetBaseInterval() timesutil.Duration {
+	scaleFactor := 3.0
+	multiplier := 1.0
+	for i := 1; i < s.priority; i++ {
+		multiplier *= scaleFactor
+	}
+
+	baseInterval := max(time.Duration(float64(s.defaultInterval)/multiplier), time.Second*5)
+
+	return timesutil.Duration(baseInterval.Round(time.Second))
 }
 
 // checks health of service
@@ -195,10 +212,15 @@ func (s *Service) GetIP() (string, error) {
 	return ip, nil
 }
 
+func (s *Service) GetDefaultInterval() timesutil.Duration {
+	return s.defaultInterval
+}
+
 // copies necessary private values from old, to the service pointed to by s
 func (s *Service) Copy(old *Service) *Service {
 	s.isHealthy = old.isHealthy
 	s.failureCount = old.failureCount
 	s.healthChangeCallback = old.healthChangeCallback
+	s.defaultInterval = old.defaultInterval
 	return s
 }

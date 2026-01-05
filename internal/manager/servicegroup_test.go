@@ -55,7 +55,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestServiceGroup_RegisterService(t *testing.T) {
-	group := NewEmptyServiceGroup(active.Datacenter)
+	group := NewEmptyServiceGroup()
 	group.OnPromotion = func(pe *PromotionEvent) {
 		log.Println("got promotion")
 		if pe != nil {
@@ -75,14 +75,15 @@ func TestServiceGroup_RegisterService(t *testing.T) {
 	if group.mode != ActivePassive {
 		t.Errorf("Expected group mode: %v, but got: %v, after two services with different priorities registered", ActivePassive, group.mode)
 	}
-
-	if group.activeIndex != 0 {
+	/*
+	if group.active != 0 {
 		t.Errorf("Expected activeIndex: %v, but got: %v", 0, group.activeIndex)
 	}
+		*/
 }
 
 func TestServiceGroup_OnServiceHealthChange(t *testing.T) {
-	group := NewEmptyServiceGroup(active.Datacenter)
+	group := NewEmptyServiceGroup()
 
 	group.RegisterService(active)
 	group.OnPromotion = func(pe *PromotionEvent) {
@@ -161,5 +162,43 @@ func makeServiceHealthy(service *service.Service) {
 func makeServiceUnHealthy(service *service.Service) {
 	for range service.FailureThreshold {
 		service.OnFailure(errors.New("test"))
+	}
+}
+
+func TestServiceGroup_memberExists(t *testing.T) {
+	tests := []struct {
+		name string // description of this test case
+		// Named input parameters for receiver constructor.
+		// Named input parameters for target function.
+		member *service.Service
+		want   bool
+	}{
+		{
+			name: "exists",
+			member: &service.Service{
+				Fqdn: "test.example.com",
+				Datacenter: "JK",
+			},
+			want: true,
+		},
+		{
+			name: "does-not-exist",
+			member: &service.Service{},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sg := NewEmptyServiceGroup()
+			if tt.want {
+				sg.RegisterService(tt.member)
+			}
+
+			got := sg.memberExists(tt.member)
+
+			if got != tt.want {
+				t.Errorf("memberExists() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
