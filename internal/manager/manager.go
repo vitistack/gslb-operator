@@ -1,10 +1,10 @@
 package manager
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 
+	"github.com/vitistack/gslb-operator/internal/manager/scheduler"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils"
@@ -17,7 +17,7 @@ import (
 type ServicesManager struct {
 	// servicesHealthCheck maps check intervals to services that should be checked at that interval.
 	servicesHealthCheck map[timesutil.Duration][]*service.Service
-	schedulers          map[timesutil.Duration]*scheduler // wrapped scheduler for services
+	schedulers          map[timesutil.Duration]*scheduler.Scheduler // wrapped scheduler for services
 	serviceGroups       map[string]*ServiceGroup
 	log                 *zap.SugaredLogger
 	mutex               sync.RWMutex
@@ -45,7 +45,7 @@ func NewManager(logger *zap.Logger, opts ...serviceManagerOption) *ServicesManag
 
 	return &ServicesManager{
 		servicesHealthCheck: make(map[timesutil.Duration][]*service.Service),
-		schedulers:          make(map[timesutil.Duration]*scheduler),
+		schedulers:          make(map[timesutil.Duration]*scheduler.Scheduler),
 		serviceGroups:       make(map[string]*ServiceGroup),
 		log:                 logger.Sugar(),
 		mutex:               sync.RWMutex{},
@@ -65,9 +65,11 @@ func (sm *ServicesManager) Start() {
 func (sm *ServicesManager) Stop() {
 	sm.pool.Stop()
 	sm.stop.Do(func() {
-		for _, scheduler := range sm.schedulers {
-			close(scheduler.quit)
-		}
+		/*
+			for _, scheduler := range sm.schedulers {
+				close(scheduler.quit)
+			}
+		*/
 		sm.wg.Wait()
 		sm.log.Debug("successfully closed manager")
 	})
@@ -92,7 +94,7 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig, locked b
 	}
 
 	if _, ok := sm.servicesHealthCheck[newService.ScheduledInterval]; !ok { // first service on interval
-		sm.newScheduler(newService.ScheduledInterval)
+		//sm.newScheduler(newService.ScheduledInterval)
 	}
 
 	fqdn := newService.Fqdn
@@ -175,6 +177,7 @@ func (sm *ServicesManager) updateServiceUnlocked(old, new *service.Service) {
 	sm.log.Debugf("Service: %v:%v updated", old.Fqdn, old.Datacenter)
 }
 
+/*
 func (sm *ServicesManager) schedulerLoop(scheduler *scheduler) {
 	sm.wg.Go(func() {
 		defer scheduler.Stop()
@@ -201,6 +204,7 @@ func (sm *ServicesManager) schedulerLoop(scheduler *scheduler) {
 		}
 	})
 }
+*/
 
 // WARNING, ONLY CALL THIS FUNCTION IF YOU KNOW WHAT YOU ARE DOING.
 // NEEDS TO HOLD sm.mutex BEFORE A CALL TO THIS FUNCTION IS MADE
@@ -297,9 +301,10 @@ func (sm *ServicesManager) newServiceGroup(fqdn string) *ServiceGroup {
 	return newGroup
 }
 
+/*
 // creates a new scheduler, and starts its loop
 func (sm *ServicesManager) newScheduler(interval timesutil.Duration) *scheduler {
-	scheduler := newScheduler(interval)
+	scheduler := scheduler.NewScheduler(interval)
 	sm.schedulers[interval] = scheduler
 	sm.servicesHealthCheck[interval] = make([]*service.Service, 0)
 	sm.schedulerLoop(scheduler)
@@ -307,11 +312,12 @@ func (sm *ServicesManager) newScheduler(interval timesutil.Duration) *scheduler 
 
 	return scheduler
 }
+*/
 
 func (sm *ServicesManager) cleanupInterval(interval timesutil.Duration) {
 	delete(sm.servicesHealthCheck, interval)
-	if scheduler, ok := sm.schedulers[interval]; ok {
-		close(scheduler.quit)
+	if _, ok := sm.schedulers[interval]; ok {
+		//close(scheduler.quit)
 		delete(sm.schedulers, interval)
 	}
 	sm.log.Debugf("deleted scheduler on interval: %v", interval.String())
@@ -340,7 +346,7 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 	}
 
 	if _, ok := sm.servicesHealthCheck[newInterval]; !ok {
-		sm.newScheduler(newInterval)
+		//sm.newScheduler(newInterval)
 	}
 
 	sm.servicesHealthCheck[newInterval] = append(sm.servicesHealthCheck[newInterval], svc)
