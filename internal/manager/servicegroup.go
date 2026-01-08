@@ -36,16 +36,16 @@ type ServiceGroup struct {
 	// See modes in comments below
 	active *service.Service
 
+	//last active service in a service group
 	lastActive *service.Service
 
 	// should never receive a nil promotion event
-	// should never receive an event where OldActive are nil
 	OnPromotion           func(*PromotionEvent)
 	prioritizedDatacenter string
 }
 
 func NewEmptyServiceGroup() *ServiceGroup {
-	datacenter := config.GetInstance().Server().Env()
+	datacenter := config.GetInstance().Server().Datacenter()
 	return &ServiceGroup{
 		mode:                  ActiveActive,
 		Members:               make([]*service.Service, 0),

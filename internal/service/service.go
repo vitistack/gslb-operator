@@ -17,6 +17,7 @@ type HealthChangeCallback func(healthy bool)
 type Service struct {
 	addr                 string
 	Fqdn                 string
+	MemberOf             string
 	Port                 string
 	Datacenter           string
 	ScheduledInterval    timesutil.Duration
@@ -44,6 +45,7 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger
 	svc := &Service{
 		addr:              addr.String(),
 		Fqdn:              config.Fqdn,
+		MemberOf:          config.MemberOf,
 		Port:              config.Port,
 		Datacenter:        config.Datacenter,
 		ScheduledInterval: interval,
@@ -60,7 +62,7 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger
 		svc.check = checks.DryRun()
 
 	case config.Type == "HTTP":
-		svc.check = checks.HTTPCheck(svc.addr, checks.DEFAULT_TIMEOUT)
+		svc.check = checks.HTTPCheck("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT)
 
 	case config.Type == "TCP-FULL":
 		svc.check = checks.TCPFull(svc.addr, checks.DEFAULT_TIMEOUT)

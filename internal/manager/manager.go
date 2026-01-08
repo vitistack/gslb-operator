@@ -95,22 +95,22 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig, locked b
 		sm.newScheduler(newService.ScheduledInterval)
 	}
 
-	fqdn := newService.Fqdn
-	serviceGroup, ok := sm.serviceGroups[fqdn]
+	memberOf := newService.MemberOf
+	serviceGroup, ok := sm.serviceGroups[memberOf]
 	if !ok {
-		serviceGroup = sm.newServiceGroup(fqdn)
-		sm.log.Debugf("new service group, for service: %v", newService.Fqdn)
+		serviceGroup = sm.newServiceGroup(memberOf)
+		sm.log.Debugf("new service group, for service: %v", newService.MemberOf)
 	}
 
 	sm.servicesHealthCheck[newService.ScheduledInterval] = append(sm.servicesHealthCheck[newService.ScheduledInterval], newService)
 	serviceGroup.RegisterService(newService)
 
 	newService.SetHealthChangeCallback(func(healthy bool) {
-		sm.log.Debugf("received health-change for service: %v:%v (healthy: %v)", newService.Fqdn, newService.Datacenter, healthy)
-		sm.serviceGroups[newService.Fqdn].OnServiceHealthChange(newService, healthy)
+		sm.log.Debugf("received health-change for service: %v:%v (healthy: %v)", newService.MemberOf, newService.Datacenter, healthy)
+		sm.serviceGroups[newService.MemberOf].OnServiceHealthChange(newService, healthy)
 	})
 
-	sm.log.Debugf("Service: %v:%v registered", newService.Fqdn, newService.Datacenter)
+	sm.log.Debugf("Service: %v:%v registered", newService.MemberOf, newService.Datacenter)
 	return newService, nil
 }
 
@@ -126,10 +126,10 @@ func (sm *ServicesManager) RemoveService(service *service.Service, locked bool) 
 		return ErrServiceNotFound
 	}
 
-	group := sm.serviceGroups[service.Fqdn]
+	group := sm.serviceGroups[service.MemberOf]
 	group.RemoveService(service) // registered in group
 	if len(group.Members) == 0 {
-		delete(sm.serviceGroups, service.Fqdn)
+		delete(sm.serviceGroups, service.MemberOf)
 	}
 	newQueue := utils.RemoveIndexFromSlice(sm.servicesHealthCheck[service.ScheduledInterval], removeIdx)
 	if len(newQueue) == 0 {
@@ -137,7 +137,7 @@ func (sm *ServicesManager) RemoveService(service *service.Service, locked bool) 
 	} else {
 		sm.servicesHealthCheck[service.ScheduledInterval] = newQueue
 	}
-	sm.log.Debugf("Service: %v:%v removed", service.Fqdn, service.Datacenter)
+	sm.log.Debugf("Service: %v:%v removed", service.MemberOf, service.Datacenter)
 
 	return nil
 }
@@ -282,8 +282,8 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	}
 }
 
-func (sm *ServicesManager) newServiceGroup(fqdn string) *ServiceGroup {
-	sm.serviceGroups[fqdn] = new(ServiceGroup)
+func (sm *ServicesManager) newServiceGroup(memberOf string) *ServiceGroup {
+	sm.serviceGroups[memberOf] = new(ServiceGroup)
 	newGroup := NewEmptyServiceGroup()
 
 	newGroup.OnPromotion = func(event *PromotionEvent) {
@@ -292,7 +292,7 @@ func (sm *ServicesManager) newServiceGroup(fqdn string) *ServiceGroup {
 		}
 		sm.handlePromotion(event)
 	}
-	sm.serviceGroups[fqdn] = newGroup
+	sm.serviceGroups[memberOf] = newGroup
 
 	return newGroup
 }

@@ -68,12 +68,12 @@ func UpdaterWithClient(client *client.HTTPClient) updaterOption {
 }
 
 func (u *Updater) ServiceDown(svc *service.Service) error {
-	err := u.spoofRepo.Delete(fmt.Sprintf("%s:%s", svc.Fqdn, svc.Datacenter))
+	err := u.spoofRepo.Delete(fmt.Sprintf("%s:%s", svc.MemberOf, svc.Datacenter))
 	if err != nil {
 		return fmt.Errorf("unable to delete service from storage: %s", err.Error())
 	}
 
-	req, err := u.builder.DELETE().URL(fmt.Sprintf("/spoofs/%s:%s", svc.Fqdn, svc.Datacenter)).Build()
+	req, err := u.builder.DELETE().URL(fmt.Sprintf("/spoofs/%s:%s", svc.MemberOf, svc.Datacenter)).Build()
 	if err != nil {
 		return fmt.Errorf("could not create delete request for update: %s", err.Error())
 	}
@@ -96,7 +96,7 @@ func (u *Updater) ServiceUp(svc *service.Service) error {
 		return fmt.Errorf("unable to get ip address: %s", err.Error())
 	}
 	spoof := &model.Spoof{
-		FQDN: svc.Fqdn,
+		FQDN: svc.MemberOf,
 		IP:   ip,
 		DC:   svc.Datacenter,
 	}
