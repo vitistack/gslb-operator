@@ -1,16 +1,8 @@
 package scheduler
 
 import (
-	"time"
-
 	"github.com/vitistack/gslb-operator/internal/service"
 )
-
-type ScheduledService struct {
-	service       *service.Service
-	nextCheckTime time.Time
-	offsett       time.Duration
-}
 
 type ServiceHeap []*ScheduledService
 
@@ -44,4 +36,13 @@ func (h ServiceHeap) Peek() *ScheduledService {
 		return nil
 	}
 	return h[0]
+}
+
+func (h *ServiceHeap) GetServiceIndex(service *service.Service) int {
+	for index, scheduled := range *h {
+		if scheduled.service.Fqdn == service.Fqdn {
+			return index
+		}
+	}
+	return -1
 }

@@ -1,8 +1,10 @@
 package manager
 
 import (
+	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/vitistack/gslb-operator/internal/manager/scheduler"
 	"github.com/vitistack/gslb-operator/internal/model"
@@ -93,8 +95,9 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig, locked b
 		return newService, nil
 	}
 
+	scheduler := sm.newScheduler(newService.ScheduledInterval)
 	if _, ok := sm.servicesHealthCheck[newService.ScheduledInterval]; !ok { // first service on interval
-		//sm.newScheduler(newService.ScheduledInterval)
+		scheduler.ScheduleService(newService)
 	}
 
 	fqdn := newService.Fqdn
@@ -111,6 +114,7 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig, locked b
 		sm.log.Debugf("received health-change for service: %v:%v (healthy: %v)", newService.Fqdn, newService.Datacenter, healthy)
 		sm.serviceGroups[newService.Fqdn].OnServiceHealthChange(newService, healthy)
 	})
+	scheduler.ScheduleService(newService)
 
 	sm.log.Debugf("Service: %v:%v registered", newService.Fqdn, newService.Datacenter)
 	return newService, nil
@@ -301,23 +305,34 @@ func (sm *ServicesManager) newServiceGroup(fqdn string) *ServiceGroup {
 	return newGroup
 }
 
-/*
 // creates a new scheduler, and starts its loop
-func (sm *ServicesManager) newScheduler(interval timesutil.Duration) *scheduler {
-	scheduler := scheduler.NewScheduler(interval)
+func (sm *ServicesManager) newScheduler(interval timesutil.Duration) *scheduler.Scheduler {
+	if scheduler, ok := sm.schedulers[interval]; ok { // scheduler already exists
+		return scheduler
+	}
+
+	scheduler := scheduler.NewScheduler(time.Duration(interval))
 	sm.schedulers[interval] = scheduler
 	sm.servicesHealthCheck[interval] = make([]*service.Service, 0)
-	sm.schedulerLoop(scheduler)
-	sm.log.Debugf("new scheduler on interval: %v", scheduler.interval.String())
+
+	scheduler.OnTick = func(s *service.Service) {
+		sm.log.Debugf("checking service: %v:%v", s.Fqdn, s.Datacenter)
+		err := sm.pool.Put(s)
+		if errors.Is(err, pool.ErrPutOnClosedPool) {
+			sm.log.Errorf("failed to execute health check, pool is closed")
+		}
+	}
+	scheduler.Loop()
+
+	sm.log.Debugf("new scheduler on interval: %v", interval.String())
 
 	return scheduler
 }
-*/
 
 func (sm *ServicesManager) cleanupInterval(interval timesutil.Duration) {
 	delete(sm.servicesHealthCheck, interval)
-	if _, ok := sm.schedulers[interval]; ok {
-		//close(scheduler.quit)
+	if scheduler, ok := sm.schedulers[interval]; ok {
+		scheduler.Stop()
 		delete(sm.schedulers, interval)
 	}
 	sm.log.Debugf("deleted scheduler on interval: %v", interval.String())
@@ -346,7 +361,7 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 	}
 
 	if _, ok := sm.servicesHealthCheck[newInterval]; !ok {
-		//sm.newScheduler(newInterval)
+		sm.newScheduler(newInterval)
 	}
 
 	sm.servicesHealthCheck[newInterval] = append(sm.servicesHealthCheck[newInterval], svc)

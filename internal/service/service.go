@@ -2,7 +2,6 @@ package service
 
 import (
 	"fmt"
-	"math/rand"
 	"net"
 	"time"
 
@@ -94,9 +93,6 @@ func CalculateInterval(priority int, baseInterval timesutil.Duration) timesutil.
 	if interval > checks.MAX_CHECK_INTERVAL {
 		return timesutil.Duration(checks.MAX_CHECK_INTERVAL)
 	}
-
-	jitter := float64(interval) * 0.1 * (2*rand.Float64() - 1)
-	interval = time.Duration(float64(interval) + jitter) // Adds a ±10% jitter to interval
 
 	return timesutil.Duration(interval)
 }
