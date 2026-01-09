@@ -67,11 +67,12 @@ func (sm *ServicesManager) Start() {
 func (sm *ServicesManager) Stop() {
 	sm.pool.Stop()
 	sm.stop.Do(func() {
-		/*
-			for _, scheduler := range sm.schedulers {
-				close(scheduler.quit)
-			}
-		*/
+
+		for interval, scheduler := range sm.schedulers {
+			scheduler.Stop()
+			sm.log.Debugf("successfully closed scheduler on interval: %s", interval.String())
+		}
+
 		sm.wg.Wait()
 		sm.log.Debug("successfully closed manager")
 	})
@@ -180,35 +181,6 @@ func (sm *ServicesManager) updateServiceUnlocked(old, new *service.Service) {
 	}
 	sm.log.Debugf("Service: %v:%v updated", old.Fqdn, old.Datacenter)
 }
-
-/*
-func (sm *ServicesManager) schedulerLoop(scheduler *scheduler) {
-	sm.wg.Go(func() {
-		defer scheduler.Stop()
-		for {
-			select {
-			case <-scheduler.ticker.C:
-				sm.mutex.RLock()
-				services := make([]*service.Service, len(sm.servicesHealthCheck[scheduler.interval]))
-				copy(services, sm.servicesHealthCheck[scheduler.interval]) // copy to not hold the lock while iterating services
-				sm.mutex.RUnlock()
-
-				for i := range services {
-					sm.log.Debugf("checking service: %v:%v", services[i].Fqdn, services[i].Datacenter)
-					err := sm.pool.Put(services[i])
-					if errors.Is(err, pool.ErrPutOnClosedPool) {
-						sm.log.Errorf("failed to execute health check, pool is closed")
-					}
-				}
-
-			case <-scheduler.quit: // stops a specific scheduler
-				sm.log.Debugf("Scheduler on interval: %v closed", scheduler.interval.String())
-				return
-			}
-		}
-	})
-}
-*/
 
 // WARNING, ONLY CALL THIS FUNCTION IF YOU KNOW WHAT YOU ARE DOING.
 // NEEDS TO HOLD sm.mutex BEFORE A CALL TO THIS FUNCTION IS MADE

@@ -68,6 +68,8 @@ func (s *Scheduler) Stop() {
 
 // schedule a new service on the heap
 func (s *Scheduler) ScheduleService(svc *service.Service) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	offset := OFFSET * time.Duration(s.nextOffset)
 	scheduled := ScheduledService{
 		service:       svc,
@@ -83,6 +85,8 @@ func (s *Scheduler) ScheduleService(svc *service.Service) {
 }
 
 func (s *Scheduler) RemoveService(svc *service.Service) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	idx := s.heap.GetServiceIndex(svc)
 	if idx == -1 {
 		return
@@ -92,9 +96,10 @@ func (s *Scheduler) RemoveService(svc *service.Service) {
 
 // re-schedule an already existing scheduled service
 func (s *Scheduler) reScheduleService(reSchedule *ScheduledService) {
-
 	reSchedule.nextCheckTime = time.Now().Add(s.newCheckInterval()) // initiate the next checktime
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	heap.Push(&s.heap, reSchedule)
 
 	if s.heap.Len() == 0 {
@@ -102,20 +107,22 @@ func (s *Scheduler) reScheduleService(reSchedule *ScheduledService) {
 	}
 }
 
-
 func (s *Scheduler) Loop() {
 	s.wg.Go(func() {
 		for {
+			s.mu.Lock()
 			if s.heap.Len() == 0 { // no need to infinetly run on an empty queue
+				s.mu.Unlock()
 				break
 			}
-			next := heap.Pop(&s.heap).(*ScheduledService)
-			timeUntil := time.Until(next.nextCheckTime)
 
+			next := heap.Pop(&s.heap).(*ScheduledService)
+			s.mu.Unlock()
 			if next.nextCheckTime.Before(time.Now()) { // check time already past, do action immediately and reschedule
 				s.OnTick(next.service)
 				s.reScheduleService(next)
 			} else {
+				timeUntil := time.Until(next.nextCheckTime)
 				select {
 				case <-s.stop:
 					break
