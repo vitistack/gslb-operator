@@ -64,17 +64,17 @@ func main() {
 		manager.WithNonBlockingBufferSize(105),
 		//manager.WithDryRun(true),
 	)
-
 	/*
-		mgr.RegisterService(model.GSLBConfig{
-			Fqdn:       "test.nhn.no",
-			Ip:         "127.0.0.1",
-			Port:       "80",
-			Datacenter: "Abels1",
-			Interval:   timesutil.FromDuration(time.Second * 5),
-			Priority:   1,
-			Type:       "TCP-FULL",
-		}, false)
+
+	mgr.RegisterService(model.GSLBConfig{
+		Fqdn:       "test.nhn.no",
+		Ip:         "127.0.0.1",
+		Port:       "80",
+		Datacenter: "Abels1",
+		Interval:   timesutil.FromDuration(time.Second * 5),
+		Priority:   1,
+		Type:       "TCP-FULL",
+	}, false)
 
 		mgr.RegisterService(model.GSLBConfig{
 			Fqdn:       "test.nhn.no",
