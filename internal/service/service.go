@@ -11,13 +11,15 @@ import (
 	"go.uber.org/zap"
 )
 
+const DEFAULT_FAILURE_THRESHOLD = 3
+
 type HealthChangeCallback func(healthy bool)
 
 type Service struct {
+	id                   string
 	addr                 string
 	Fqdn                 string
 	MemberOf             string
-	Port                 string
 	Datacenter           string
 	ScheduledInterval    timesutil.Duration
 	defaultInterval      timesutil.Duration
@@ -40,18 +42,23 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger
 	if err != nil {
 		return nil, ErrUnableToResolveAddr
 	}
+
+	if config.ServiceID == "" {
+		return nil, ErrEmptyServiceId
+	}
+
 	interval := CalculateInterval(config.Priority, config.Interval)
 	svc := &Service{
+		id:                config.ServiceID,
 		addr:              addr.String(),
 		Fqdn:              config.Fqdn,
 		MemberOf:          config.MemberOf,
-		Port:              config.Port,
 		Datacenter:        config.Datacenter,
 		ScheduledInterval: interval,
 		defaultInterval:   interval,
 		priority:          config.Priority,
-		FailureThreshold:  3,
-		failureCount:      3,
+		FailureThreshold:  config.FailureThreshold,
+		failureCount:      config.FailureThreshold,
 		isHealthy:         false,
 		log:               logger,
 	}
@@ -214,11 +221,28 @@ func (s *Service) GetDefaultInterval() timesutil.Duration {
 	return s.defaultInterval
 }
 
-// copies necessary private values from old, to the service pointed to by s
-func (s *Service) Copy(old *Service) *Service {
-	s.isHealthy = old.isHealthy
-	s.failureCount = old.failureCount
-	s.healthChangeCallback = old.healthChangeCallback
-	s.defaultInterval = old.defaultInterval
-	return s
+func (s *Service) GetID() string {
+	return s.id
+}
+
+func (s *Service) ConfigChanged(other *Service) bool {
+	if s.Fqdn != other.Fqdn ||
+		s.addr != other.addr ||
+		s.Datacenter != other.Datacenter ||
+		s.FailureThreshold != other.FailureThreshold ||
+		s.priority != other.priority {
+		return true
+	}
+	return false
+}
+
+// updates the configuration values of s with the values of new
+func (s *Service) Update(new *Service) {
+	s.addr = new.addr
+	s.check = new.check
+	s.MemberOf = new.MemberOf
+	s.priority = new.priority
+	s.Datacenter = new.Datacenter
+	s.defaultInterval = new.defaultInterval
+	s.FailureThreshold = new.FailureThreshold
 }

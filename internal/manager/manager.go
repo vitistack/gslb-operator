@@ -78,12 +78,10 @@ func (sm *ServicesManager) Stop() {
 	})
 }
 
-func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig, locked bool) (*service.Service, error) {
-	// TODO: Better way to do this? reflect over this
-	if !locked {
-		sm.mutex.Lock()
-		defer sm.mutex.Unlock()
-	}
+func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*service.Service, error) {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+
 	newService, err := service.NewServiceFromGSLBConfig(serviceCfg, sm.log, sm.dryrun)
 	if err != nil {
 		return nil, fmt.Errorf("unable to register service: %s", err.Error())
@@ -96,27 +94,29 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig, locked b
 		return newService, nil
 	}
 
+	// set healthchange callback action
+	newService.SetHealthChangeCallback(func(healthy bool) {
+		sm.log.Debugf("received health-change for service: %v:%v (healthy: %v)", newService.MemberOf, newService.Datacenter, healthy)
+		sm.serviceGroups[newService.MemberOf].OnServiceHealthChange(newService, healthy)
+	})
+
+	// create new scheduler if needed, and schedule service
 	scheduler := sm.newScheduler(newService.ScheduledInterval)
 	if _, ok := sm.servicesHealthCheck[newService.ScheduledInterval]; !ok { // first service on interval
 		scheduler.ScheduleService(newService)
 	}
+	scheduler.ScheduleService(newService)
 
+	// create new service group if needed, and register service in group
 	memberOf := newService.MemberOf
 	serviceGroup, ok := sm.serviceGroups[memberOf]
 	if !ok {
 		serviceGroup = sm.newServiceGroup(memberOf)
 		sm.log.Debugf("new service group, for service: %v", newService.MemberOf)
 	}
-
-	sm.servicesHealthCheck[newService.ScheduledInterval] = append(sm.servicesHealthCheck[newService.ScheduledInterval], newService)
 	serviceGroup.RegisterService(newService)
 
-	newService.SetHealthChangeCallback(func(healthy bool) {
-		sm.log.Debugf("received health-change for service: %v:%v (healthy: %v)", newService.MemberOf, newService.Datacenter, healthy)
-		sm.serviceGroups[newService.MemberOf].OnServiceHealthChange(newService, healthy)
-	})
-	scheduler.ScheduleService(newService)
-
+	sm.servicesHealthCheck[newService.ScheduledInterval] = append(sm.servicesHealthCheck[newService.ScheduledInterval], newService)
 	sm.log.Debugf("Service: %v:%v registered", newService.MemberOf, newService.Datacenter)
 	return newService, nil
 }
@@ -129,9 +129,12 @@ func (sm *ServicesManager) RemoveService(service *service.Service, locked bool) 
 	}
 
 	exists, _, removeIdx := sm.serviceExistsUnlocked(service)
-	if !exists { // cannpt remove something that does not exists
+	if !exists { // cannot remove something that does not exists
 		return ErrServiceNotFound
 	}
+
+	scheduler := sm.schedulers[service.ScheduledInterval]
+	scheduler.RemoveService(service)
 
 	group := sm.serviceGroups[service.MemberOf]
 	group.RemoveService(service) // registered in group
@@ -156,48 +159,44 @@ func (sm *ServicesManager) updateServiceUnlocked(old, new *service.Service) {
 		return
 	}
 
-	if old.ScheduledInterval != new.ScheduledInterval { // move service from old scheduler to new scheduler
-		sm.moveServiceToInterval(old, new.ScheduledInterval)
+	if !old.ConfigChanged(new) { // nothing to do
+		return
 	}
 
-	if old.Fqdn != new.Fqdn {
-		group := sm.serviceGroups[old.Fqdn]
-		group.RemoveService(old)
-
-		newGroup, ok := sm.serviceGroups[new.Fqdn]
-		if !ok {
-			newGroup = sm.newServiceGroup(new.Fqdn)
-		}
-		newGroup.RegisterService(new)
+	oldDefaultInterval, newDefaultInterval := old.GetDefaultInterval(), new.GetDefaultInterval()
+	if oldDefaultInterval != newDefaultInterval && oldDefaultInterval == old.ScheduledInterval {
+		// we need to move the service to a new interval
+		// otherwise the service will get rescheduled back to its default interval on its own, when it is needed
+		sm.moveServiceToInterval(old, newDefaultInterval)
 	}
 
-	queue := sm.servicesHealthCheck[new.ScheduledInterval]
-	for idx, svc := range queue {
-		if svc.Fqdn == new.Fqdn && svc.Datacenter == new.Datacenter {
-			new.Copy(svc)
-			queue[idx] = new
-			break
+	if old.MemberOf != new.MemberOf {
+		oldGroup := sm.serviceGroups[old.MemberOf]
+		oldGroup.RemoveService(old)
+
+		if len(oldGroup.Members) == 0 {
+			// TODO: delete service group
+			sm.log.Error("TODO: delete service group")
 		}
 	}
-	sm.log.Debugf("Service: %v:%v updated", old.Fqdn, old.Datacenter)
+
+	old.Update(new)
+
+	sm.log.Debugf("Service: %s updated", old.GetID())
 }
 
 // WARNING, ONLY CALL THIS FUNCTION IF YOU KNOW WHAT YOU ARE DOING.
 // NEEDS TO HOLD sm.mutex BEFORE A CALL TO THIS FUNCTION IS MADE
 // A service is considered to exist if a registered service has the same Fqdn and Datacenter field as the service parameter
-func (sm *ServicesManager) serviceExistsUnlocked(service *service.Service) (exists bool, svc *service.Service, index int) {
+func (sm *ServicesManager) serviceExistsUnlocked(service *service.Service) (bool, *service.Service, int) {
 	queue, ok := sm.servicesHealthCheck[service.ScheduledInterval]
 	if !ok {
-		exists = false
-		return exists, nil, -1
+		return false, nil, -1
 	}
 
 	for idx, s := range queue {
-		if service.Fqdn == s.Fqdn && service.Datacenter == s.Datacenter {
-			exists = true
-			svc = s
-			index = idx
-			return
+		if s.GetID() == service.GetID() {
+			return true, s, idx
 		}
 	}
 

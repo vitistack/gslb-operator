@@ -123,14 +123,17 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 
 	rawData := txt.Txt[0]
 	data := strings.ReplaceAll(rawData, "\\", "")
-	svcConfig := model.GSLBConfig{MemberOf: txt.Hdr.Name}
+	svcConfig := model.GSLBConfig{
+		MemberOf:         txt.Hdr.Name,
+		FailureThreshold: service.DEFAULT_FAILURE_THRESHOLD,
+	}
 	err := json.Unmarshal([]byte(data), &svcConfig)
 	if err != nil {
 		h.log.Errorf("failed to parse gslb config: %v", err.Error())
 		return nil
 	}
 
-	svc, err := h.svcManager.RegisterService(svcConfig, false)
+	svc, err := h.svcManager.RegisterService(svcConfig)
 	if err != nil {
 		h.log.Errorf("could not register service: %s", err.Error())
 		return nil
