@@ -67,13 +67,16 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger
 	case dryRun:
 		svc.check = checks.DryRun()
 
-	case config.Type == "HTTP":
+	case config.Type == checks.HTTPS:
 		svc.check = checks.HTTPCheck("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT)
 
-	case config.Type == "TCP-FULL":
+	case config.Type == checks.HTTP:
+		svc.check = checks.HTTPCheck("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT)
+
+	case config.Type == checks.TCP_FULL:
 		svc.check = checks.TCPFull(svc.addr, checks.DEFAULT_TIMEOUT)
 
-	case config.Type == "TCP-HALF":
+	case config.Type == checks.TCP_HALF:
 		svc.check = checks.TCPHalf(svc.addr, checks.DEFAULT_TIMEOUT)
 
 	default:
