@@ -2,12 +2,12 @@ package dns
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"codeberg.org/miekg/dns"
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"go.uber.org/zap"
 )
@@ -17,22 +17,23 @@ type ZoneFetcher struct {
 	Zone     string
 	Server   string
 	log      *zap.Logger
-	stop     chan struct{}
 	wg       sync.WaitGroup
 	interval timesutil.Duration
+	client   *dns.Client
 }
 
 type fetcherOption func(fetcher *ZoneFetcher)
 
 // auto fetches after a given duration
 func NewZoneFetcherWithAutoPoll(logger *zap.Logger, opts ...fetcherOption) *ZoneFetcher {
-	fetcher := &ZoneFetcher{ // default values for testing
-		Zone:     "gslb.test.dns.nhn.no.",
-		Server:   "nsh1.nhn.no:53",
-		interval: timesutil.Duration(DEFAULT_POLL_INTERVAL),
-		stop:     make(chan struct{}),
-		wg:       sync.WaitGroup{},
+	gslb := config.GetInstance().GSLB()
+	fetcher := &ZoneFetcher{ // default values
+		Zone:     gslb.Zone(),
+		Server:   gslb.NameServer(),
 		log:      logger,
+		wg:       sync.WaitGroup{},
+		interval: timesutil.Duration(DEFAULT_POLL_INTERVAL),
+		client:   dns.NewClient(),
 	}
 
 	for _, opt := range opts { // set custom options
@@ -61,41 +62,26 @@ func WithFetchInterval(interval time.Duration) fetcherOption {
 }
 
 // starts the auto-fetch, and listen for errors and records on the returned channels
-// WARNING: Returns immediatly if stop is not initialized. Call Upgrade(...) to start autopoll
-func (f *ZoneFetcher) StartAutoPoll() (zoneBatch chan []dns.RR, pollErrors chan error, err error) {
-	zoneBatch = make(chan []dns.RR)
-	pollErrors = make(chan error)
+func (f *ZoneFetcher) StartAutoPoll(ctx context.Context) (zone chan []dns.RR, pollErrors chan error) {
+	zone = make(chan []dns.RR, 10)
+	pollErrors = make(chan error, 10)
 
 	ticker := time.NewTicker(time.Duration(f.interval))
-
-	if f.stop == nil { // needs to call upgrade first, or initialize with auto poll
-		return nil, nil, errors.New("fetcher not configured for auto-poll")
-	}
-
 	f.wg.Go(func() {
-		defer ticker.Stop()
-		defer close(zoneBatch)
+		defer close(zone)
 		defer close(pollErrors)
+		defer f.log.Debug("closing zone-fetcher")
 
-		records, err := f.AXFRTransfer() // initial transfer
-		if err != nil {
-			pollErrors <- err
-		} else {
-			zoneBatch <- records
-		}
+		f.AXFRTransfer(ctx, zone, pollErrors)
 
 		for {
 			select {
-			case <-ticker.C:
-				records, err := f.AXFRTransfer()
-				if err != nil {
-					pollErrors <- err
-				} else {
-					zoneBatch <- records // sends complete zone transfer
-				}
-
-			case <-f.stop:
+			case <-ctx.Done():
+				ticker.Stop()
 				return
+
+			case <-ticker.C:
+				f.AXFRTransfer(ctx, zone, pollErrors)
 			}
 		}
 	})
@@ -103,31 +89,40 @@ func (f *ZoneFetcher) StartAutoPoll() (zoneBatch chan []dns.RR, pollErrors chan 
 }
 
 func (f *ZoneFetcher) StopPoll() {
-	if f.stop != nil {
-		close(f.stop)
-		f.wg.Wait()
-		f.log.Debug("closing zone-fetcher")
-	}
+	f.wg.Wait()
+
 }
 
-func (f *ZoneFetcher) AXFRTransfer() ([]dns.RR, error) {
-	client := dns.NewClient()
-	client.Transfer = &dns.Transfer{}
+func (f *ZoneFetcher) AXFRTransfer(ctx context.Context, zone chan []dns.RR, transferErrors chan error) {
+	if ctx.Err() != nil {
+		return // context is cancelled
+	}
+
+	f.log.Debug("starting zone-transfer")
+	f.client.Transfer = &dns.Transfer{}
 	msg := dns.NewMsg(f.Zone, dns.TypeAXFR)
 
-	env, err := client.TransferIn(context.TODO(), msg, "tcp", f.Server)
+	envelopes, err := f.client.TransferIn(ctx, msg, "tcp", f.Server)
 	if err != nil {
-		return nil, fmt.Errorf("could not transfer zone: %v from server: %v:%w", f.Zone, f.Server, err)
+		transferErrors <- fmt.Errorf("could not transfer zone: %v from server: %v:%w", f.Zone, f.Server, err)
 	}
-
 	records := make([]dns.RR, 0)
-	for envelope := range env {
-		if envelope.Error != nil {
-			return nil, envelope.Error
-		}
-		records = append(records, envelope.Answer...)
-	}
-	f.log.Debug("Zone-Transfer Complete")
+	for {
+		select {
+		case <-ctx.Done():
+			return
 
-	return records, nil
+		case envelope, ok := <-envelopes:
+			if !ok {
+				zone <- records
+				f.log.Debug("zone-transfer completed")
+				return // zone complete
+			}
+			if envelope.Error != nil {
+				transferErrors <- envelope.Error
+				return
+			}
+			records = append(records, envelope.Answer...)
+		}
+	}
 }

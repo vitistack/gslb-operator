@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -17,9 +18,10 @@ type Handler struct {
 	fetcher       *ZoneFetcher // fetch GSLB config from dns
 	svcManager    *manager.ServicesManager
 	updater       *Updater
-	knownServices map[string]*service.Service // key: service.Fqdn:service.Datacenter
+	knownServices map[string]*service.Service // key: service.ID
 	log           *zap.SugaredLogger
 	stopFetcher   chan struct{}
+	cancel        func() // cancels zone fetches
 	wg            sync.WaitGroup
 }
 
@@ -35,7 +37,8 @@ func NewHandler(logger *zap.Logger, fetcher *ZoneFetcher, mgr *manager.ServicesM
 	}
 }
 
-func (h *Handler) Start() error {
+func (h *Handler) Start(ctx context.Context, cancel func()) {
+	h.cancel = cancel
 	h.svcManager.DNSUpdate = func(service *service.Service, healthy bool) {
 		if healthy {
 			h.onServiceUp(service)
@@ -45,23 +48,17 @@ func (h *Handler) Start() error {
 	}
 	h.svcManager.Start()
 
-	zoneBatches, pollErrors, err := h.fetcher.StartAutoPoll()
-	if err != nil {
-		return err
-	}
+	zoneBatches, pollErrors := h.fetcher.StartAutoPoll(ctx)
 
 	h.wg.Go(func() {
 		h.handleZoneUpdates(zoneBatches, pollErrors)
 	})
-
-	return nil
 }
 
-// TODO: Panics when called while in a zone transfer from zone-fetcher!!!
 func (h *Handler) Stop() {
+	h.cancel()
 	close(h.stopFetcher)
 	h.wg.Wait()
-	h.fetcher.StopPoll()
 	h.svcManager.Stop()
 	h.log.Debug("Successfully stopped DNS - Handler")
 }
@@ -74,19 +71,18 @@ func (h *Handler) onServiceUp(svc *service.Service) {
 	h.updater.ServiceUp(svc)
 }
 
-func (h *Handler) handleZoneUpdates(zoneBatch <-chan []dns.RR, pollErrors <-chan error) {
+func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan error) {
 	for {
 		select {
-		case recordBatch, ok := <-zoneBatch:
+		case records, ok := <-zone:
 			if !ok { // chan is closed
 				return
 			}
 			servicesInBatch := make(map[string]*service.Service)
-			for _, record := range recordBatch { // registers every service in the current batch
+			for _, record := range records { // registers every service in the current batch
 				svc := h.handleRecord(record)
 				if svc != nil {
-					key := svc.Fqdn + ":" + svc.Datacenter
-					servicesInBatch[key] = svc
+					servicesInBatch[svc.GetID()] = svc
 				}
 			}
 

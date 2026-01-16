@@ -66,25 +66,25 @@ func main() {
 	)
 	/*
 
-	mgr.RegisterService(model.GSLBConfig{
-		Fqdn:       "test.nhn.no",
-		Ip:         "127.0.0.1",
-		Port:       "80",
-		Datacenter: "Abels1",
-		Interval:   timesutil.FromDuration(time.Second * 5),
-		Priority:   1,
-		Type:       "TCP-FULL",
-	}, false)
-
 		mgr.RegisterService(model.GSLBConfig{
 			Fqdn:       "test.nhn.no",
 			Ip:         "127.0.0.1",
-			Port:       "90",
-			Datacenter: "Abels2",
+			Port:       "80",
+			Datacenter: "Abels1",
 			Interval:   timesutil.FromDuration(time.Second * 5),
-			Priority:   2,
+			Priority:   1,
 			Type:       "TCP-FULL",
 		}, false)
+
+			mgr.RegisterService(model.GSLBConfig{
+				Fqdn:       "test.nhn.no",
+				Ip:         "127.0.0.1",
+				Port:       "90",
+				Datacenter: "Abels2",
+				Interval:   timesutil.FromDuration(time.Second * 5),
+				Priority:   2,
+				Type:       "TCP-FULL",
+			}, false)
 	*/
 
 	spoofRepo := hc.SpoofRepo.(*spoof.Repository)
@@ -102,7 +102,8 @@ func main() {
 		updater,
 	)
 
-	dnsHandler.Start()
+	background := context.Background()
+	dnsHandler.Start(context.WithCancel(background))
 
 	select {
 	case err := <-serverErr:
@@ -113,8 +114,7 @@ func main() {
 		dnsHandler.Stop()
 	}
 
-	ctx := context.Background()
-	serverCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+	serverCtx, cancel := context.WithTimeout(background, time.Second*5)
 	defer cancel()
 
 	if err := server.Shutdown(serverCtx); err != nil {
