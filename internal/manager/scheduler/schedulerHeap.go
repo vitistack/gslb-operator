@@ -40,7 +40,7 @@ func (h ServiceHeap) Peek() *ScheduledService {
 
 func (h *ServiceHeap) GetServiceIndex(service *service.Service) int {
 	for index, scheduled := range *h {
-		if scheduled.service.Fqdn == service.Fqdn {
+		if scheduled.service.GetID() == service.GetID() {
 			return index
 		}
 	}

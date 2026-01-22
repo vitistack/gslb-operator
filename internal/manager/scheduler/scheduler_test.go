@@ -18,7 +18,7 @@ var genericGSLBConfig = model.GSLBConfig{
 	Datacenter: "dc1",
 	Interval:   timesutil.Duration(5 * time.Second),
 	Priority:   1,
-	Type:       "TCP-FULL",
+	CheckType:       "TCP-FULL",
 }
 
 func TestNewScheduler(t *testing.T) {

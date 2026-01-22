@@ -25,7 +25,7 @@ var activeConfig = model.GSLBConfig{
 	Datacenter: "dc1",
 	Interval:   timesutil.Duration(5 * time.Second),
 	Priority:   1,
-	Type:       "TCP-FULL",
+	CheckType:       "TCP-FULL",
 }
 
 var passiveConfig = model.GSLBConfig{
@@ -35,7 +35,7 @@ var passiveConfig = model.GSLBConfig{
 	Datacenter: "dc2",
 	Interval:   timesutil.Duration(5 * time.Second),
 	Priority:   2,
-	Type:       "TCP-FULL",
+	CheckType:       "TCP-FULL",
 }
 
 var active *service.Service

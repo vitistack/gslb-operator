@@ -192,17 +192,18 @@ func (sg *ServiceGroup) RegisterService(newService *service.Service) {
 	sg.SetGroupMode()
 }
 
-func (sg *ServiceGroup) RemoveService(rmService *service.Service) {
+func (sg *ServiceGroup) RemoveService(rmService *service.Service) bool {
 	for idx, member := range sg.Members {
-		if member == rmService {
+		if member.GetID() == rmService.GetID() {
 			if member == sg.active {
 				sg.OnPromotion(sg.promoteNext())
 			}
 			sg.Members = utils.RemoveIndexFromSlice(sg.Members, idx)
 			sg.SetGroupMode()
-			return
+			break
 		}
 	}
+	return len(sg.Members) == 0
 }
 
 func (sg *ServiceGroup) promoteNext() *PromotionEvent {

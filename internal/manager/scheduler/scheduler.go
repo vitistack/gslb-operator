@@ -12,7 +12,6 @@ import (
 const OFFSETS_PER_SECOND = 2
 const OFFSET = time.Second / OFFSETS_PER_SECOND
 
-// TODO: sub-interval scheduling, e.g. wait 1s then schedule a new task on new timer
 type Scheduler struct {
 	// base-interval that the service distributes services on
 	interval time.Duration
@@ -33,6 +32,8 @@ type Scheduler struct {
 	wg   sync.WaitGroup
 	mu   sync.Mutex
 
+	isRunning bool
+
 	// action to take when ScheduledService.nectCheckTime has been reached
 	OnTick func(*service.Service)
 }
@@ -42,6 +43,10 @@ type ScheduledService struct {
 	service       *service.Service
 	nextCheckTime time.Time
 	offsett       time.Duration
+
+	// only used when RemoveService wants to remove the service
+	// that is currently at the top of the heap
+	shouldReSchedule bool
 }
 
 func NewScheduler(interval time.Duration) *Scheduler {
@@ -58,6 +63,7 @@ func NewScheduler(interval time.Duration) *Scheduler {
 		stop:        make(chan struct{}),
 		wg:          sync.WaitGroup{},
 		mu:          sync.Mutex{},
+		isRunning:   false,
 	}
 }
 
@@ -72,63 +78,91 @@ func (s *Scheduler) ScheduleService(svc *service.Service) {
 	defer s.mu.Unlock()
 	offset := OFFSET * time.Duration(s.nextOffset)
 	scheduled := ScheduledService{
-		service:       svc,
-		nextCheckTime: time.Now().Add(offset).Add(s.newCheckInterval()),
+		service:          svc,
+		nextCheckTime:    time.Now().Add(offset).Add(s.newCheckInterval()),
+		shouldReSchedule: true,
 	}
 
 	s.nextOffset = (s.nextOffset + 1) % s.maxOffSets
 
 	heap.Push(&s.heap, &scheduled)
 	if s.heap.Len() == 1 {
-		s.Loop() // restart the loop when we have scheduled services in the heap
+		s.startLoop() // restart the loop when we have scheduled services in the heap
 	}
 }
 
-func (s *Scheduler) RemoveService(svc *service.Service) {
+func (s *Scheduler) RemoveService(svc *service.Service) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	idx := s.heap.GetServiceIndex(svc)
 	if idx == -1 {
-		return
+		return s.heap.Len() == 0
 	}
-	heap.Remove(&s.heap, idx)
+	if idx == 0 {
+		s.heap[0].shouldReSchedule = false
+	} else {
+		heap.Remove(&s.heap, idx)
+	}
+
+	return s.heap.Len() == 0
 }
 
-// re-schedule an already existing scheduled service
-func (s *Scheduler) reScheduleService(reSchedule *ScheduledService) {
-	reSchedule.nextCheckTime = time.Now().Add(s.newCheckInterval()) // initiate the next checktime
-
+// re-schedule the service at the top of the heap
+func (s *Scheduler) reSchedule() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	heap.Push(&s.heap, reSchedule)
+	top := heap.Pop(&s.heap).(*ScheduledService)
+
+	if !top.shouldReSchedule {
+		// just return since the service is now removed from the heap
+		return
+	}
+
+	top.nextCheckTime = time.Now().Add(s.newCheckInterval()) // initiate the next checktime
+
+	heap.Push(&s.heap, top)
 
 	if s.heap.Len() == 0 {
-		s.Loop()
+		s.startLoop()
 	}
 }
 
-func (s *Scheduler) Loop() {
+func (s *Scheduler) startLoop() {
+	if s.isRunning {
+		return
+	}
+	s.isRunning = true
+	s.loop()
+}
+
+func (s *Scheduler) loop() {
 	s.wg.Go(func() {
+		defer func() {
+			s.mu.Lock()
+			s.isRunning = false
+			s.mu.Unlock()
+		}()
+
 		for {
 			s.mu.Lock()
-			if s.heap.Len() == 0 { // no need to infinetly run on an empty queue
+			if s.heap.Len() == 0 { // no need to infinitly run on an empty queue
 				s.mu.Unlock()
 				break
 			}
 
-			next := heap.Pop(&s.heap).(*ScheduledService)
+			next := s.heap.Peek()
 			s.mu.Unlock()
 			if next.nextCheckTime.Before(time.Now()) { // check time already past, do action immediately and reschedule
 				s.OnTick(next.service)
-				s.reScheduleService(next)
+				s.reSchedule()
 			} else {
 				timeUntil := time.Until(next.nextCheckTime)
 				select {
 				case <-s.stop:
-					break
+					return
 				case <-time.After(timeUntil):
 					s.OnTick(next.service)
-					s.reScheduleService(next)
+					s.reSchedule()
 				}
 			}
 		}

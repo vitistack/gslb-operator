@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/model"
-	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"go.uber.org/zap"
 )
@@ -19,7 +18,7 @@ var genericGSLBConfig = model.GSLBConfig{
 	Datacenter: "dc1",
 	Interval:   timesutil.Duration(5 * time.Second),
 	Priority:   1,
-	Type:       "TCP-FULL",
+	CheckType:  "TCP-FULL",
 }
 
 func TestNewManager(t *testing.T) {
@@ -33,7 +32,7 @@ func TestNewManager(t *testing.T) {
 		t.Fatal("NewManager returned nil")
 	}
 
-	if manager.servicesHealthCheck == nil {
+	if manager.scheduledServices == nil {
 		t.Error("servicesHealthCheck map not initialized")
 	}
 
@@ -56,7 +55,7 @@ func TestRegister(t *testing.T) {
 	svc, _ := manager.RegisterService(genericGSLBConfig)
 
 	manager.mutex.RLock()
-	services, ok := manager.servicesHealthCheck[svc.ScheduledInterval]
+	services, ok := manager.scheduledServices[svc.ScheduledInterval]
 	manager.mutex.RUnlock()
 
 	if !ok {
@@ -97,46 +96,5 @@ func TestStartAndStop(t *testing.T) {
 	// Pool should be stopped
 	if manager.pool.NumWorkers() != 0 {
 		t.Errorf("expected 0 workers after stop, got %d", manager.pool.NumWorkers())
-	}
-}
-
-func TestServicesManager_serviceExistsUnlocked(t *testing.T) {
-	tests := []struct {
-		name string // description of this test case
-		// Named input parameters for receiver constructor.
-		logger *zap.Logger
-		opts   []serviceManagerOption
-		// Named input parameters for target function.
-		want  bool
-		want2 *service.Service
-		want3 int
-	}{
-		{
-			name:   "one-service",
-			logger: logger,
-			opts:   []serviceManagerOption{WithDryRun(true)},
-			want:   true,
-			want3:  0,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sm := NewManager(tt.logger, tt.opts...)
-			tt.want2, _ = sm.RegisterService(genericGSLBConfig)
-
-			svc, _ := service.NewServiceFromGSLBConfig(genericGSLBConfig, logger.Sugar(), true)
-
-			got, got2, got3 := sm.serviceExistsUnlocked(svc)
-			// TODO: update the condition below to compare got with tt.want.
-			if got != tt.want {
-				t.Errorf("serviceExistsUnlocked() = %v, want %v", got, tt.want)
-			}
-			if got2 != tt.want2 {
-				t.Errorf("serviceExistsUnlocked() = %v, want %v", got2, tt.want2)
-			}
-			if got3 != tt.want3 {
-				t.Errorf("serviceExistsUnlocked() = %v, want %v", got3, tt.want3)
-			}
-		})
 	}
 }

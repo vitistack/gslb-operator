@@ -9,7 +9,6 @@ import (
 	"github.com/vitistack/gslb-operator/internal/manager/scheduler"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
-	"github.com/vitistack/gslb-operator/internal/utils"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/pool"
 	"go.uber.org/zap"
@@ -18,16 +17,16 @@ import (
 // Responsible for managing services, on scheduling services for health checks
 type ServicesManager struct {
 	// servicesHealthCheck maps check intervals to services that should be checked at that interval.
-	servicesHealthCheck map[timesutil.Duration][]*service.Service
-	schedulers          map[timesutil.Duration]*scheduler.Scheduler // wrapped scheduler for services
-	serviceGroups       map[string]*ServiceGroup
-	log                 *zap.SugaredLogger
-	mutex               sync.RWMutex
-	stop                sync.Once
-	pool                pool.WorkerPool
-	wg                  sync.WaitGroup
-	DNSUpdate           func(*service.Service, bool)
-	dryrun              bool
+	scheduledServices ScheduledServices                           // services that are scheduled on an interval
+	schedulers        map[timesutil.Duration]*scheduler.Scheduler // schedulers for health-checks
+	serviceGroups     map[string]*ServiceGroup
+	log               *zap.SugaredLogger
+	mutex             sync.RWMutex
+	stop              sync.Once
+	pool              pool.WorkerPool
+	wg                sync.WaitGroup
+	DNSUpdate         func(*service.Service, bool)
+	dryrun            bool
 }
 
 func NewManager(logger *zap.Logger, opts ...serviceManagerOption) *ServicesManager {
@@ -46,15 +45,15 @@ func NewManager(logger *zap.Logger, opts ...serviceManagerOption) *ServicesManag
 	}
 
 	return &ServicesManager{
-		servicesHealthCheck: make(map[timesutil.Duration][]*service.Service),
-		schedulers:          make(map[timesutil.Duration]*scheduler.Scheduler),
-		serviceGroups:       make(map[string]*ServiceGroup),
-		log:                 logger.Sugar(),
-		mutex:               sync.RWMutex{},
-		pool:                *pool.NewWorkerPool(cfg.MinRunningWorkers, cfg.NonBlockingBufferSize),
-		stop:                sync.Once{},
-		wg:                  sync.WaitGroup{},
-		dryrun:              cfg.DryRun,
+		scheduledServices: make(ScheduledServices),
+		schedulers:        make(map[timesutil.Duration]*scheduler.Scheduler),
+		serviceGroups:     make(map[string]*ServiceGroup),
+		log:               logger.Sugar(),
+		mutex:             sync.RWMutex{},
+		pool:              *pool.NewWorkerPool(cfg.MinRunningWorkers, cfg.NonBlockingBufferSize),
+		stop:              sync.Once{},
+		wg:                sync.WaitGroup{},
+		dryrun:            cfg.DryRun,
 	}
 }
 
@@ -70,11 +69,11 @@ func (sm *ServicesManager) Stop() {
 
 		for interval, scheduler := range sm.schedulers {
 			scheduler.Stop()
-			sm.log.Debugf("successfully closed scheduler on interval: %s", interval.String())
+			sm.log.Debugf("scheduler on interval: %s closed", interval.String())
 		}
 
 		sm.wg.Wait()
-		sm.log.Debug("successfully closed manager")
+		sm.log.Debug("service manager closed")
 	})
 }
 
@@ -82,14 +81,13 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
-	newService, err := service.NewServiceFromGSLBConfig(serviceCfg, sm.log, sm.dryrun)
+	newService, err := service.NewServiceFromGSLBConfig(serviceCfg, sm.log, sm.dryrun) // create the service object
 	if err != nil {
 		return nil, fmt.Errorf("unable to register service: %s", err.Error())
 	}
 
-	exists, oldSvc, _ := sm.serviceExistsUnlocked(newService)
-
-	if exists { // update service if already exists
+	_, oldSvc := sm.scheduledServices.Search(newService.GetID(), newService.ScheduledInterval)
+	if oldSvc != nil { // update service if already exists
 		sm.updateServiceUnlocked(oldSvc, newService)
 		return newService, nil
 	}
@@ -100,12 +98,12 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 		sm.serviceGroups[newService.MemberOf].OnServiceHealthChange(newService, healthy)
 	})
 
-	// create new scheduler if needed, and schedule service
+	// create new scheduler if needed, and schedule service for health-checks
 	scheduler := sm.newScheduler(newService.ScheduledInterval)
-	if _, ok := sm.servicesHealthCheck[newService.ScheduledInterval]; !ok { // first service on interval
-		scheduler.ScheduleService(newService)
-	}
 	scheduler.ScheduleService(newService)
+
+	// register the service in the datastructure
+	sm.scheduledServices.Add(newService)
 
 	// create new service group if needed, and register service in group
 	memberOf := newService.MemberOf
@@ -116,37 +114,28 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	}
 	serviceGroup.RegisterService(newService)
 
-	sm.servicesHealthCheck[newService.ScheduledInterval] = append(sm.servicesHealthCheck[newService.ScheduledInterval], newService)
 	sm.log.Debugf("Service: %v:%v registered", newService.MemberOf, newService.Datacenter)
 	return newService, nil
 }
 
 // removes the service from its healthcheck queue
-func (sm *ServicesManager) RemoveService(service *service.Service, locked bool) error {
-	if !locked {
-		sm.mutex.Lock()
-		defer sm.mutex.Unlock()
-	}
+func (sm *ServicesManager) RemoveService(service *service.Service) error {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
 
-	exists, _, removeIdx := sm.serviceExistsUnlocked(service)
-	if !exists { // cannot remove something that does not exists
+	_, svc := sm.scheduledServices.Search(service.GetID(), service.ScheduledInterval)
+	if svc == nil { // cannot remove something that does not exists
 		return ErrServiceNotFound
 	}
 
-	scheduler := sm.schedulers[service.ScheduledInterval]
-	scheduler.RemoveService(service)
+	sm.schedulers[service.ScheduledInterval].RemoveService(service) // remove the service from its scheduler
 
 	group := sm.serviceGroups[service.MemberOf]
-	group.RemoveService(service) // registered in group
-	if len(group.Members) == 0 {
+	empty := group.RemoveService(service) // registered in group
+	if empty {
 		delete(sm.serviceGroups, service.MemberOf)
 	}
-	newQueue := utils.RemoveIndexFromSlice(sm.servicesHealthCheck[service.ScheduledInterval], removeIdx)
-	if len(newQueue) == 0 {
-		sm.cleanupInterval(service.ScheduledInterval)
-	} else {
-		sm.servicesHealthCheck[service.ScheduledInterval] = newQueue
-	}
+	sm.scheduledServices.Delete(service.GetID(), service.ScheduledInterval)
 	sm.log.Debugf("Service: %v:%v removed", service.MemberOf, service.Datacenter)
 
 	return nil
@@ -180,27 +169,9 @@ func (sm *ServicesManager) updateServiceUnlocked(old, new *service.Service) {
 		}
 	}
 
-	old.Update(new)
+	old.Assign(new)
 
 	sm.log.Debugf("Service: %s updated", old.GetID())
-}
-
-// WARNING, ONLY CALL THIS FUNCTION IF YOU KNOW WHAT YOU ARE DOING.
-// NEEDS TO HOLD sm.mutex BEFORE A CALL TO THIS FUNCTION IS MADE
-// A service is considered to exist if a registered service has the same Fqdn and Datacenter field as the service parameter
-func (sm *ServicesManager) serviceExistsUnlocked(service *service.Service) (bool, *service.Service, int) {
-	queue, ok := sm.servicesHealthCheck[service.ScheduledInterval]
-	if !ok {
-		return false, nil, -1
-	}
-
-	for idx, s := range queue {
-		if s.GetID() == service.GetID() {
-			return true, s, idx
-		}
-	}
-
-	return false, nil, -1
 }
 
 // re-schedules the relevant services in the PromotionEvent
@@ -208,8 +179,17 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
+	var newID, oldID string
+	if event.NewActive != nil {
+		newID = event.NewActive.GetID()
+	}
+
+	if event.OldActive != nil {
+		oldID = event.OldActive.GetID()
+	}
+
 	// No-op: nothing to change
-	if event.NewActive == event.OldActive {
+	if newID == oldID {
 		sm.log.Debugf("promotion no-op for service %s (unchanged active)", event.Service)
 		return
 	}
@@ -284,16 +264,13 @@ func (sm *ServicesManager) newScheduler(interval timesutil.Duration) *scheduler.
 
 	scheduler := scheduler.NewScheduler(time.Duration(interval))
 	sm.schedulers[interval] = scheduler
-	sm.servicesHealthCheck[interval] = make([]*service.Service, 0)
 
 	scheduler.OnTick = func(s *service.Service) {
-		sm.log.Debugf("checking service: %v:%v", s.Fqdn, s.Datacenter)
 		err := sm.pool.Put(s)
 		if errors.Is(err, pool.ErrPutOnClosedPool) {
-			sm.log.Errorf("failed to execute health check, pool is closed")
+			sm.log.Errorf("failed to schedule health check, pool is closed")
 		}
 	}
-	scheduler.Loop()
 
 	sm.log.Debugf("new scheduler on interval: %v", interval.String())
 
@@ -301,7 +278,6 @@ func (sm *ServicesManager) newScheduler(interval timesutil.Duration) *scheduler.
 }
 
 func (sm *ServicesManager) cleanupInterval(interval timesutil.Duration) {
-	delete(sm.servicesHealthCheck, interval)
 	if scheduler, ok := sm.schedulers[interval]; ok {
 		scheduler.Stop()
 		delete(sm.schedulers, interval)
@@ -314,27 +290,12 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 	if oldInterval == newInterval {
 		return // already scheduled on this interval
 	}
+	sm.scheduledServices.MoveToInterval(svc, newInterval)
 
-	if queue, ok := sm.servicesHealthCheck[oldInterval]; ok {
-		// remove from old interval queue
-		for idx, qService := range queue {
-			if qService.Fqdn == svc.Fqdn && qService.Datacenter == svc.Datacenter {
-				newQueue := utils.RemoveIndexFromSlice(queue, idx)
-
-				if len(newQueue) == 0 { // cleanup interval if empty
-					sm.cleanupInterval(oldInterval)
-				} else {
-					sm.servicesHealthCheck[oldInterval] = newQueue
-				}
-				break
-			}
-		}
+	oldScheduler, newScheduler := sm.schedulers[oldInterval], sm.schedulers[newInterval]
+	last := oldScheduler.RemoveService(svc)
+	if last {
+		sm.cleanupInterval(oldInterval)
 	}
-
-	if _, ok := sm.servicesHealthCheck[newInterval]; !ok {
-		sm.newScheduler(newInterval)
-	}
-
-	sm.servicesHealthCheck[newInterval] = append(sm.servicesHealthCheck[newInterval], svc)
-	svc.ScheduledInterval = newInterval
+	newScheduler.ScheduleService(svc)
 }

@@ -65,6 +65,7 @@ func (a *API) Port() string {
 type GSLB struct {
 	ZONE       string `env:"GSLB_ZONE" flag:"gslb-zone"`
 	NAMESERVER string `env:"GSLB_NAMESERVER" flag:"gslb-nameserver"`
+	//POLLINTERVAL timesutil.Duration `env:"GSLB_POLL_INTERVAL" flag:"poll-interval`
 }
 
 func (g *GSLB) Zone() string {
@@ -74,6 +75,12 @@ func (g *GSLB) Zone() string {
 func (g *GSLB) NameServer() string {
 	return g.NAMESERVER
 }
+
+/*
+func (g *GSLB) PollInterval() timesutil.Duration {
+	return g.POLLINTERVAL
+}
+*/
 
 func newConfig() (*Config, error) {
 	loader := loaders.NewChainLoader(

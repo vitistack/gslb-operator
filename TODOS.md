@@ -23,3 +23,6 @@
 
     ActiveActive:
         - no promotion events are triggered
+
+
+- OnShutDown functions to save current state on shutdown

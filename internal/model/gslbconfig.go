@@ -13,5 +13,5 @@ type GSLBConfig struct {
 	Interval         timesutil.Duration `json:"interval"`
 	Priority         int                `json:"priority"`
 	FailureThreshold int                `json:"failure_threshold"`
-	Type             string             `json:"check_type"`
+	CheckType        string             `json:"check_type"`
 }

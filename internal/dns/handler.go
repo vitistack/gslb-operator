@@ -89,7 +89,7 @@ func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan erro
 			for key, oldSvc := range h.knownServices { // remove any services that dont exist in the current batch
 				if _, exists := servicesInBatch[key]; !exists {
 					h.log.Infof("Service no longer exists in GSLB - config zone, removing: %s", key)
-					err := h.svcManager.RemoveService(oldSvc, false)
+					err := h.svcManager.RemoveService(oldSvc)
 					if err != nil {
 						h.log.Errorf("failed to remove service: %s: %s", key, err.Error())
 					}

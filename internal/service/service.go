@@ -21,6 +21,7 @@ type Service struct {
 	Fqdn                 string
 	MemberOf             string
 	Datacenter           string
+	checkType            string
 	ScheduledInterval    timesutil.Duration
 	defaultInterval      timesutil.Duration
 	priority             int
@@ -54,6 +55,7 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger
 		Fqdn:              config.Fqdn,
 		MemberOf:          config.MemberOf,
 		Datacenter:        config.Datacenter,
+		checkType:         config.CheckType,
 		ScheduledInterval: interval,
 		defaultInterval:   interval,
 		priority:          config.Priority,
@@ -67,16 +69,16 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger
 	case dryRun:
 		svc.check = checks.DryRun()
 
-	case config.Type == checks.HTTPS:
+	case config.CheckType == checks.HTTPS:
 		svc.check = checks.HTTPCheck("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT)
 
-	case config.Type == checks.HTTP:
+	case config.CheckType == checks.HTTP:
 		svc.check = checks.HTTPCheck("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT)
 
-	case config.Type == checks.TCP_FULL:
+	case config.CheckType == checks.TCP_FULL:
 		svc.check = checks.TCPFull(svc.addr, checks.DEFAULT_TIMEOUT)
 
-	case config.Type == checks.TCP_HALF:
+	case config.CheckType == checks.TCP_HALF:
 		svc.check = checks.TCPHalf(svc.addr, checks.DEFAULT_TIMEOUT)
 
 	default:
@@ -233,14 +235,15 @@ func (s *Service) ConfigChanged(other *Service) bool {
 		s.addr != other.addr ||
 		s.Datacenter != other.Datacenter ||
 		s.FailureThreshold != other.FailureThreshold ||
-		s.priority != other.priority {
+		s.priority != other.priority ||
+		s.checkType != other.checkType {
 		return true
 	}
 	return false
 }
 
 // updates the configuration values of s with the values of new
-func (s *Service) Update(new *Service) {
+func (s *Service) Assign(new *Service) {
 	s.addr = new.addr
 	s.check = new.check
 	s.MemberOf = new.MemberOf
