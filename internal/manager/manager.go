@@ -3,6 +3,7 @@ package manager
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -10,8 +11,8 @@ import (
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/pool"
-	"go.uber.org/zap"
 )
 
 // Responsible for managing services, on scheduling services for health checks
@@ -20,7 +21,6 @@ type ServicesManager struct {
 	scheduledServices ScheduledServices                           // services that are scheduled on an interval
 	schedulers        map[timesutil.Duration]*scheduler.Scheduler // schedulers for health-checks
 	serviceGroups     map[string]*ServiceGroup
-	log               *zap.SugaredLogger
 	mutex             sync.RWMutex
 	stop              sync.Once
 	pool              pool.WorkerPool
@@ -29,7 +29,7 @@ type ServicesManager struct {
 	dryrun            bool
 }
 
-func NewManager(logger *zap.Logger, opts ...serviceManagerOption) *ServicesManager {
+func NewManager(opts ...serviceManagerOption) *ServicesManager {
 	cfg := managerConfig{
 		MinRunningWorkers:     100,
 		NonBlockingBufferSize: 110,
@@ -41,14 +41,13 @@ func NewManager(logger *zap.Logger, opts ...serviceManagerOption) *ServicesManag
 	}
 
 	if cfg.DryRun {
-		logger.Warn("dry-run enabled")
+		bslog.Warn("dry-run enabled")
 	}
 
 	return &ServicesManager{
 		scheduledServices: make(ScheduledServices),
 		schedulers:        make(map[timesutil.Duration]*scheduler.Scheduler),
 		serviceGroups:     make(map[string]*ServiceGroup),
-		log:               logger.Sugar(),
 		mutex:             sync.RWMutex{},
 		pool:              *pool.NewWorkerPool(cfg.MinRunningWorkers, cfg.NonBlockingBufferSize),
 		stop:              sync.Once{},
@@ -69,11 +68,11 @@ func (sm *ServicesManager) Stop() {
 
 		for interval, scheduler := range sm.schedulers {
 			scheduler.Stop()
-			sm.log.Debugf("scheduler on interval: %s closed", interval.String())
+			bslog.Debug("scheduler closed", slog.String("interval", interval.String()))
 		}
 
 		sm.wg.Wait()
-		sm.log.Debug("service manager closed")
+		bslog.Debug("service manager closed")
 	})
 }
 
@@ -81,7 +80,7 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
-	newService, err := service.NewServiceFromGSLBConfig(serviceCfg, sm.log, sm.dryrun) // create the service object
+	newService, err := service.NewServiceFromGSLBConfig(serviceCfg, sm.dryrun) // create the service object
 	if err != nil {
 		return nil, fmt.Errorf("unable to register service: %s", err.Error())
 	}
@@ -94,7 +93,7 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 
 	// set healthchange callback action
 	newService.SetHealthChangeCallback(func(healthy bool) {
-		sm.log.Debugf("received health-change for service: %v:%v (healthy: %v)", newService.MemberOf, newService.Datacenter, healthy)
+		bslog.Debug("received health-change", newService, slog.Bool("healthy", healthy))
 		sm.serviceGroups[newService.MemberOf].OnServiceHealthChange(newService, healthy)
 	})
 
@@ -110,11 +109,11 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	serviceGroup, ok := sm.serviceGroups[memberOf]
 	if !ok {
 		serviceGroup = sm.newServiceGroup(memberOf)
-		sm.log.Debugf("new service group, for service: %v", newService.MemberOf)
+		bslog.Debug("new service group", slog.String("group", newService.MemberOf))
 	}
 	serviceGroup.RegisterService(newService)
 
-	sm.log.Debugf("Service: %v:%v registered", newService.MemberOf, newService.Datacenter)
+	bslog.Debug("registered service", newService)
 	return newService, nil
 }
 
@@ -136,7 +135,7 @@ func (sm *ServicesManager) RemoveService(service *service.Service) error {
 		delete(sm.serviceGroups, service.MemberOf)
 	}
 	sm.scheduledServices.Delete(service.GetID(), service.ScheduledInterval)
-	sm.log.Debugf("Service: %v:%v removed", service.MemberOf, service.Datacenter)
+	bslog.Debug("removed service", service)
 
 	return nil
 }
@@ -165,13 +164,13 @@ func (sm *ServicesManager) updateServiceUnlocked(old, new *service.Service) {
 
 		if len(oldGroup.Members) == 0 {
 			// TODO: delete service group
-			sm.log.Error("TODO: delete service group")
+			bslog.Error("TODO: delete service group")
 		}
 	}
 
 	old.Assign(new)
 
-	sm.log.Debugf("Service: %s updated", old.GetID())
+	bslog.Debug("updated service", old)
 }
 
 // re-schedules the relevant services in the PromotionEvent
@@ -190,7 +189,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 
 	// No-op: nothing to change
 	if newID == oldID {
-		sm.log.Debugf("promotion no-op for service %s (unchanged active)", event.Service)
+		bslog.Debug("skipping promotion event", slog.String("reason", "unchanged active member"))
 		return
 	}
 
@@ -208,34 +207,40 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 			baseInterval = event.NewActive.GetBaseInterval()
 		}
 	}
-	sm.log.Debug(msg)
+	bslog.Debug(msg)
 
 	if event.OldActive != nil && event.NewActive != nil { // just swap, and do dns updates
 		demotedInterval = event.NewActive.ScheduledInterval
 
-		sm.log.Infof("Demoting service %v:%v (interval: %v -> %v)",
-			event.OldActive.Fqdn, event.OldActive.Datacenter,
-			event.OldActive.ScheduledInterval, demotedInterval)
+		bslog.Info("demoting service",
+			event.OldActive,
+			slog.Group("intervalChange",
+				slog.String("from", event.OldActive.ScheduledInterval.String()),
+				slog.String("to", demotedInterval.String()),
+			))
 		sm.moveServiceToInterval(event.OldActive, demotedInterval)
 		sm.DNSUpdate(event.OldActive, false)
 
-		sm.log.Infof("Promoting service %v:%v (interval: %v -> %v)",
-			event.NewActive.Fqdn, event.NewActive.Datacenter,
-			event.NewActive.ScheduledInterval, baseInterval)
+		bslog.Info("promoting service",
+			event.NewActive,
+			slog.Group("intervalChange",
+				slog.String("from", event.NewActive.ScheduledInterval.String()),
+				slog.String("to", baseInterval.String()),
+			))
 		sm.moveServiceToInterval(event.NewActive, baseInterval)
 		sm.DNSUpdate(event.NewActive, true)
 		return
 	}
 
 	if event.NewActive != nil { // first service to come up when all services are down
-		sm.log.Infof("Promoting service %s:%s to new active", event.NewActive.Fqdn, event.NewActive.Datacenter)
+		bslog.Info("new active service", event.NewActive)
 		sm.moveServiceToInterval(event.NewActive, baseInterval)
 		sm.DNSUpdate(event.NewActive, true)
 		return
 	}
 
 	if event.OldActive != nil { // no service to take over
-		sm.log.Warnf("No sites available for %s", event.Service)
+		bslog.Warn("no available sites", slog.String("serviceGroup", event.Service))
 		sm.DNSUpdate(event.OldActive, false)
 		return
 	}
@@ -246,9 +251,6 @@ func (sm *ServicesManager) newServiceGroup(memberOf string) *ServiceGroup {
 	newGroup := NewEmptyServiceGroup()
 
 	newGroup.OnPromotion = func(event *PromotionEvent) {
-		if event.NewActive == nil {
-			sm.log.Warnf("no active sites available for: %s", event.Service)
-		}
 		sm.handlePromotion(event)
 	}
 	sm.serviceGroups[memberOf] = newGroup
@@ -268,12 +270,11 @@ func (sm *ServicesManager) newScheduler(interval timesutil.Duration) *scheduler.
 	scheduler.OnTick = func(s *service.Service) {
 		err := sm.pool.Put(s)
 		if errors.Is(err, pool.ErrPutOnClosedPool) {
-			sm.log.Errorf("failed to schedule health check, pool is closed")
+			bslog.Error("failed to schedule health check", slog.String("reason", err.Error()))
 		}
 	}
 
-	sm.log.Debugf("new scheduler on interval: %v", interval.String())
-
+	bslog.Debug("new scheduler", slog.String("interval", interval.String()))
 	return scheduler
 }
 
@@ -282,7 +283,7 @@ func (sm *ServicesManager) cleanupInterval(interval timesutil.Duration) {
 		scheduler.Stop()
 		delete(sm.schedulers, interval)
 	}
-	sm.log.Debugf("deleted scheduler on interval: %v", interval.String())
+	bslog.Debug("deleted scheduler", slog.String("interval", interval.String()))
 }
 
 func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterval timesutil.Duration) {

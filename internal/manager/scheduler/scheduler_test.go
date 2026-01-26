@@ -9,7 +9,6 @@ import (
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
-	"go.uber.org/zap"
 )
 
 var genericGSLBConfig = model.GSLBConfig{
@@ -90,11 +89,10 @@ func TestScheduler_Loop(t *testing.T) {
 	urls := randomUrlIDs(numServices)
 
 	services := make([]*service.Service, 0, 100)
-	logger, _ := zap.NewDevelopment()
 
 	for idx := range numServices {
 		genericGSLBConfig.Fqdn = urls[idx]
-		svc, _ := service.NewServiceFromGSLBConfig(genericGSLBConfig, logger.Sugar(), true)
+		svc, _ := service.NewServiceFromGSLBConfig(genericGSLBConfig, true)
 		services = append(services, svc)
 	}
 

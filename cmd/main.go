@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/dns"
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 )
 
 func main() {
@@ -21,7 +23,7 @@ func main() {
 
 	api := http.NewServeMux()
 
-	hc, log, err := handler.NewHandler()
+	hc, err := handler.NewHandler()
 	if err != nil {
 		fmt.Printf("unable to start service: %s", err.Error())
 		os.Exit(1)
@@ -44,7 +46,7 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
-	log.Sugar().Infof("starting service on port%s", cfg.API().Port())
+	bslog.Info("starting service", slog.String("port", cfg.API().Port()))
 	go func() {
 		err := server.ListenAndServe()
 		if err != nil {
@@ -54,12 +56,10 @@ func main() {
 
 	// creating dns - handler objects
 	zoneFetcher := dns.NewZoneFetcherWithAutoPoll(
-		log,
 		dns.WithServer(cfg.GSLB().NameServer()),
 		dns.WithZone(cfg.GSLB().Zone()),
 	)
 	mgr := manager.NewManager(
-		log,
 		manager.WithMinRunningWorkers(100),
 		manager.WithNonBlockingBufferSize(105),
 		//manager.WithDryRun(true),
@@ -89,14 +89,12 @@ func main() {
 
 	spoofRepo := hc.SpoofRepo.(*spoof.Repository)
 	updater, err := dns.NewUpdater(
-		log,
 		dns.UpdaterWithSpoofRepo(spoofRepo),
 	)
 	if err != nil {
-		log.Sugar().Fatalf("unable to create updater: %s", err.Error())
+		bslog.Fatal("unable to create updater", slog.String("error", err.Error()))
 	}
 	dnsHandler := dns.NewHandler(
-		log,
 		zoneFetcher,
 		mgr,
 		updater,
@@ -108,9 +106,9 @@ func main() {
 	select {
 	case err := <-serverErr:
 		dnsHandler.Stop()
-		log.Sugar().Fatalf("server crashed unexpectedly, no longer serving http: %s", err.Error())
+		bslog.Fatal("server crashed unexpectedly, no longer serving http", slog.String("reason", err.Error()))
 	case <-quit:
-		log.Info("gracefully shutting down...")
+		bslog.Info("gracefully shutting down...")
 		dnsHandler.Stop()
 	}
 

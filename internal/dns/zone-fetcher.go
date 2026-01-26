@@ -9,14 +9,13 @@ import (
 	"codeberg.org/miekg/dns"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
-	"go.uber.org/zap"
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 )
 
 // Fetches a DNS zone from a dedicated server via AXFR
 type ZoneFetcher struct {
 	Zone     string
 	Server   string
-	log      *zap.Logger
 	wg       sync.WaitGroup
 	interval timesutil.Duration
 	client   *dns.Client
@@ -25,12 +24,11 @@ type ZoneFetcher struct {
 type fetcherOption func(fetcher *ZoneFetcher)
 
 // auto fetches after a given duration
-func NewZoneFetcherWithAutoPoll(logger *zap.Logger, opts ...fetcherOption) *ZoneFetcher {
+func NewZoneFetcherWithAutoPoll(opts ...fetcherOption) *ZoneFetcher {
 	gslb := config.GetInstance().GSLB()
 	fetcher := &ZoneFetcher{ // default values
 		Zone:     gslb.Zone(),
 		Server:   gslb.NameServer(),
-		log:      logger,
 		wg:       sync.WaitGroup{},
 		interval: timesutil.Duration(DEFAULT_POLL_INTERVAL),
 		client:   dns.NewClient(),
@@ -70,7 +68,7 @@ func (f *ZoneFetcher) StartAutoPoll(ctx context.Context) (zone chan []dns.RR, po
 	f.wg.Go(func() {
 		defer close(zone)
 		defer close(pollErrors)
-		defer f.log.Debug("closing zone-fetcher")
+		defer bslog.Debug("closing zone-fetcher")
 
 		f.AXFRTransfer(ctx, zone, pollErrors)
 
@@ -98,7 +96,7 @@ func (f *ZoneFetcher) AXFRTransfer(ctx context.Context, zone chan []dns.RR, tran
 		return // context is cancelled
 	}
 
-	f.log.Debug("starting zone-transfer")
+	bslog.Debug("starting zone-transfer")
 	f.client.Transfer = &dns.Transfer{}
 	msg := dns.NewMsg(f.Zone, dns.TypeAXFR)
 
@@ -115,7 +113,7 @@ func (f *ZoneFetcher) AXFRTransfer(ctx context.Context, zone chan []dns.RR, tran
 		case envelope, ok := <-envelopes:
 			if !ok {
 				zone <- records
-				f.log.Debug("zone-transfer completed")
+				bslog.Debug("zone-transfer completed")
 				return // zone complete
 			}
 			if envelope.Error != nil {

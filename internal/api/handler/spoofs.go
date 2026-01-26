@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"slices"
 
 	"github.com/vitistack/gslb-operator/internal/model"
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
 )
@@ -17,7 +19,7 @@ func (h *Handler) GetSpoofs(w http.ResponseWriter, r *http.Request) {
 	spoofs, err := h.SpoofRepo.ReadAll()
 	if err != nil {
 		response.Err(w, response.ErrInternalError, "unable to fetch spoofs from storage")
-		h.log.Sugar().Errorf("Unable to fetch all spoofs: %s", err.Error())
+		bslog.Error("Unable to fetch spoofs", slog.String("reason", err.Error()))
 		return
 	}
 
@@ -25,7 +27,7 @@ func (h *Handler) GetSpoofs(w http.ResponseWriter, r *http.Request) {
 	err = request.MarshallParams(r.URL.Query(), params)
 	if err != nil {
 		response.Err(w, response.ErrInvalidInput, "could not parse request parameters")
-		h.log.Sugar().Errorf("unable to parse request parameters: %s", err.Error())
+		bslog.Error("unable to parse request parameters", slog.String("reason", err.Error()))
 		return
 	}
 
@@ -44,7 +46,7 @@ func (h *Handler) GetFQDNSpoof(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		msg := "unable to fetch spoof with id: " + fqdn + " from storage"
 		response.Err(w, response.ErrInternalError, msg)
-		h.log.Sugar().Errorf("%s: %s", msg, err.Error())
+		bslog.Error(msg, slog.String("reason", err.Error()))
 		return
 	}
 
@@ -55,7 +57,7 @@ func (h *Handler) GetSpoofsHash(w http.ResponseWriter, r *http.Request) {
 	spoofs, err := h.SpoofRepo.ReadAll()
 	if err != nil {
 		response.Err(w, response.ErrInternalError, "unable to fetch spoofs from storage")
-		h.log.Sugar().Errorf("unable to read spoofs from storage: %s", err.Error())
+		bslog.Error("unable to read spoofs from storage", slog.String("reason", err.Error()))
 		return
 	}
 
@@ -68,7 +70,7 @@ func (h *Handler) GetSpoofsHash(w http.ResponseWriter, r *http.Request) {
 	marshalledSpoofs, err := json.Marshal(spoofs)
 	if err != nil {
 		response.Err(w, response.ErrInternalError, "could not create spoofs-hash")
-		h.log.Sugar().Errorf("unable to marshall spoofs: %s", err.Error())
+		bslog.Error("unable to marshall spoofs", slog.String("reason", err.Error()))
 		return
 	}
 
@@ -78,7 +80,7 @@ func (h *Handler) GetSpoofsHash(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err = response.JSON(w, http.StatusOK, hash); err != nil {
-		h.log.Sugar().Errorf("could not write response to client: %s", err.Error())
+		bslog.Error("could not write response to client", slog.String("reason", err.Error()))
 	}
 }
 

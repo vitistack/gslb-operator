@@ -2,13 +2,14 @@ package service
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/checks"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
-	"go.uber.org/zap"
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 )
 
 const DEFAULT_FAILURE_THRESHOLD = 3
@@ -30,10 +31,9 @@ type Service struct {
 	check                func() error // TCP - half/full, HTTP(S)
 	healthChangeCallback HealthChangeCallback
 	isHealthy            bool
-	log                  *zap.SugaredLogger
 }
 
-func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger, dryRun bool) (*Service, error) {
+func NewServiceFromGSLBConfig(config model.GSLBConfig, dryRun bool) (*Service, error) {
 	ip := net.ParseIP(config.Ip)
 	if ip == nil {
 		return nil, ErrUnableToParseIpAddr
@@ -62,7 +62,6 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, logger *zap.SugaredLogger
 		FailureThreshold:  config.FailureThreshold,
 		failureCount:      config.FailureThreshold,
 		isHealthy:         false,
-		log:               logger,
 	}
 
 	switch {
@@ -164,7 +163,7 @@ OnFailure : count = 3, healthy = false -> update DNS
 
 // called when healthcheck is successful
 func (s *Service) OnSuccess() {
-	s.log.Debugf("Health-Check on Service: %v:%v Successfull", s.addr, s.Datacenter)
+	bslog.Debug("Health-Check Successfull", s)
 	if s.isHealthy { // already healthy
 		s.failureCount = 0
 		return
@@ -182,7 +181,7 @@ func (s *Service) OnSuccess() {
 
 // called when healthcheck fails
 func (s *Service) OnFailure(err error) {
-	s.log.Debugf("Health-Check on Service: %v:%v Failed: %s", s.addr, s.Datacenter, err.Error())
+	bslog.Debug("Health-Check Failed", s, slog.String("error", err.Error()))
 	if !s.isHealthy { // already unhealthy
 		s.failureCount = s.FailureThreshold
 		return

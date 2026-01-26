@@ -10,24 +10,22 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/persistence/store/memory"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
 	"github.com/vitistack/gslb-operator/pkg/rest/request/client"
-	"go.uber.org/zap"
 )
 
 type updaterOption func(u *Updater)
 
 type Updater struct {
-	log       *zap.SugaredLogger
 	Server    string
 	spoofRepo *spoof.Repository
 	client    client.HTTPClient
 	builder   *request.Builder
 }
 
-func NewUpdater(logger *zap.Logger, opts ...updaterOption) (*Updater, error) {
+func NewUpdater(opts ...updaterOption) (*Updater, error) {
 	c, err := client.NewClient(
 		time.Second*5,
 		client.WithRetry(3),
-		client.WithRequestLogging(logger.Sugar()),
+		//client.WithRequestLogging(logger.Sugar()),
 	)
 
 	if err != nil {
@@ -35,7 +33,6 @@ func NewUpdater(logger *zap.Logger, opts ...updaterOption) (*Updater, error) {
 	}
 
 	u := &Updater{
-		log:       logger.Sugar(),
 		Server:    "localhost:9000",
 		spoofRepo: spoof.NewRepository(memory.NewStore[model.Spoof]()),
 		client:    *c,

@@ -9,14 +9,11 @@ import (
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
-	"go.uber.org/zap"
 )
 
 type Test struct {
 	Name string
 }
-
-var sgLogger *zap.Logger
 
 var activeConfig = model.GSLBConfig{
 	Fqdn:       "test.example.com",
@@ -42,15 +39,8 @@ var active *service.Service
 var passive *service.Service
 
 func TestMain(m *testing.M) {
-	logger, err := zap.NewDevelopment()
-	if err != nil {
-		log.Printf("could not start tests due to logger not being initialized")
-		return
-	}
-	sgLogger = logger
-
-	active, _ = service.NewServiceFromGSLBConfig(activeConfig, sgLogger.Sugar(), true)
-	passive, _ = service.NewServiceFromGSLBConfig(passiveConfig, sgLogger.Sugar(), true)
+	active, _ = service.NewServiceFromGSLBConfig(activeConfig, true)
+	passive, _ = service.NewServiceFromGSLBConfig(passiveConfig, true)
 	m.Run()
 }
 

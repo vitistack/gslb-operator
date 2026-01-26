@@ -2,7 +2,10 @@ package config
 
 import (
 	"log"
+	"log/slog"
+	"os"
 
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/loaders"
 )
 
@@ -14,6 +17,31 @@ func init() {
 	if err != nil {
 		log.Fatalf("unable to load config: %s", err.Error())
 	}
+
+
+
+	var handler slog.Handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+		ReplaceAttr: bslog.BaseReplaceAttr,
+	})
+
+	switch cfg.server.ENV {
+	case "dev", "development", "DEV", "DEVELOPMENT":
+		handler = bslog.NewHandler(
+			slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+				Level:       slog.LevelDebug,
+				ReplaceAttr: bslog.BaseReplaceAttr,
+			}),
+			bslog.InDevMode(),
+		)
+	case "prod", "production", "PROD", "PRODUCTION":
+		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+			ReplaceAttr: bslog.BaseReplaceAttr,
+		})
+	}
+
+	slog.SetDefault(slog.New(handler))
 }
 
 type Config struct {

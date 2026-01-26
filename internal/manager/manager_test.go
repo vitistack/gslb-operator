@@ -6,10 +6,7 @@ import (
 
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
-	"go.uber.org/zap"
 )
-
-var logger, _ = zap.NewDevelopment()
 
 var genericGSLBConfig = model.GSLBConfig{
 	Fqdn:       "test.example.com",
@@ -23,7 +20,6 @@ var genericGSLBConfig = model.GSLBConfig{
 
 func TestNewManager(t *testing.T) {
 	manager := NewManager(
-		logger,
 		WithMinRunningWorkers(5),
 		WithNonBlockingBufferSize(6),
 	)
@@ -47,7 +43,6 @@ func TestNewManager(t *testing.T) {
 
 func TestRegister(t *testing.T) {
 	manager := NewManager(
-		logger,
 		WithMinRunningWorkers(2),
 		WithNonBlockingBufferSize(10),
 	)
@@ -73,7 +68,6 @@ func TestRegister(t *testing.T) {
 
 func TestStartAndStop(t *testing.T) {
 	manager := NewManager(
-		logger,
 		WithMinRunningWorkers(2),
 		WithNonBlockingBufferSize(10),
 	)

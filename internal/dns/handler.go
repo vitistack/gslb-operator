@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -10,7 +11,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
-	"go.uber.org/zap"
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 )
 
 // Handles/Orchestrates DNS related things
@@ -19,19 +20,17 @@ type Handler struct {
 	svcManager    *manager.ServicesManager
 	updater       *Updater
 	knownServices map[string]*service.Service // key: service.ID
-	log           *zap.SugaredLogger
 	stopFetcher   chan struct{}
 	cancel        func() // cancels zone fetches
 	wg            sync.WaitGroup
 }
 
-func NewHandler(logger *zap.Logger, fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater *Updater) *Handler {
+func NewHandler(fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater *Updater) *Handler {
 	return &Handler{
 		fetcher:       fetcher,
 		svcManager:    mgr,
 		updater:       updater,
 		knownServices: make(map[string]*service.Service),
-		log:           logger.Sugar(),
 		stopFetcher:   make(chan struct{}),
 		wg:            sync.WaitGroup{},
 	}
@@ -60,7 +59,7 @@ func (h *Handler) Stop() {
 	close(h.stopFetcher)
 	h.wg.Wait()
 	h.svcManager.Stop()
-	h.log.Debug("Successfully stopped DNS - Handler")
+	bslog.Debug("Successfully stopped DNS - Handler")
 }
 
 func (h *Handler) onServiceDown(svc *service.Service) {
@@ -88,10 +87,10 @@ func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan erro
 
 			for key, oldSvc := range h.knownServices { // remove any services that dont exist in the current batch
 				if _, exists := servicesInBatch[key]; !exists {
-					h.log.Infof("Service no longer exists in GSLB - config zone, removing: %s", key)
+					bslog.Info("service no longer exists in GSLB - config zone", slog.String("action", "removing"), oldSvc)
 					err := h.svcManager.RemoveService(oldSvc)
 					if err != nil {
-						h.log.Errorf("failed to remove service: %s: %s", key, err.Error())
+						bslog.Error("failed to remove service", oldSvc, slog.String("reason", err.Error()))
 					}
 				}
 			}
@@ -102,13 +101,12 @@ func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan erro
 			if !ok {
 				return
 			}
-			h.log.Errorf("error while transferring zone: %s", err.Error())
+			bslog.Error("zone transfer did not succeed", slog.String("reason", err.Error()))
 
 		case <-h.stopFetcher:
 			return
 		}
 	}
-
 }
 
 func (h *Handler) handleRecord(record dns.RR) *service.Service {
@@ -125,13 +123,13 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 	}
 	err := json.Unmarshal([]byte(data), &svcConfig)
 	if err != nil {
-		h.log.Errorf("failed to parse gslb config: %v", err.Error())
+		bslog.Error("failed to parse GSLB entry", slog.String("reason", err.Error()))
 		return nil
 	}
 
 	svc, err := h.svcManager.RegisterService(svcConfig)
 	if err != nil {
-		h.log.Errorf("could not register service: %s", err.Error())
+		bslog.Error("could not register service", slog.String("reason", err.Error()))
 		return nil
 	}
 
