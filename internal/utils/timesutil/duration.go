@@ -38,3 +38,12 @@ func (d Duration) String() string {
 func FromDuration(duration time.Duration) Duration {
 	return Duration(duration)
 }
+
+func FromString(s string) (Duration, error) {
+	dur, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("could not parse duration: %w", err)
+	}
+
+	return Duration(dur), nil
+}

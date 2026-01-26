@@ -34,7 +34,7 @@ func (f *FileLoader) Load(dest any) error {
 			err = f.loadDotEnv(dest, file)
 		}
 		if err != nil {
-			return fmt.Errorf("could not load file: %s", file)
+			return fmt.Errorf("could not load file: %s: %w", file, err)
 		}
 	}
 	return nil
@@ -69,7 +69,7 @@ func (f *FileLoader) loadDotEnv(dest any, file string) error {
 		envValue, ok := cfg[tag]
 		if ok {
 			if err := setEnvironmentVariable(field, envValue); err != nil {
-				return fmt.Errorf("unable to load config: %s", err.Error())
+				return fmt.Errorf("unable to set environment variable: %s", err.Error())
 			}
 		}
 	}

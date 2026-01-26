@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/loaders"
 )
@@ -18,10 +19,8 @@ func init() {
 		log.Fatalf("unable to load config: %s", err.Error())
 	}
 
-
-
 	var handler slog.Handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level:       slog.LevelDebug,
 		ReplaceAttr: bslog.BaseReplaceAttr,
 	})
 
@@ -36,7 +35,7 @@ func init() {
 		)
 	case "prod", "production", "PROD", "PRODUCTION":
 		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
+			Level:       slog.LevelInfo,
 			ReplaceAttr: bslog.BaseReplaceAttr,
 		})
 	}
@@ -91,9 +90,9 @@ func (a *API) Port() string {
 
 // GSLB configuration
 type GSLB struct {
-	ZONE       string `env:"GSLB_ZONE" flag:"gslb-zone"`
-	NAMESERVER string `env:"GSLB_NAMESERVER" flag:"gslb-nameserver"`
-	//POLLINTERVAL timesutil.Duration `env:"GSLB_POLL_INTERVAL" flag:"poll-interval`
+	ZONE         string `env:"GSLB_ZONE" flag:"gslb-zone"`
+	NAMESERVER   string `env:"GSLB_NAMESERVER" flag:"gslb-nameserver"`
+	POLLINTERVAL string `env:"GSLB_POLL_INTERVAL" flag:"poll-interval"`
 }
 
 func (g *GSLB) Zone() string {
@@ -104,11 +103,14 @@ func (g *GSLB) NameServer() string {
 	return g.NAMESERVER
 }
 
-/*
-func (g *GSLB) PollInterval() timesutil.Duration {
-	return g.POLLINTERVAL
+func (g *GSLB) PollInterval() (timesutil.Duration, error) {
+	duration, err := timesutil.FromString(g.POLLINTERVAL)
+	if err != nil {
+		return 0, err
+	}
+
+	return duration, nil
 }
-*/
 
 func newConfig() (*Config, error) {
 	loader := loaders.NewChainLoader(
