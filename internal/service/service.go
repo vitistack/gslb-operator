@@ -163,7 +163,7 @@ OnFailure : count = 3, healthy = false -> update DNS
 
 // called when healthcheck is successful
 func (s *Service) OnSuccess() {
-	bslog.Debug("Health-Check Successfull", s)
+	bslog.Debug("Health-Check Successfull", slog.Any("service",s))
 	if s.isHealthy { // already healthy
 		s.failureCount = 0
 		return
@@ -181,7 +181,7 @@ func (s *Service) OnSuccess() {
 
 // called when healthcheck fails
 func (s *Service) OnFailure(err error) {
-	bslog.Debug("Health-Check Failed", s, slog.String("error", err.Error()))
+	bslog.Debug("Health-Check Failed", slog.Any("service", s), slog.String("error", err.Error()))
 	if !s.isHealthy { // already unhealthy
 		s.failureCount = s.FailureThreshold
 		return
@@ -253,17 +253,10 @@ func (s *Service) Assign(new *Service) {
 }
 
 func (s *Service) LogValue() slog.Value {
-	id := slog.String("id", s.id)
-	memberOf := slog.String("memberOf", s.MemberOf)
-	fqdn := slog.String("fqdn", s.Fqdn)
-	datacenter := slog.String("datacenter", s.Datacenter)
-
-	group := slog.GroupAttrs("service",
-		id,
-		memberOf,
-		fqdn,
-		datacenter,
-	)
-
-	return group.Value
+    return slog.GroupValue(
+        slog.String("id", s.id),
+        slog.String("memberOf", s.MemberOf),
+        slog.String("fqdn", s.Fqdn),
+        slog.String("datacenter", s.Datacenter),
+    )
 }

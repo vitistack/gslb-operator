@@ -93,7 +93,7 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 
 	// set healthchange callback action
 	newService.SetHealthChangeCallback(func(healthy bool) {
-		bslog.Debug("received health-change", newService, slog.Bool("healthy", healthy))
+		bslog.Debug("received health-change", slog.Any("service", newService), slog.Bool("healthy", healthy))
 		sm.serviceGroups[newService.MemberOf].OnServiceHealthChange(newService, healthy)
 	})
 
@@ -113,7 +113,7 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	}
 	serviceGroup.RegisterService(newService)
 
-	bslog.Debug("registered service", newService)
+	bslog.Debug("registered service", slog.Any("service", newService))
 	return newService, nil
 }
 
@@ -135,7 +135,7 @@ func (sm *ServicesManager) RemoveService(service *service.Service) error {
 		delete(sm.serviceGroups, service.MemberOf)
 	}
 	sm.scheduledServices.Delete(service.GetID(), service.ScheduledInterval)
-	bslog.Debug("removed service", service)
+	bslog.Debug("removed service", slog.Any("service", service))
 
 	return nil
 }
@@ -170,7 +170,7 @@ func (sm *ServicesManager) updateServiceUnlocked(old, new *service.Service) {
 
 	old.Assign(new)
 
-	bslog.Debug("updated service", old)
+	bslog.Debug("updated service", slog.Any("service", old))
 }
 
 // re-schedules the relevant services in the PromotionEvent
@@ -213,7 +213,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 		demotedInterval = event.NewActive.ScheduledInterval
 
 		bslog.Info("demoting service",
-			event.OldActive,
+			slog.Any("oldActive", event.OldActive),
 			slog.Group("intervalChange",
 				slog.String("from", event.OldActive.ScheduledInterval.String()),
 				slog.String("to", demotedInterval.String()),
@@ -222,7 +222,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 		sm.DNSUpdate(event.OldActive, false)
 
 		bslog.Info("promoting service",
-			event.NewActive,
+			slog.Any("newActive", event.NewActive),
 			slog.Group("intervalChange",
 				slog.String("from", event.NewActive.ScheduledInterval.String()),
 				slog.String("to", baseInterval.String()),
@@ -233,7 +233,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	}
 
 	if event.NewActive != nil { // first service to come up when all services are down
-		bslog.Info("new active service", event.NewActive)
+		bslog.Info("new active service", slog.Any("service", event.NewActive))
 		sm.moveServiceToInterval(event.NewActive, baseInterval)
 		sm.DNSUpdate(event.NewActive, true)
 		return
