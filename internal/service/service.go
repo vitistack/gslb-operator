@@ -251,3 +251,19 @@ func (s *Service) Assign(new *Service) {
 	s.defaultInterval = new.defaultInterval
 	s.FailureThreshold = new.FailureThreshold
 }
+
+func (s *Service) LogValue() slog.Value {
+	id := slog.String("id", s.id)
+	memberOf := slog.String("memberOf", s.MemberOf)
+	fqdn := slog.String("fqdn", s.Fqdn)
+	datacenter := slog.String("datacenter", s.Datacenter)
+
+	group := slog.GroupAttrs("service",
+		id,
+		memberOf,
+		fqdn,
+		datacenter,
+	)
+
+	return group.Value
+}
