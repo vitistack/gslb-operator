@@ -55,37 +55,11 @@ func main() {
 	}()
 
 	// creating dns - handler objects
-	zoneFetcher := dns.NewZoneFetcherWithAutoPoll(
-		dns.WithServer(cfg.GSLB().NameServer()),
-		dns.WithZone(cfg.GSLB().Zone()),
-	)
+	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
 	mgr := manager.NewManager(
 		manager.WithMinRunningWorkers(100),
 		manager.WithNonBlockingBufferSize(105),
-		//manager.WithDryRun(true),
 	)
-	/*
-
-		mgr.RegisterService(model.GSLBConfig{
-			Fqdn:       "test.nhn.no",
-			Ip:         "127.0.0.1",
-			Port:       "80",
-			Datacenter: "Abels1",
-			Interval:   timesutil.FromDuration(time.Second * 5),
-			Priority:   1,
-			Type:       "TCP-FULL",
-		}, false)
-
-			mgr.RegisterService(model.GSLBConfig{
-				Fqdn:       "test.nhn.no",
-				Ip:         "127.0.0.1",
-				Port:       "90",
-				Datacenter: "Abels2",
-				Interval:   timesutil.FromDuration(time.Second * 5),
-				Priority:   2,
-				Type:       "TCP-FULL",
-			}, false)
-	*/
 
 	spoofRepo := hc.SpoofRepo.(*spoof.Repository)
 	updater, err := dns.NewUpdater(
