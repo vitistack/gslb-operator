@@ -120,6 +120,7 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 	svcConfig := model.GSLBConfig{
 		MemberOf:         txt.Hdr.Name,
 		FailureThreshold: service.DEFAULT_FAILURE_THRESHOLD,
+		Script: "return status_code >= 200 or status_code < 300",
 	}
 	err := json.Unmarshal([]byte(data), &svcConfig)
 	if err != nil {

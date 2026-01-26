@@ -28,7 +28,7 @@ type Service struct {
 	priority             int
 	FailureThreshold     int
 	failureCount         int
-	check                func() error // TCP - half/full, HTTP(S)
+	checker              checks.Checker
 	healthChangeCallback HealthChangeCallback
 	isHealthy            bool
 }
@@ -66,22 +66,22 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, dryRun bool) (*Service, e
 
 	switch {
 	case dryRun:
-		svc.check = checks.DryRun()
+		svc.checker = &checks.DryRun{}
 
 	case config.CheckType == checks.HTTPS:
-		svc.check = checks.HTTPCheck("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT)
+		svc.checker = checks.NewHTTPChecker("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, config.Script)
 
 	case config.CheckType == checks.HTTP:
-		svc.check = checks.HTTPCheck("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT)
+		svc.checker = checks.NewHTTPChecker("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, config.Script)
 
 	case config.CheckType == checks.TCP_FULL:
-		svc.check = checks.TCPFull(svc.addr, checks.DEFAULT_TIMEOUT)
+		svc.checker = checks.NewTCPFullChecker(svc.addr, checks.DEFAULT_TIMEOUT)
 
 	case config.CheckType == checks.TCP_HALF:
-		svc.check = checks.TCPHalf(svc.addr, checks.DEFAULT_TIMEOUT)
+		svc.checker = checks.NewTCPHalfChecker(svc.addr, checks.DEFAULT_TIMEOUT)
 
 	default:
-		svc.check = checks.TCPFull(svc.addr, checks.DEFAULT_TIMEOUT)
+		svc.checker = checks.NewTCPFullChecker(svc.addr, checks.DEFAULT_TIMEOUT)
 	}
 
 	return svc, nil
@@ -126,7 +126,7 @@ func (s *Service) GetBaseInterval() timesutil.Duration {
 
 // checks health of service
 func (s *Service) Execute() error {
-	return s.check()
+	return s.checker.Check()
 }
 
 /*
@@ -163,7 +163,7 @@ OnFailure : count = 3, healthy = false -> update DNS
 
 // called when healthcheck is successful
 func (s *Service) OnSuccess() {
-	bslog.Debug("Health-Check Successfull", slog.Any("service",s))
+	bslog.Debug("Health-Check Successfull", slog.Any("service", s))
 	if s.isHealthy { // already healthy
 		s.failureCount = 0
 		return
@@ -195,10 +195,6 @@ func (s *Service) OnFailure(err error) {
 		s.isHealthy = false
 		s.healthChangeCallback(false)
 	}
-}
-
-func (s *Service) SetCheck(check func() error) {
-	s.check = check
 }
 
 func (s *Service) SetHealthChangeCallback(callback HealthChangeCallback) {
@@ -244,7 +240,7 @@ func (s *Service) ConfigChanged(other *Service) bool {
 // updates the configuration values of s with the values of new
 func (s *Service) Assign(new *Service) {
 	s.addr = new.addr
-	s.check = new.check
+	s.checker = new.checker
 	s.MemberOf = new.MemberOf
 	s.priority = new.priority
 	s.Datacenter = new.Datacenter
@@ -253,10 +249,10 @@ func (s *Service) Assign(new *Service) {
 }
 
 func (s *Service) LogValue() slog.Value {
-    return slog.GroupValue(
-        slog.String("id", s.id),
-        slog.String("memberOf", s.MemberOf),
-        slog.String("fqdn", s.Fqdn),
-        slog.String("datacenter", s.Datacenter),
-    )
+	return slog.GroupValue(
+		slog.String("id", s.id),
+		slog.String("memberOf", s.MemberOf),
+		slog.String("fqdn", s.Fqdn),
+		slog.String("datacenter", s.Datacenter),
+	)
 }

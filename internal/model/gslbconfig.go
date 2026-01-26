@@ -14,4 +14,5 @@ type GSLBConfig struct {
 	Priority         int                `json:"priority"`
 	FailureThreshold int                `json:"failure_threshold"`
 	CheckType        string             `json:"check_type"`
+	Script           string             `json:"lua"`
 }

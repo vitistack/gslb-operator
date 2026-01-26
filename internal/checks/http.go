@@ -7,27 +7,47 @@ import (
 	"time"
 )
 
-func HTTPCheck(url string, timeout time.Duration) func() error {
-	return func() error {
-		customTransport := http.DefaultTransport.(*http.Transport).Clone()
+type HTTPChecker struct {
+	url       string
+	client    *http.Client
+	validator *LuaValidator
+}
 
-		// Set InsecureSkipVerify to true in the TLS configuration
-		customTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+func NewHTTPChecker(url string, timeout time.Duration, validationScripts ...string) *HTTPChecker {
+	transport := http.DefaultTransport.(*http.Transport)
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
-		// Create a new HTTP client using the custom transport
-		client := http.Client{
-			Timeout:   timeout,
-			Transport: customTransport,
+	var validator *LuaValidator
+	for _, script := range validationScripts {
+		if script != "" {
+			validator = &LuaValidator{script: script}
 		}
-		resp, err := client.Get(url)
-		if err != nil {
-			return err
-		}
-
-		if resp.StatusCode == http.StatusServiceUnavailable { // service is physically up, but unable to respond
-			return fmt.Errorf("server responded with statuscode: %d", resp.StatusCode)
-		}
-		resp.Body.Close()
-		return nil
 	}
+
+	return &HTTPChecker{
+		url: url,
+		client: &http.Client{
+			Timeout:   timeout,
+			Transport: transport,
+		},
+		validator: validator,
+	}
+}
+
+func (c *HTTPChecker) Check() error {
+	resp, err := c.client.Get(c.url)
+	if err != nil {
+		return err
+	}
+
+	if c.validator != nil { // run custom validation instead
+		return c.validator.Validate(resp)
+	}
+
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return fmt.Errorf("service un-available: %d", resp.StatusCode)
+	}
+
+	resp.Body.Close()
+	return nil
 }
