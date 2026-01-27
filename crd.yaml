@@ -1,0 +1,97 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: gslbconfigs.gslb.vitistack.io
+spec:
+  group: gslb.vitistack.io
+  names:
+    kind: GSLBConfig
+    listKind: GSLBConfigList
+    plural: gslbconfigs
+    singular: gslbconfig
+    shortNames:
+      - gslb
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - fqdn
+                - memberOf
+                - ip
+                - datacenter
+                - checkType
+              properties:
+                serviceID:
+                  type: string
+                  description: Unique identifier for the service
+                fqdn:
+                  type: string
+                  description: Fully qualified domain name of the service
+                memberOf:
+                  type: string
+                  description: GSLB group this service belongs to
+                ip:
+                  type: string
+                  description: IP address of the service
+                  pattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+                port:
+                  type: string
+                  description: Port number
+                  pattern: '^[0-9]+$'
+                datacenter:
+                  type: string
+                  description: Datacenter location
+                interval:
+                  type: string
+                  description: base interval for health check
+                  pattern: '^[1-9]+(s|m|h)$'
+                  default: "5s"
+                priority:
+                  type: integer
+                  description: Service priority (lower is higher priority)
+                  minimum: 1
+                  default: 1
+                failureThreshold:
+                  type: integer
+                  description: Number of consecutive failures before marking unhealthy
+                  minimum: 1
+                  default: 3
+                checkType:
+                  type: string
+                  description: Type of health check
+                  enum:
+                    - http
+                    - https
+                    - tcp-half
+                    - tcp-full
+                lua:
+                  type: string
+                  description: Lua script for custom health check validation
+            status:
+              type: object
+              properties:
+                healthy:
+                  type: boolean
+                  description: Current health status
+                lastCheck:
+                  type: string
+                  format: date-time
+                  description: Timestamp of last health check
+                failureCount:
+                  type: integer
+                  description: Current consecutive failure count
+                message:
+                  type: string
+                  description: Status message
+      subresources:
+        status: {}
