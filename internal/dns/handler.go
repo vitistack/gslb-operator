@@ -120,8 +120,13 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 	svcConfig := model.GSLBConfig{
 		MemberOf:         txt.Hdr.Name,
 		FailureThreshold: service.DEFAULT_FAILURE_THRESHOLD,
-		Script: "return status_code >= 200 or status_code < 300",
+		Script: `if string.find(body, "BGO1") then
+    			 	return true
+				 else
+    			 	return false
+				 end`,
 	}
+
 	err := json.Unmarshal([]byte(data), &svcConfig)
 	if err != nil {
 		bslog.Error("failed to parse GSLB entry", slog.String("reason", err.Error()))

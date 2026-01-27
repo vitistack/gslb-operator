@@ -16,10 +16,15 @@ import (
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
+	"github.com/vitistack/gslb-operator/pkg/lua"
 )
 
 func main() {
 	cfg := config.GetInstance()
+	
+	if err := lua.LoadSandboxConfig(cfg.Server().LuaSandbox()); err != nil {
+		bslog.Fatal("could not load lua configuration", slog.Any("reason", err))
+	}
 
 	api := http.NewServeMux()
 

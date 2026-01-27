@@ -19,12 +19,6 @@ var bucket = LuaBucket{
 	vms: make(chan *glua.LState, runtime.NumCPU()),
 }
 
-func init() {
-	for range bucket.max {
-		bucket.vms <- bucket.new()
-	}
-}
-
 func (pl *LuaBucket) get() *glua.LState {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
@@ -33,7 +27,12 @@ func (pl *LuaBucket) get() *glua.LState {
 }
 
 func (pl *LuaBucket) new() *glua.LState {
-	L := glua.NewState(glua.Options{SkipOpenLibs: true})
+	L := glua.NewState(glua.Options{
+		SkipOpenLibs: true,
+		IncludeGoStackTrace: true,
+		MinimizeStackMemory: true,
+	})
+	L.SetGlobal("sandbox", (*glua.LTable)(sandBox))
 	return L
 }
 
@@ -44,6 +43,8 @@ func (pl *LuaBucket) put(L *glua.LState) {
 }
 
 func (pl *LuaBucket) shutdown() {
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
 	for L := range pl.vms {
 		L.Close()
 	}

@@ -67,8 +67,9 @@ func (c *Config) GSLB() *GSLB {
 
 // Server configuration
 type Server struct {
-	ENV string `env:"SRV_ENV" flag:"env"`
-	DC  string `env:"SRV_DATACENTER" flag:"datacenter"`
+	ENV         string `env:"SRV_ENV" flag:"env"`
+	DC          string `env:"SRV_DATACENTER" flag:"datacenter"`
+	LUA_SANDBOX string `env:"SRV_LUA_SANDBOX" flag:"lua-sandbox"`
 }
 
 func (s *Server) Env() string {
@@ -77,6 +78,10 @@ func (s *Server) Env() string {
 
 func (s *Server) Datacenter() string {
 	return s.DC
+}
+
+func (s *Server) LuaSandbox() string {
+	return s.LUA_SANDBOX
 }
 
 // API configuration

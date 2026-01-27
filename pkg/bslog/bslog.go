@@ -3,6 +3,7 @@ package bslog
 import (
 	"context"
 	"log/slog"
+	"os"
 )
 
 func NewHandler(base slog.Handler, opts ...handlerOption) slog.Handler {
@@ -47,7 +48,7 @@ func ErrorContext(ctx context.Context, msg string, args ...any) {
 
 func Fatal(msg string, args ...any) {
 	slog.Log(context.Background(), LevelFatal, msg, args...)
-	panic(msg)
+	os.Exit(1)
 }
 
 func FatalContext(ctx context.Context, msg string, args ...any) {
