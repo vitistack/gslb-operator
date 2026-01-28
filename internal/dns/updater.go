@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/internal/service"
+	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence/store/memory"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
 	"github.com/vitistack/gslb-operator/pkg/rest/request/client"
@@ -34,7 +34,7 @@ func NewUpdater(opts ...updaterOption) (*Updater, error) {
 
 	u := &Updater{
 		Server:    "localhost:9000",
-		spoofRepo: spoof.NewRepository(memory.NewStore[model.Spoof]()),
+		spoofRepo: spoof.NewRepository(memory.NewStore[spoofs.Spoof]()),
 		client:    *c,
 	}
 
@@ -92,7 +92,7 @@ func (u *Updater) ServiceUp(svc *service.Service) error {
 	if err != nil {
 		return fmt.Errorf("unable to get ip address: %s", err.Error())
 	}
-	spoof := &model.Spoof{
+	spoof := &spoofs.Spoof{
 		FQDN: svc.MemberOf,
 		IP:   ip,
 		DC:   svc.Datacenter,

@@ -1,8 +1,7 @@
-package model
+package spoofs
 
 import (
-	"github.com/vitistack/gslb-operator/pkg/rest/request"
-	"github.com/vitistack/gslb-operator/pkg/rest/response"
+	"github.com/vitistack/gslb-operator/pkg/models/pagination"
 )
 
 type Spoof struct {
@@ -12,16 +11,16 @@ type Spoof struct {
 }
 
 type SpoofResponse struct {
-	response.Pagination
+	pagination.Pagination
 	Items []Spoof `json:"items"`
 }
 
-func NewSpoofResponse(items []Spoof, params *request.PaginationParams) *SpoofResponse {
+func NewSpoofResponse(items []Spoof, params *pagination.PaginationParams) *SpoofResponse {
 	TotalItems := len(items)
 	numPages := TotalItems/params.PageSize + 1
 
 	resp := &SpoofResponse{
-		Pagination: response.Pagination{
+		Pagination: pagination.Pagination{
 			TotalItems: TotalItems,
 			NumPages:   numPages,
 			Page:       params.Page,

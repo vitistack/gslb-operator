@@ -3,20 +3,20 @@ package handler
 import (
 	"fmt"
 
-	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
+	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
 	"github.com/vitistack/gslb-operator/pkg/persistence/store/file"
 )
 
 type Handler struct {
-	SpoofRepo persistence.Repository[model.Spoof]
+	SpoofRepo persistence.Repository[spoofs.Spoof]
 }
 
 func NewHandler() (*Handler, error) {
 	h := &Handler{}
 
-	store, err := file.NewStore[model.Spoof]("store.json")
+	store, err := file.NewStore[spoofs.Spoof]("store.json")
 	if err != nil {
 		return nil, fmt.Errorf("could not create filestore: %s", err.Error())
 	}

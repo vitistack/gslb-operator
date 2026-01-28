@@ -9,21 +9,23 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
+	"github.com/vitistack/gslb-operator/pkg/models/hash"
+	"github.com/vitistack/gslb-operator/pkg/models/pagination"
+	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
 )
 
 func (h *Handler) GetSpoofs(w http.ResponseWriter, r *http.Request) {
-	spoofs, err := h.SpoofRepo.ReadAll()
+	data, err := h.SpoofRepo.ReadAll()
 	if err != nil {
 		response.Err(w, response.ErrInternalError, "unable to fetch spoofs from storage")
 		bslog.Error("Unable to fetch spoofs", slog.String("reason", err.Error()))
 		return
 	}
 
-	params := request.NewPaginationParams()
+	params := pagination.NewPaginationParams()
 	err = request.MarshallParams(r.URL.Query(), params)
 	if err != nil {
 		response.Err(w, response.ErrInvalidInput, "could not parse request parameters")
@@ -31,7 +33,7 @@ func (h *Handler) GetSpoofs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := model.NewSpoofResponse(spoofs, params)
+	resp := spoofs.NewSpoofResponse(data, params)
 	response.JSON(w, http.StatusOK, resp)
 }
 
@@ -54,7 +56,7 @@ func (h *Handler) GetFQDNSpoof(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetSpoofsHash(w http.ResponseWriter, r *http.Request) {
-	spoofs, err := h.SpoofRepo.ReadAll()
+	data, err := h.SpoofRepo.ReadAll()
 	if err != nil {
 		response.Err(w, response.ErrInternalError, "unable to fetch spoofs from storage")
 		bslog.Error("unable to read spoofs from storage", slog.String("reason", err.Error()))
@@ -63,11 +65,11 @@ func (h *Handler) GetSpoofsHash(w http.ResponseWriter, r *http.Request) {
 
 	// IMPORTANT!! that spoofs are sorted alphabetically sorted on fqdn.
 	// To get consistent hashes
-	slices.SortFunc(spoofs, func(a, b model.Spoof) int {
+	slices.SortFunc(data, func(a, b spoofs.Spoof) int {
 		return cmp.Compare(a.FQDN, b.FQDN)
 	})
 
-	marshalledSpoofs, err := json.Marshal(spoofs)
+	marshalledSpoofs, err := json.Marshal(data)
 	if err != nil {
 		response.Err(w, response.ErrInternalError, "could not create spoofs-hash")
 		bslog.Error("unable to marshall spoofs", slog.String("reason", err.Error()))
@@ -75,7 +77,7 @@ func (h *Handler) GetSpoofsHash(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rawHash := sha256.Sum256(marshalledSpoofs) // creating bytes representation of spoofs
-	hash := model.Hash{
+	hash := hash.Hash{
 		Hash: hex.EncodeToString(rawHash[:]),
 	}
 
