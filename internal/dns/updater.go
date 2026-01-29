@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
@@ -33,7 +34,7 @@ func NewUpdater(opts ...updaterOption) (*Updater, error) {
 	}
 
 	u := &Updater{
-		Server:    "localhost:9000",
+		Server:    config.GetInstance().GSLB().UpdaterHost(),
 		spoofRepo: spoof.NewRepository(memory.NewStore[spoofs.Spoof]()),
 		client:    *c,
 	}

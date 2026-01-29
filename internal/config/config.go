@@ -98,6 +98,7 @@ type GSLB struct {
 	ZONE         string `env:"GSLB_ZONE" flag:"gslb-zone"`
 	NAMESERVER   string `env:"GSLB_NAMESERVER" flag:"gslb-nameserver"`
 	POLLINTERVAL string `env:"GSLB_POLL_INTERVAL" flag:"poll-interval"`
+	UPDATERHOST      string `env:"GSLB_UPDATER_HOST" flag:"updater-host"`
 }
 
 func (g *GSLB) Zone() string {
@@ -115,6 +116,10 @@ func (g *GSLB) PollInterval() (timesutil.Duration, error) {
 	}
 
 	return duration, nil
+}
+
+func (g *GSLB) UpdaterHost() string {
+	return g.UPDATERHOST
 }
 
 func newConfig() (*Config, error) {

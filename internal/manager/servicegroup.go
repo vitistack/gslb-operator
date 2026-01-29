@@ -14,7 +14,8 @@ type ServiceGroupMode int
 const (
 	ActiveActive ServiceGroupMode = iota
 	ActivePassive
-	ActiveActivePassive // TODO: decide if this is necessary
+	//ActiveActivePassive TODO: decide if this is necessary
+	ActiveActiveRoundTrip // TODO: When svc does not exist in DC, then smallest roundtrip time wins
 )
 
 // PromotionEvent is an event that occurs when there is a new Active service in a service group.
@@ -293,10 +294,12 @@ func (sg *ServiceGroup) SetGroupMode() {
 			// if none healthy, leave active nil (single-record: DNS should be absent)
 		}
 
-	case ActiveActivePassive:
-		// TODO: implement when requirements are defined
-		sg.mode = ActiveActive
-		sg.active = sg.firstHealthy()
+	/*
+		case ActiveActivePassive:
+			// TODO: implement when requirements are defined
+			sg.mode = ActiveActive
+			sg.active = sg.firstHealthy()
+	*/
 
 	default:
 		sg.mode = ActiveActive

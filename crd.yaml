@@ -74,6 +74,7 @@ spec:
                     - https
                     - tcp-half
                     - tcp-full
+                  default: https
                 lua:
                   type: string
                   description: Lua script for custom health check validation
