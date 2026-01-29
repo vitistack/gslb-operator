@@ -249,10 +249,12 @@ func (s *Service) Assign(new *Service) {
 }
 
 func (s *Service) LogValue() slog.Value {
+	ip, _ := s.GetIP()
 	return slog.GroupValue(
 		slog.String("id", s.id),
 		slog.String("memberOf", s.MemberOf),
 		slog.String("fqdn", s.Fqdn),
 		slog.String("datacenter", s.Datacenter),
+		slog.String("ip", ip),
 	)
 }

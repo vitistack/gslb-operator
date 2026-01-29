@@ -2,6 +2,7 @@ package dns
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/config"
@@ -26,7 +27,7 @@ func NewUpdater(opts ...updaterOption) (*Updater, error) {
 	c, err := client.NewClient(
 		time.Second*5,
 		client.WithRetry(3),
-		//client.WithRequestLogging(logger.Sugar()),
+		client.WithRequestLogging(slog.Default()),
 	)
 
 	if err != nil {

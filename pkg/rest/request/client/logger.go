@@ -3,16 +3,9 @@ package client
 import "net/http"
 
 type Logger interface {
-	Debug(args ...any)
-	Debugf(template string, args ...any)
-	Info(args ...any)
-	Infof(template string, args ...any)
-	Warn(args ...any)
-	Warnf(template string, args ...any)
-	Error(args ...any)
-	Errorf(template string, args ...any)
-	Fatal(args ...any)
-	Fatalf(template string, args ...any)
+	Debug(msg string, args ...any)
+	Info(msg string, args ...any)
+	Error(msg string, args ...any)
 }
 
 type LogInterception struct {
@@ -26,12 +19,12 @@ func (li *LogInterception) RoundTrip(req *http.Request) (*http.Response, error) 
 		trip = http.DefaultTransport
 	}
 
-	li.logger.Debugf("making %s request to: %s", req.Method, req.URL.String())
+	li.logger.Debug("making request", "method", req.Method, "endpoint", req.URL.String())
 	resp, err := trip.RoundTrip(req)
 	if err != nil {
-		li.logger.Errorf("%s request to: %s failed: %s", req.Method, req.URL.String(), err.Error())
+		li.logger.Error("request failed", "reason", err.Error(), "method", req.Method, "endpoint", req.URL.String())
 	} else {
-		li.logger.Debugf("%s request to: %s succeeded with status-code: %d", req.Method, req.URL.String(), resp.StatusCode)
+		li.logger.Debug("request succeeded", "status_code", resp.StatusCode, "endpoint", req.URL.String())
 	}
 
 	return resp, err
@@ -40,6 +33,6 @@ func (li *LogInterception) RoundTrip(req *http.Request) (*http.Response, error) 
 func NewLogInterception(log Logger, base http.RoundTripper) http.RoundTripper {
 	return &LogInterception{
 		Transport: base,
-		logger: log,
+		logger:    log,
 	}
 }

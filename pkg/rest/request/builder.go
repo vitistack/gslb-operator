@@ -13,6 +13,7 @@ import (
 )
 
 type Builder struct {
+	protocol  string
 	host      string
 	url       string
 	urlParams url.Values
@@ -24,6 +25,7 @@ type Builder struct {
 
 func NewBuilder(host string) *Builder {
 	return &Builder{
+		protocol:  "http",
 		host:      host,
 		body:      nil,
 		urlParams: make(url.Values),
@@ -34,7 +36,7 @@ func NewBuilder(host string) *Builder {
 }
 
 func (b *Builder) Build() (*http.Request, error) {
-	reqUrl := fmt.Sprintf("http://%s%s%s", b.host, b.url, b.urlParams.Encode()) // TODO: http/https?
+	reqUrl := fmt.Sprintf("%s://%s%s%s", b.protocol, b.host, b.url, b.urlParams.Encode()) // TODO: http/https?
 	req, err := http.NewRequestWithContext(b.ctx, b.method, reqUrl, b.body)
 	if err != nil {
 		return nil, fmt.Errorf("unable to build request: %s", err.Error())
@@ -45,6 +47,16 @@ func (b *Builder) Build() (*http.Request, error) {
 	}
 
 	return req, nil
+}
+
+func (b *Builder) UnSecure() *Builder {
+	b.protocol = "http"
+	return b
+}
+
+func (b *Builder) Secure() *Builder {
+	b.protocol = "https"
+	return b
 }
 
 func (b *Builder) URL(url string) *Builder {
