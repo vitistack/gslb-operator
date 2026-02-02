@@ -62,7 +62,7 @@ func (tm *ServiceTokenManager) GetServiceToken() (string, error) {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
-	return tm.current, nil
+	return "Bearer " + tm.current, nil
 }
 
 func (tm *ServiceTokenManager) GetSigningMethod() jwt.SigningMethod {

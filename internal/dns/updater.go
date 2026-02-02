@@ -8,6 +8,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/internal/service"
+	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence/store/memory"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
@@ -72,7 +73,15 @@ func (u *Updater) ServiceDown(svc *service.Service) error {
 		return fmt.Errorf("unable to delete service from storage: %s", err.Error())
 	}
 
-	req, err := u.builder.DELETE().URL(fmt.Sprintf("/spoofs/%s:%s", svc.MemberOf, svc.Datacenter)).Build()
+	token, err := jwt.GetInstance().GetServiceToken()
+	if err != nil {
+		return fmt.Errorf("could not fetch service token: %w", err)
+	}
+
+	req, err := u.builder.DELETE().
+		SetHeader("Authorization", token).
+		URL(fmt.Sprintf("/spoofs/%s:%s", svc.MemberOf, svc.Datacenter)).
+		Build()
 	if err != nil {
 		return fmt.Errorf("could not create delete request for update: %s", err.Error())
 	}
@@ -94,6 +103,7 @@ func (u *Updater) ServiceUp(svc *service.Service) error {
 	if err != nil {
 		return fmt.Errorf("unable to get ip address: %s", err.Error())
 	}
+
 	spoof := &spoofs.Spoof{
 		FQDN: svc.MemberOf,
 		IP:   ip,
@@ -103,8 +113,16 @@ func (u *Updater) ServiceUp(svc *service.Service) error {
 	if err != nil {
 		return fmt.Errorf("could not store new spoof: %s", err.Error())
 	}
+	
+	token, err := jwt.GetInstance().GetServiceToken()
+	if err != nil {
+		return fmt.Errorf("could not fetch service token: %w", err)
+	}
 
-	req, err := u.builder.POST().URL("/spoofs").Body(spoof).Build()
+	req, err := u.builder.POST().SetHeader("Authorization", token).
+		URL("/spoofs").
+		Body(spoof).
+		Build()
 	if err != nil {
 		return fmt.Errorf("could not create post request for update: %s", err.Error())
 	}
