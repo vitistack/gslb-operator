@@ -47,6 +47,7 @@ type Config struct {
 	server Server
 	api    API
 	gslb   GSLB
+	jwt    JWT
 }
 
 func GetInstance() *Config {
@@ -63,6 +64,10 @@ func (c *Config) API() *API {
 
 func (c *Config) GSLB() *GSLB {
 	return &c.gslb
+}
+
+func (c *Config) JWT() *JWT {
+	return &c.jwt
 }
 
 // Server configuration
@@ -98,7 +103,7 @@ type GSLB struct {
 	ZONE         string `env:"GSLB_ZONE" flag:"gslb-zone"`
 	NAMESERVER   string `env:"GSLB_NAMESERVER" flag:"gslb-nameserver"`
 	POLLINTERVAL string `env:"GSLB_POLL_INTERVAL" flag:"poll-interval"`
-	UPDATERHOST      string `env:"GSLB_UPDATER_HOST" flag:"updater-host"`
+	UPDATERHOST  string `env:"GSLB_UPDATER_HOST" flag:"updater-host"`
 }
 
 func (g *GSLB) Zone() string {
@@ -122,6 +127,19 @@ func (g *GSLB) UpdaterHost() string {
 	return g.UPDATERHOST
 }
 
+type JWT struct {
+	SECRET string `env:"JWT_SECRET"`
+	USER   string `env:"JWT_USER"`
+}
+
+func (jwt *JWT) Secret() []byte {
+	return []byte(jwt.SECRET)
+}
+
+func (jwt *JWT) User() string {
+	return jwt.USER
+}
+
 func newConfig() (*Config, error) {
 	loader := loaders.NewChainLoader(
 		loaders.NewEnvloader(),
@@ -137,11 +155,13 @@ func newConfig() (*Config, error) {
 		PORT: ":8080",
 	}
 	gslbCfg := GSLB{}
+	jwtCfg := JWT{}
 
 	configs := []any{
 		&serverCfg,
 		&apiCfg,
 		&gslbCfg,
+		&jwtCfg,
 	}
 
 	for _, cfg := range configs {
@@ -155,5 +175,6 @@ func newConfig() (*Config, error) {
 		server: serverCfg,
 		api:    apiCfg,
 		gslb:   gslbCfg,
+		jwt:    jwtCfg,
 	}, nil
 }

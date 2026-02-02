@@ -23,9 +23,13 @@ func BaseReplaceAttr(groups []string, a slog.Attr) slog.Attr {
 		}
 		a.Value = slog.StringValue(levelLabel)
 	}
+
+	if a.Value.Kind() == slog.KindString && a.Value.String() == "" { // if empty value in KEY:VALUE pair
+		return slog.Attr{}
+	}
+
 	return a
 }
-
 
 type handlerOption func(base slog.Handler) slog.Handler
 

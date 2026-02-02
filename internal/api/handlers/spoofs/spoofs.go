@@ -1,24 +1,45 @@
-package handler
+package spoofs_service
 
 import (
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
 
+	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/hash"
 	"github.com/vitistack/gslb-operator/pkg/models/pagination"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
+	"github.com/vitistack/gslb-operator/pkg/persistence"
+	"github.com/vitistack/gslb-operator/pkg/persistence/store/file"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
 )
 
-func (h *Handler) GetSpoofs(w http.ResponseWriter, r *http.Request) {
-	data, err := h.SpoofRepo.ReadAll()
+type SpoofsService struct {
+	SpoofRepo persistence.Repository[spoofs.Spoof]
+}
+
+func NewSpoofsService() (*SpoofsService, error) {
+	h := &SpoofsService{}
+
+	store, err := file.NewStore[spoofs.Spoof]("store.json")
+	if err != nil {
+		return nil, fmt.Errorf("could not create filestore: %s", err.Error())
+	}
+
+	h.SpoofRepo = spoof.NewRepository(store)
+
+	return h, nil
+}
+
+func (ss *SpoofsService) GetSpoofs(w http.ResponseWriter, r *http.Request) {
+	data, err := ss.SpoofRepo.ReadAll()
 	if err != nil {
 		response.Err(w, response.ErrInternalError, "unable to fetch spoofs from storage")
 		bslog.Error("Unable to fetch spoofs", slog.String("reason", err.Error()))
@@ -37,14 +58,14 @@ func (h *Handler) GetSpoofs(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) GetFQDNSpoof(w http.ResponseWriter, r *http.Request) {
+func (ss *SpoofsService) GetFQDNSpoof(w http.ResponseWriter, r *http.Request) {
 	fqdn := r.PathValue("fqdn")
 	if fqdn == "" {
 		response.Err(w, response.ErrInvalidInput, "empty id is not valid")
 		return
 	}
 
-	spoof, err := h.SpoofRepo.Read(fqdn)
+	spoof, err := ss.SpoofRepo.Read(fqdn)
 	if err != nil {
 		msg := "unable to fetch spoof with id: " + fqdn + " from storage"
 		response.Err(w, response.ErrInternalError, msg)
@@ -55,8 +76,8 @@ func (h *Handler) GetFQDNSpoof(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, spoof)
 }
 
-func (h *Handler) GetSpoofsHash(w http.ResponseWriter, r *http.Request) {
-	data, err := h.SpoofRepo.ReadAll()
+func (ss *SpoofsService) GetSpoofsHash(w http.ResponseWriter, r *http.Request) {
+	data, err := ss.SpoofRepo.ReadAll()
 	if err != nil {
 		response.Err(w, response.ErrInternalError, "unable to fetch spoofs from storage")
 		bslog.Error("unable to read spoofs from storage", slog.String("reason", err.Error()))
@@ -86,6 +107,6 @@ func (h *Handler) GetSpoofsHash(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) CreateSpoof(w http.ResponseWriter, r *http.Request) {
+func (ss *SpoofsService) CreateSpoof(w http.ResponseWriter, r *http.Request) {
 
 }

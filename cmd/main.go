@@ -10,38 +10,65 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/vitistack/gslb-operator/internal/api/handler"
+	overrides "github.com/vitistack/gslb-operator/internal/api/handlers/overrides"
+	spoofs "github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
+	"github.com/vitistack/gslb-operator/internal/api/routes"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
 	"github.com/vitistack/gslb-operator/internal/manager"
-	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
+	spoofsrepo "github.com/vitistack/gslb-operator/internal/repositories/spoof"
+	"github.com/vitistack/gslb-operator/pkg/auth"
+	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/lua"
+	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 )
 
 func main() {
 	cfg := config.GetInstance()
-	
+
 	if err := lua.LoadSandboxConfig(cfg.Server().LuaSandbox()); err != nil {
 		bslog.Fatal("could not load lua configuration", slog.Any("reason", err))
 	}
 
 	api := http.NewServeMux()
 
-	hc, err := handler.NewHandler()
+	spoofsApiService, err := spoofs.NewSpoofsService()
 	if err != nil {
-		fmt.Printf("unable to start service: %s", err.Error())
-		os.Exit(1)
+		bslog.Fatal("unable to start API service", slog.String("reason", err.Error()))
 	}
 
-	api.HandleFunc(handler.GET_OVERRIDES, hc.GetOverrides)
-	api.HandleFunc(handler.POST_OVERRIDE, hc.CreateOverride)
-	api.HandleFunc(handler.DELETE_OVERRIDE, hc.DeleteOverride)
+	overridesApiService := overrides.NewOverrideService()
 
-	api.HandleFunc(handler.GET_SPOOFS, hc.GetSpoofs)
-	api.HandleFunc(handler.GET_SPOOFID, hc.GetFQDNSpoof)
-	api.HandleFunc(handler.GET_SPOOFS_HASH, hc.GetSpoofsHash)
-	api.HandleFunc(handler.POST_SPOOF, hc.CreateSpoof)
+	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
+
+	api.HandleFunc(routes.GET_OVERRIDES, overridesApiService.GetOverrides)
+	api.HandleFunc(routes.POST_OVERRIDE, overridesApiService.CreateOverride)
+	api.HandleFunc(routes.DELETE_OVERRIDE, overridesApiService.DeleteOverride)
+
+	api.HandleFunc(routes.GET_SPOOFS, middleware.Chain(
+		middleware.WithContextRequestID(),
+		middleware.WithIncomingRequestLogging(slog.Default()),
+		auth.WithTokenValidation(),
+	)(spoofsApiService.GetSpoofs))
+
+	api.HandleFunc(routes.GET_SPOOFID, middleware.Chain(
+		middleware.WithContextRequestID(),
+		middleware.WithIncomingRequestLogging(slog.Default()),
+		auth.WithTokenValidation(),
+	)(spoofsApiService.GetFQDNSpoof))
+
+	api.HandleFunc(routes.GET_SPOOFS_HASH, middleware.Chain(
+		middleware.WithContextRequestID(),
+		middleware.WithIncomingRequestLogging(slog.Default()),
+		auth.WithTokenValidation(),
+	)(spoofsApiService.GetSpoofsHash))
+
+	api.HandleFunc(routes.POST_SPOOF, middleware.Chain(
+		middleware.WithContextRequestID(),
+		middleware.WithIncomingRequestLogging(slog.Default()),
+		auth.WithTokenValidation(),
+	)(spoofsApiService.CreateSpoof))
 
 	server := http.Server{
 		Addr:    cfg.API().Port(),
@@ -51,7 +78,7 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
-	bslog.Info("starting service", slog.String("port", cfg.API().Port()))
+	bslog.Info("starting API service", slog.String("port", cfg.API().Port()))
 	go func() {
 		err := server.ListenAndServe()
 		if err != nil {
@@ -63,10 +90,10 @@ func main() {
 	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
 	mgr := manager.NewManager(
 		manager.WithMinRunningWorkers(100),
-		manager.WithNonBlockingBufferSize(105),
+		manager.WithNonBlockingBufferSize(110),
 	)
 
-	spoofRepo := hc.SpoofRepo.(*spoof.Repository)
+	spoofRepo := spoofsApiService.SpoofRepo.(*spoofsrepo.Repository)
 	updater, err := dns.NewUpdater(
 		dns.UpdaterWithSpoofRepo(spoofRepo),
 	)
