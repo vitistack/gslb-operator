@@ -9,7 +9,6 @@ import (
 	"github.com/vitistack/gslb-operator/internal/checks"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
-	"go.uber.org/zap"
 )
 
 type Test struct {
@@ -263,12 +262,10 @@ func TestOnFailure(t *testing.T) {
 }
 
 func TestService_GetBaseInterval(t *testing.T) {
-	log, _ := zap.NewDevelopment()
 	tests := []struct {
 		name string // description of this test case
 		// Named input parameters for receiver constructor.
 		config model.GSLBConfig
-		logger *zap.SugaredLogger
 		dryRun bool
 		want   timesutil.Duration
 	}{
@@ -283,7 +280,6 @@ func TestService_GetBaseInterval(t *testing.T) {
 				Priority:   1,
 				CheckType:       "TCP-FULL",
 			},
-			logger: log.Sugar(),
 			dryRun: true,
 			want:   timesutil.FromDuration(time.Second * 5),
 		},
@@ -298,7 +294,6 @@ func TestService_GetBaseInterval(t *testing.T) {
 				Priority:   2,
 				CheckType:       "TCP-FULL",
 			},
-			logger: log.Sugar(),
 			dryRun: true,
 			want:   timesutil.FromDuration(time.Second * 5),
 		},
@@ -313,7 +308,6 @@ func TestService_GetBaseInterval(t *testing.T) {
 				Priority:   3,
 				CheckType:       "TCP-FULL",
 			},
-			logger: log.Sugar(),
 			dryRun: true,
 			want:   timesutil.FromDuration(time.Second * 5),
 		},
@@ -328,7 +322,6 @@ func TestService_GetBaseInterval(t *testing.T) {
 				Priority:   4,
 				CheckType:       "TCP-FULL",
 			},
-			logger: log.Sugar(),
 			dryRun: true,
 			want:   timesutil.FromDuration(time.Second * 5),
 		},
@@ -341,7 +334,6 @@ func TestService_GetBaseInterval(t *testing.T) {
 			}
 			got := s.GetBaseInterval()
 
-			log.Sugar().Debug(got, tt.want, s.ScheduledInterval)
 			if got != tt.want {
 				t.Errorf("GetBaseInterval() = %v, want %v", got, tt.want)
 			}

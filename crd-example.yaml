@@ -1,0 +1,17 @@
+apiVersion: gslb.vitistack.io/v1alpha1
+kind: GSLBConfig
+metadata:
+  name: demo-service-bgo1
+  namespace: default
+spec:
+  fqdn: viti-gslb-demo.t-nhn-003.talos-lb.sky.nhn.no
+  memberOf: viti-demo.gslb.test.dns.nhn.no
+  ip: 10.0.1.100
+  port: "443"
+  datacenter: BGO1
+  interval: 5s
+  priority: 1
+  failureThreshold: 3
+  checkType: https
+  lua: |
+    return status_code ~= 503
