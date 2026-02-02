@@ -49,25 +49,25 @@ func main() {
 	api.HandleFunc(routes.GET_SPOOFS, middleware.Chain(
 		middleware.WithContextRequestID(),
 		middleware.WithIncomingRequestLogging(slog.Default()),
-		auth.WithTokenValidation(),
+		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetSpoofs))
 
 	api.HandleFunc(routes.GET_SPOOFID, middleware.Chain(
 		middleware.WithContextRequestID(),
 		middleware.WithIncomingRequestLogging(slog.Default()),
-		auth.WithTokenValidation(),
+		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetFQDNSpoof))
 
 	api.HandleFunc(routes.GET_SPOOFS_HASH, middleware.Chain(
 		middleware.WithContextRequestID(),
 		middleware.WithIncomingRequestLogging(slog.Default()),
-		auth.WithTokenValidation(),
+		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetSpoofsHash))
 
 	api.HandleFunc(routes.POST_SPOOF, middleware.Chain(
 		middleware.WithContextRequestID(),
 		middleware.WithIncomingRequestLogging(slog.Default()),
-		auth.WithTokenValidation(),
+		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.CreateSpoof))
 
 	server := http.Server{

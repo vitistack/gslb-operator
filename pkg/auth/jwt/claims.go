@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strings"
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
@@ -38,9 +39,10 @@ func getUserClaims(name string) (UserClaims, bool) {
 }
 
 func Validate(ctx context.Context, tokenString string) (*JWTError, error) {
+	tokenString = strings.Trim(tokenString, " ")
 	token, err := jwt.ParseWithClaims(
 		tokenString,
-		UserClaims{},
+		&UserClaims{},
 		func(t *jwt.Token) (any, error) {
 			secret := GetInstance().issuer.secret
 			return secret, nil
@@ -52,10 +54,10 @@ func Validate(ctx context.Context, tokenString string) (*JWTError, error) {
 		}),
 	)
 	if err != nil {
-		return Errors[ErrUnAuthorized], fmt.Errorf("invalid token")
+		return Errors[ErrUnAuthorized], fmt.Errorf("invalid token: %w", err)
 	}
 
-	requestClaims, ok := token.Claims.(UserClaims)
+	requestClaims, ok := token.Claims.(*UserClaims)
 	if !ok {
 		return Errors[ErrUnAuthorized], fmt.Errorf("invalid claims: unable to locate user claims section")
 	}
@@ -138,7 +140,7 @@ var endpointUserClaims = map[Role][]UserClaims{
 			Name:           "GSLB-OPERATOR",
 			AllowedMethods: roleMethod[RW],
 			AllowedRoutes: []string{
-				fmt.Sprintf("^%s$", routes.POST_SPOOF),
+				fmt.Sprintf("^%s$", routes.SPOOFS),
 			},
 		},
 	},

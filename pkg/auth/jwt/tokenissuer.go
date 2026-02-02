@@ -33,4 +33,3 @@ func WithSigningMethod(method jwt.SigningMethod) tokenIssuerOption {
 func (ti *TokenIssuer) New(claims jwt.Claims) (string, error) {
 	return jwt.NewWithClaims(ti.signingMethod, claims).SignedString(ti.secret)
 }
-
