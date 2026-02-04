@@ -141,6 +141,7 @@ var endpointUserClaims = map[Role][]UserClaims{
 			AllowedMethods: roleMethod[RW],
 			AllowedRoutes: []string{
 				fmt.Sprintf("^%s$", routes.SPOOFS),
+				fmt.Sprintf("^%s/.*$", routes.SPOOFS),
 			},
 		},
 	},
