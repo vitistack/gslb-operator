@@ -13,12 +13,12 @@ const (
 	GET_SPOOFS_HASH = http.MethodGet + " " + SPOOFS_HASH // Route to hash all spoofs, for config validation
 	POST_SPOOF      = http.MethodPost + " " + SPOOFS     // Route POST
 
-	OVERRIDE        = ROOT + "overrides"                 // override DNSDIST configuration
+	OVERRIDE        = SPOOFS + "/override"                 // override DNSDIST configuration
 	GET_OVERRIDES   = http.MethodGet + " " + OVERRIDE    // Route GET
 	POST_OVERRIDE   = http.MethodPost + " " + OVERRIDE   // Route POST
 	DELETE_OVERRIDE = http.MethodDelete + " " + OVERRIDE // Route DELETE
 
 	AUTH               = ROOT + "auth"
 	AUTH_LOGIN         = AUTH + "/login"
-	POST_AUTH_REGISTER = http.MethodPost + " " + AUTH_LOGIN
+	POST_AUTH_LOGIN = http.MethodPost + " " + AUTH_LOGIN
 )

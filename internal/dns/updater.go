@@ -44,7 +44,7 @@ func NewUpdater(opts ...updaterOption) (*Updater, error) {
 	for _, opt := range opts {
 		opt(u)
 	}
-	u.builder = request.NewBuilder(u.Server)
+	u.builder = request.NewBuilder(u.Server).SetHeader("User-Agent", config.GetInstance().JWT().User())
 
 	return u, nil
 }
@@ -109,7 +109,7 @@ func (u *Updater) ServiceUp(svc *service.Service) error {
 		IP:   ip,
 		DC:   svc.Datacenter,
 	}
-	err = u.spoofRepo.Create(fmt.Sprintf("%s:%s", svc.Fqdn, svc.Datacenter), spoof)
+	err = u.spoofRepo.Create(fmt.Sprintf("%s:%s", svc.MemberOf, svc.Datacenter), spoof)
 	if err != nil {
 		return fmt.Errorf("could not store new spoof: %s", err.Error())
 	}
