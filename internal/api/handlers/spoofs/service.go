@@ -1,16 +1,16 @@
 package spoofs
 
 import (
+	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
-	"github.com/vitistack/gslb-operator/pkg/persistence"
 )
 
 type SpoofsService struct {
-	SpoofRepo persistence.Repository[spoofs.Spoof]
-	OverrideSpoof func(spoofs.Spoof) error
+	SpoofRepo    *spoof.Repository
+	restoreSpoof func(spoofs.Override) spoofs.Spoof
 }
 
-func NewSpoofsService(repo persistence.Repository[spoofs.Spoof]) *SpoofsService {
+func NewSpoofsService(repo *spoof.Repository) *SpoofsService {
 	return &SpoofsService{
 		SpoofRepo: repo,
 	}

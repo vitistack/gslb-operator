@@ -10,6 +10,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence/store/memory"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
@@ -73,7 +74,17 @@ func UpdaterWithClient(client *client.HTTPClient) updaterOption {
 
 func (u *Updater) ServiceDown(svc *service.Service) error {
 	u.mu.Lock()
-	err := u.spoofRepo.Delete(fmt.Sprintf("%s:%s", svc.MemberOf, svc.Datacenter))
+	override, err := u.spoofRepo.HasOverride(svc.MemberOf)
+	if err != nil {
+		return fmt.Errorf("unable to delete spoof: %w", err)
+	}
+
+	if override {
+		bslog.Debug("service has spoof active override", slog.Any("service", svc))
+		return nil
+	}
+
+	err = u.spoofRepo.Delete(fmt.Sprintf("%s:%s", svc.MemberOf, svc.Datacenter))
 	u.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("unable to delete service from storage: %s", err.Error())
@@ -105,6 +116,17 @@ func (u *Updater) ServiceDown(svc *service.Service) error {
 }
 
 func (u *Updater) ServiceUp(svc *service.Service) error {
+	u.mu.Lock()
+	override, err := u.spoofRepo.HasOverride(svc.MemberOf)
+	if err != nil {
+		return fmt.Errorf("unable to store spoof: %w", err)
+	}
+
+	if override {
+		bslog.Debug("service has spoof active override", slog.Any("service", svc))
+		return nil
+	}
+
 	ip, err := svc.GetIP()
 	if err != nil {
 		return fmt.Errorf("unable to get ip address: %s", err.Error())
@@ -115,7 +137,7 @@ func (u *Updater) ServiceUp(svc *service.Service) error {
 		IP:   ip,
 		DC:   svc.Datacenter,
 	}
-	u.mu.Lock()
+
 	err = u.spoofRepo.Create(fmt.Sprintf("%s:%s", svc.MemberOf, svc.Datacenter), spoof)
 	u.mu.Unlock()
 	if err != nil {
@@ -138,69 +160,6 @@ func (u *Updater) ServiceUp(svc *service.Service) error {
 	_, err = u.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("request for update failed: %s", err.Error())
-	}
-
-	return nil
-}
-
-func (u *Updater) CreateOverride(spoof spoofs.Spoof) error {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	exist, err := u.spoofRepo.Read(spoof.Name)
-	if err != nil {
-		return fmt.Errorf("unable to read spoofs from storage: %w", err)
-	}
-
-	if exist.Name != spoof.Name {
-		return fmt.Errorf("spoof with name: %s does not exist", spoof.Name)
-	}
-
-	exist.Override = true
-	err = u.spoofRepo.Update(exist.Name, &exist)
-	if err != nil {
-		return fmt.Errorf("could not update spoof: %w", err)
-	}
-
-	/* 
-	* TODO:
-	* should update be done to GSLB - updater?
-	* or should sync-job take care of it?
-	*/
-
-	return nil
-}
-
-func (u *Updater) DeleteOverride(spoof spoofs.Spoof) error {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	exist, err := u.spoofRepo.Read(spoof.Name)
-	if err != nil {
-		return fmt.Errorf("unable to read spoofs from storage: %w", err)
-	}
-
-	if exist.Name != spoof.Name {
-		return fmt.Errorf("spoof with name: %s does not exist", spoof.Name)
-	}
-
-	// restore the spoof with the correct service
-	svc := u.getActive(spoof.Name)
-	if svc == nil {
-		err := u.spoofRepo.Delete(spoof.Name)
-		if err != nil {
-			return fmt.Errorf("unable to delete spoof, due to service ")
-		}
-		return nil
-	}
-
-	exist.Override = false
-	exist.Name = svc.MemberOf + ":" + svc.Datacenter
-	exist.FQDN = svc.Fqdn
-	exist.IP, _ = svc.GetIP()
-	exist.DC = svc.Datacenter
-
-	err = u.spoofRepo.Update(exist.Name, &exist)
-	if err != nil {
-		return fmt.Errorf("unable to update spoof after override deletion: override still active: %w", err)
 	}
 
 	return nil

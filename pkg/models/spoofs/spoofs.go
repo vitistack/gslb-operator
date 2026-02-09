@@ -5,11 +5,9 @@ import (
 )
 
 type Spoof struct {
-	Name     string `json:"name"`
-	FQDN     string `json:"fqdn"`
-	IP       string `json:"ip"`
-	DC       string `json:"datacenter"`
-	Override bool   `json:"override"`
+	FQDN string `json:"fqdn"`
+	IP   string `json:"ip"`
+	DC   string `json:"datacenter"` // when active override, DC == "OVERRIDE"
 }
 
 type SpoofResponse struct {
@@ -38,4 +36,8 @@ func NewSpoofResponse(items []Spoof, params *pagination.PaginationParams) *Spoof
 	}
 
 	return resp
+}
+
+func (s Spoof) Key() string {
+	return s.FQDN + ":" + s.DC
 }
