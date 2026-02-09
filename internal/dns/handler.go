@@ -48,10 +48,6 @@ func (h *Handler) Start(ctx context.Context, cancel func()) {
 		}
 	}
 
-	// get active service for a group
-	h.updater.getActive = func(memberOf string) *service.Service {
-		return h.svcManager.GetActiveForMemberOf(memberOf)
-	}
 	h.svcManager.Start()
 
 	zoneBatches, pollErrors := h.fetcher.StartAutoPoll(ctx)

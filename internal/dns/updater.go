@@ -25,7 +25,6 @@ type Updater struct {
 	client    client.HTTPClient
 	builder   *request.Builder
 	mu        *sync.Mutex
-	getActive func(string) *service.Service
 }
 
 func NewUpdater(opts ...updaterOption) (*Updater, error) {

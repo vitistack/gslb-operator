@@ -1,10 +1,15 @@
 package spoof
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
+)
+
+var (
+	ErrSpoofWithFQDNNotFound = errors.New("spoof with fqdn not found")
 )
 
 type Repository struct {
@@ -62,7 +67,7 @@ func (r *Repository) ReadFQDN(fqdn string) (spoofs.Spoof, error) {
 		}
 	}
 
-	return spoofs.Spoof{}, fmt.Errorf("did not find spoof with fqdn: %s", fqdn)
+	return spoofs.Spoof{}, fmt.Errorf("%w: fqdn: %s", ErrSpoofWithFQDNNotFound, fqdn)
 }
 
 func (r *Repository) ReadAll() ([]spoofs.Spoof, error) {
@@ -72,6 +77,9 @@ func (r *Repository) ReadAll() ([]spoofs.Spoof, error) {
 func (r *Repository) HasOverride(fqdn string) (bool, error) {
 	spoof, err := r.ReadFQDN(fqdn)
 	if err != nil {
+		if errors.Is(err, ErrSpoofWithFQDNNotFound) {
+			return false, nil
+		}
 		return false, err
 	}
 

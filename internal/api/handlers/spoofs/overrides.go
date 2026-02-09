@@ -104,13 +104,35 @@ func (ss *SpoofsService) deleteOverride(override spoofs.Override) error {
 	spoof := ss.restoreSpoof(override)
 	err = ss.SpoofRepo.Delete(exist.Key())
 	if err != nil {
-		return fmt.Errorf("could not updat spoof: %w", err)
+		return fmt.Errorf("could not update spoof: %w", err)
 	}
 
-	err = ss.SpoofRepo.Create(spoof.Key(), &spoof)
+	if spoof == nil { // if not possible to create new spoof, we return with NO spoof for the fqdn
+		return nil
+	}
+
+	err = ss.SpoofRepo.Create(spoof.Key(), spoof)
 	if err != nil {
 		return fmt.Errorf("could not create spoof for active service: %w", err)
 	}
 
 	return nil
+}
+
+func (ss *SpoofsService) restoreSpoof(override spoofs.Override) *spoofs.Spoof {
+	svc := ss.GetCurrentActiveForFQDN(override.FQDN)
+	if svc == nil { // no active service: e.g. no spoof should be there
+		return nil
+	}
+
+	ip, err := svc.GetIP()
+	if err != nil {
+		return nil
+	}
+
+	return &spoofs.Spoof{
+		FQDN: svc.Fqdn,
+		DC:   svc.Datacenter,
+		IP:   ip,
+	}
 }

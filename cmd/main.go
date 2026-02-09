@@ -17,6 +17,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/dns"
 	"github.com/vitistack/gslb-operator/internal/manager"
 	spoofsrepo "github.com/vitistack/gslb-operator/internal/repositories/spoof"
+	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/auth"
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
@@ -29,6 +30,7 @@ import (
 func main() {
 	cfg := config.GetInstance()
 
+	// initialize lua execution environment
 	if err := lua.LoadSandboxConfig(cfg.Server().LuaSandbox()); err != nil {
 		bslog.Fatal("could not load lua configuration", slog.Any("reason", err))
 	}
@@ -65,16 +67,16 @@ func main() {
 
 	// different routes handlers
 	spoofsApiService := spoofs.NewSpoofsService(spoofRepo)
+	spoofsApiService.GetCurrentActiveForFQDN = func(fqdn string) *service.Service {
+		return mgr.GetActiveForMemberOf(fqdn)
+	}
+
 	failoverApiService := failover.NewFailoverService()
 
 	// initializing the service jwt self signer
 	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
 
 	api.HandleFunc(routes.POST_FAILOVER, failoverApiService.FailoverService)
-
-	api.HandleFunc(routes.GET_OVERRIDE, spoofsApiService.GetOverride)
-	api.HandleFunc(routes.POST_OVERRIDE, spoofsApiService.CreateOverride)
-	api.HandleFunc(routes.DELETE_OVERRIDE, spoofsApiService.DeleteOverride)
 
 	api.HandleFunc(routes.GET_SPOOFS, middleware.Chain(
 		middleware.WithContextRequestID(),
@@ -94,6 +96,10 @@ func main() {
 		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetSpoofsHash))
 
+	// spoofs/override
+	api.HandleFunc(routes.GET_OVERRIDE, spoofsApiService.GetOverride)
+	api.HandleFunc(routes.POST_OVERRIDE, spoofsApiService.CreateOverride)
+	api.HandleFunc(routes.DELETE_OVERRIDE, spoofsApiService.DeleteOverride)
 	/*
 		TODO: Does this need to be here?
 		api.HandleFunc(routes.POST_SPOOF, middleware.Chain(
