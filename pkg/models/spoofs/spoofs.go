@@ -5,9 +5,11 @@ import (
 )
 
 type Spoof struct {
-	FQDN string `json:"fqdn"`
-	IP   string `json:"ip"`
-	DC   string `json:"datacenter"`
+	Name     string `json:"name"`
+	FQDN     string `json:"fqdn"`
+	IP       string `json:"ip"`
+	DC       string `json:"datacenter"`
+	Override bool   `json:"override"`
 }
 
 type SpoofResponse struct {

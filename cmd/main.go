@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	overrides "github.com/vitistack/gslb-operator/internal/api/handlers/overrides"
+	"github.com/vitistack/gslb-operator/internal/api/handlers/failover"
 	spoofs "github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
 	"github.com/vitistack/gslb-operator/internal/config"
@@ -21,6 +21,8 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/lua"
+	apiContractSpoof "github.com/vitistack/gslb-operator/pkg/models/spoofs"
+	"github.com/vitistack/gslb-operator/pkg/persistence/store/file"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 )
 
@@ -31,20 +33,48 @@ func main() {
 		bslog.Fatal("could not load lua configuration", slog.Any("reason", err))
 	}
 
-	api := http.NewServeMux()
+	// creating dns - handler objects
+	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
+	mgr := manager.NewManager(
+		manager.WithMinRunningWorkers(100),
+		manager.WithNonBlockingBufferSize(110),
+	)
 
-	spoofsApiService, err := spoofs.NewSpoofsService()
+	spoofsFileStore, err := file.NewStore[apiContractSpoof.Spoof]("store.json")
 	if err != nil {
-		bslog.Fatal("unable to start API service", slog.String("reason", err.Error()))
+		bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
 	}
 
-	overridesApiService := overrides.NewOverrideService()
+	spoofRepo := spoofsrepo.NewRepository(spoofsFileStore)
+	updater, err := dns.NewUpdater(
+		dns.UpdaterWithSpoofRepo(spoofRepo),
+	)
+	if err != nil {
+		bslog.Fatal("unable to create updater", slog.String("error", err.Error()))
+	}
+	dnsHandler := dns.NewHandler(
+		zoneFetcher,
+		mgr,
+		updater,
+	)
 
+	background := context.Background()
+	dnsHandler.Start(context.WithCancel(background))
+
+	api := http.NewServeMux()
+
+	// different routes handlers
+	spoofsApiService := spoofs.NewSpoofsService(spoofRepo)
+	failoverApiService := failover.NewFailoverService()
+
+	// initializing the service jwt self signer
 	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
 
-	api.HandleFunc(routes.GET_OVERRIDES, overridesApiService.GetOverrides)
-	api.HandleFunc(routes.POST_OVERRIDE, overridesApiService.CreateOverride)
-	api.HandleFunc(routes.DELETE_OVERRIDE, overridesApiService.DeleteOverride)
+	api.HandleFunc(routes.POST_FAILOVER, failoverApiService.FailoverService)
+
+	api.HandleFunc(routes.GET_OVERRIDE, spoofsApiService.GetOverride)
+	api.HandleFunc(routes.POST_OVERRIDE, spoofsApiService.CreateOverride)
+	api.HandleFunc(routes.DELETE_OVERRIDE, spoofsApiService.DeleteOverride)
 
 	api.HandleFunc(routes.GET_SPOOFS, middleware.Chain(
 		middleware.WithContextRequestID(),
@@ -64,11 +94,14 @@ func main() {
 		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetSpoofsHash))
 
-	api.HandleFunc(routes.POST_SPOOF, middleware.Chain(
-		middleware.WithContextRequestID(),
-		middleware.WithIncomingRequestLogging(slog.Default()),
-		auth.WithTokenValidation(slog.Default()),
-	)(spoofsApiService.CreateSpoof))
+	/*
+		TODO: Does this need to be here?
+		api.HandleFunc(routes.POST_SPOOF, middleware.Chain(
+			middleware.WithContextRequestID(),
+			middleware.WithIncomingRequestLogging(slog.Default()),
+			auth.WithTokenValidation(slog.Default()),
+			)(spoofsApiService.CreateSpoof))
+	*/
 
 	server := http.Server{
 		Addr:    cfg.API().Port(),
@@ -85,29 +118,6 @@ func main() {
 			serverErr <- fmt.Errorf("server failed: %s", err.Error())
 		}
 	}()
-
-	// creating dns - handler objects
-	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
-	mgr := manager.NewManager(
-		manager.WithMinRunningWorkers(100),
-		manager.WithNonBlockingBufferSize(110),
-	)
-
-	spoofRepo := spoofsApiService.SpoofRepo.(*spoofsrepo.Repository)
-	updater, err := dns.NewUpdater(
-		dns.UpdaterWithSpoofRepo(spoofRepo),
-	)
-	if err != nil {
-		bslog.Fatal("unable to create updater", slog.String("error", err.Error()))
-	}
-	dnsHandler := dns.NewHandler(
-		zoneFetcher,
-		mgr,
-		updater,
-	)
-
-	background := context.Background()
-	dnsHandler.Start(context.WithCancel(background))
 
 	select {
 	case err := <-serverErr:

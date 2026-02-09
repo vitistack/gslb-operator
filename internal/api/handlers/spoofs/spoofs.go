@@ -1,42 +1,20 @@
-package spoofs_service
+package spoofs
 
 import (
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
 
-	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
-	"github.com/vitistack/gslb-operator/pkg/models/hash"
 	"github.com/vitistack/gslb-operator/pkg/models/pagination"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
-	"github.com/vitistack/gslb-operator/pkg/persistence"
-	"github.com/vitistack/gslb-operator/pkg/persistence/store/file"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
 )
-
-type SpoofsService struct {
-	SpoofRepo persistence.Repository[spoofs.Spoof]
-}
-
-func NewSpoofsService() (*SpoofsService, error) {
-	h := &SpoofsService{}
-
-	store, err := file.NewStore[spoofs.Spoof]("store.json")
-	if err != nil {
-		return nil, fmt.Errorf("could not create filestore: %s", err.Error())
-	}
-
-	h.SpoofRepo = spoof.NewRepository(store)
-
-	return h, nil
-}
 
 func (ss *SpoofsService) GetSpoofs(w http.ResponseWriter, r *http.Request) {
 	data, err := ss.SpoofRepo.ReadAll()
@@ -98,15 +76,11 @@ func (ss *SpoofsService) GetSpoofsHash(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rawHash := sha256.Sum256(marshalledSpoofs) // creating bytes representation of spoofs
-	hash := hash.Hash{
+	hash := spoofs.Hash{
 		Hash: hex.EncodeToString(rawHash[:]),
 	}
 
 	if err = response.JSON(w, http.StatusOK, hash); err != nil {
 		bslog.Error("could not write response to client", slog.String("reason", err.Error()))
 	}
-}
-
-func (ss *SpoofsService) CreateSpoof(w http.ResponseWriter, r *http.Request) {
-
 }

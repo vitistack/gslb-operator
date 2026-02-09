@@ -37,13 +37,20 @@ func NewHandler(fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater *Upd
 }
 
 func (h *Handler) Start(ctx context.Context, cancel func()) {
-	h.cancel = cancel
+	h.cancel = cancel // context cancellation
+
+	// function to update DNS
 	h.svcManager.DNSUpdate = func(service *service.Service, healthy bool) {
 		if healthy {
 			h.onServiceUp(service)
 		} else {
 			h.onServiceDown(service)
 		}
+	}
+
+	// get active service for a group
+	h.updater.getActive = func(memberOf string) *service.Service {
+		return h.svcManager.GetActiveForMemberOf(memberOf)
 	}
 	h.svcManager.Start()
 

@@ -300,3 +300,10 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 	}
 	newScheduler.ScheduleService(svc)
 }
+
+func (sm *ServicesManager) GetActiveForMemberOf(memberOf string) *service.Service {
+	if group, ok := sm.serviceGroups[memberOf]; ok {
+		return group.GetActive()
+	}
+	return nil
+}
