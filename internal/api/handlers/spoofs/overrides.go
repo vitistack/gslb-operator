@@ -8,40 +8,66 @@ package spoofs
  */
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 
+	spoofRepo "github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
 )
 
-/*
-* {
-*	"fqdn": "example.com",
-* 	"ip": "10.10.0.1",
-* }
- */
-
 func (ss *SpoofsService) GetOverride(w http.ResponseWriter, r *http.Request) {
+	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
+	fqdn := r.PathValue("fqdn")
 
+	if fqdn == "" {
+		logger.Error("skipping request due to insufficient input parameters", slog.String("reason", "missing fqdn"))
+		response.Err(w, response.ErrInvalidInput, "missing fqdn")
+		return
+	}
+
+	exist, err := ss.SpoofRepo.ReadFQDN(fqdn)
+	if err != nil {
+		logger.Error("could not read spoofs", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInternalError, "")
+		return
+	}
+
+	if exist.DC != "OVERRIDE" {
+		logger.Error("service does not have an active override", slog.String("fqdn", exist.FQDN))
+		response.Err(w, response.ErrNotFound, "not an active override")
+		return
+	}
+
+	err = response.JSON(w, http.StatusOK, exist)
+	if err != nil {
+		logger.Error("unable to create json response", slog.String("reason", err.Error()))
+	}
 }
 
 func (ss *SpoofsService) CreateOverride(w http.ResponseWriter, r *http.Request) {
+	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
 	override := spoofs.Override{}
 
 	err := request.JSONDECODE(r.Body, &override)
 	if err != nil {
-		bslog.Error("could not decode request body", slog.String("reason", err.Error()), slog.Any("request_id", r.Context().Value("id")))
-		response.Err(w, response.ErrInvalidInput, "unable to decode request body")
+		logger.Error("could not decode request body", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInvalidInput, "invalid request format")
 		return
 	}
 
 	err = ss.newOverride(override)
 	if err != nil {
-		bslog.Error("could not override spoof", slog.String("reason", err.Error()), slog.Any("request_id", r.Context().Value("id")))
+		logger.Error("could not override spoof", slog.String("reason", err.Error()))
+		if errors.Is(err, spoofRepo.ErrSpoofWithFQDNNotFound) {
+			response.Err(w, response.ErrNotFound, "fqdn not found: "+override.FQDN)
+			return
+		}
+
 		response.Err(w, response.ErrInvalidInput, "unable to create spoof")
 		return
 	}
@@ -49,19 +75,46 @@ func (ss *SpoofsService) CreateOverride(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusCreated)
 }
 
-func (ss *SpoofsService) DeleteOverride(w http.ResponseWriter, r *http.Request) {
+func (ss *SpoofsService) UpdateOverride(w http.ResponseWriter, r *http.Request) {
+	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
 	override := spoofs.Override{}
 
 	err := request.JSONDECODE(r.Body, &override)
 	if err != nil {
-		bslog.Error("could not decode request body", slog.String("reason", err.Error()), slog.Any("request_id", r.Context().Value("id")))
-		response.Err(w, response.ErrInvalidInput, "unable to decode request body")
+		logger.Error("could not decode request body", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInvalidInput, "invalid request format")
+		return
+	}
+
+	err = ss.updateOverride(override)
+	if err != nil {
+		logger.Error("could not update spoof", slog.String("reason", err.Error()))
+		if errors.Is(err, spoofRepo.ErrSpoofWithFQDNNotFound) {
+			response.Err(w, response.ErrNotFound, "fqdn not found: "+override.FQDN)
+			return
+		}
+
+		response.Err(w, response.ErrInvalidInput, "unable to update spoof")
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+}
+
+func (ss *SpoofsService) DeleteOverride(w http.ResponseWriter, r *http.Request) {
+	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
+	override := spoofs.Override{}
+
+	err := request.JSONDECODE(r.Body, &override)
+	if err != nil {
+		logger.Error("could not decode request body", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInvalidInput, "invalid request format")
 		return
 	}
 
 	err = ss.deleteOverride(override)
 	if err != nil {
-		bslog.Error("could not delete overridden spoof", slog.String("reason", err.Error()), slog.Any("request_id", r.Context().Value("id")))
+		logger.Error("could not delete overridden spoof", slog.String("reason", err.Error()))
 		response.Err(w, response.ErrInvalidInput, "unable to delete override")
 		return
 	}
@@ -75,6 +128,10 @@ func (ss *SpoofsService) newOverride(override spoofs.Override) error {
 		return fmt.Errorf("unable to read spoofs from storage: %w", err)
 	}
 
+	if exist.DC == "OVERRIDE" {
+		return fmt.Errorf("service already has active override: %s", exist.FQDN)
+	}
+
 	err = ss.SpoofRepo.Delete(exist.Key())
 	if err != nil {
 		return fmt.Errorf("could not delete old spoof: %w", err)
@@ -84,6 +141,26 @@ func (ss *SpoofsService) newOverride(override spoofs.Override) error {
 	exist.IP = override.IP.String()
 
 	err = ss.SpoofRepo.Create(exist.Key(), &exist)
+	if err != nil {
+		return fmt.Errorf("could not create spoof: %w", err)
+	}
+
+	return nil
+}
+
+func (ss *SpoofsService) updateOverride(override spoofs.Override) error {
+	exist, err := ss.SpoofRepo.ReadFQDN(override.FQDN)
+	if err != nil {
+		return fmt.Errorf("unable to read spoofs from storage: %w", err)
+	}
+
+	if exist.DC != "OVERRIDE" {
+		return fmt.Errorf("%s does not have an active override", override.FQDN)
+	}
+
+	exist.IP = override.IP.String()
+
+	err = ss.SpoofRepo.Update(exist.Key(), &exist)
 	if err != nil {
 		return fmt.Errorf("could not update spoof: %w", err)
 	}
@@ -120,7 +197,7 @@ func (ss *SpoofsService) deleteOverride(override spoofs.Override) error {
 }
 
 func (ss *SpoofsService) restoreSpoof(override spoofs.Override) *spoofs.Spoof {
-	svc := ss.GetCurrentActiveForFQDN(override.FQDN)
+	svc := ss.serviceManager.GetActiveForFQDN(override.FQDN)
 	if svc == nil { // no active service: e.g. no spoof should be there
 		return nil
 	}

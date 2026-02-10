@@ -9,7 +9,7 @@ import (
 
 // Populates a struct object containing exported data members with the `param:""` tag set,
 // with all the values that the urlValues contains. Be mindfull to only pass the query string, and not anything host related.
-func MarshallParams[T any](urlValues url.Values, dest *T) error {
+func UnMarshallParams[T any](urlValues url.Values, dest *T) error {
 	val := reflect.ValueOf(dest).Elem()
 	valType := val.Type()
 
@@ -39,7 +39,7 @@ func MarshallParams[T any](urlValues url.Values, dest *T) error {
 	return nil
 }
 
-func UnMarshallParams[T any](params *T) url.Values {
+func MarshallParams[T any](params *T) url.Values {
 	values := make(url.Values)
 	val := reflect.ValueOf(params).Elem()
 	valType := val.Type()

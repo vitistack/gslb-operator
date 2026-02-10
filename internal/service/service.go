@@ -258,3 +258,9 @@ func (s *Service) LogValue() slog.Value {
 		slog.String("ip", ip),
 	)
 }
+
+// satisfies the stringer interface to allow passing s for %v in formatted strings
+func (s *Service) String() string {
+	ip, _ := s.GetIP()
+	return fmt.Sprintf("id:%s, memberOf: %s, fqdn: %s, datacenter: %s, ip: %s", s.id, s.MemberOf, s.Fqdn, s.Datacenter, ip)
+}

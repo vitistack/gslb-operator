@@ -16,10 +16,11 @@ const (
 	OVERRIDE        = SPOOFS + "/override"                        // override DNSDIST configuration
 	GET_OVERRIDE    = http.MethodGet + " " + OVERRIDE + "/{fqdn}" // Route GET
 	POST_OVERRIDE   = http.MethodPost + " " + OVERRIDE            // Route POST
-	DELETE_OVERRIDE = http.MethodDelete + " " + OVERRIDE          // Route DELETE
+	PUT_OVERRIDE    = http.MethodPut + " " + OVERRIDE + "/{fqdn}"
+	DELETE_OVERRIDE = http.MethodDelete + " " + OVERRIDE // Route DELETE
 
 	FAILOVER      = ROOT + "failover"
-	POST_FAILOVER = http.MethodGet + " " + FAILOVER
+	POST_FAILOVER = http.MethodPost + " " + FAILOVER + "/{fqdn}"
 
 	AUTH            = ROOT + "auth"
 	AUTH_LOGIN      = AUTH + "/login"

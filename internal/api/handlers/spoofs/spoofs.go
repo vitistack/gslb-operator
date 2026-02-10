@@ -25,7 +25,7 @@ func (ss *SpoofsService) GetSpoofs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	params := pagination.NewPaginationParams()
-	err = request.MarshallParams(r.URL.Query(), params)
+	err = request.UnMarshallParams(r.URL.Query(), params)
 	if err != nil {
 		response.Err(w, response.ErrInvalidInput, "could not parse request parameters")
 		bslog.Error("unable to parse request parameters", slog.String("reason", err.Error()))

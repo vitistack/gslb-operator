@@ -2,11 +2,13 @@ package manager
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
 
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils"
+	"github.com/vitistack/gslb-operator/pkg/models/failover"
 )
 
 type ServiceGroupMode int
@@ -64,7 +66,6 @@ func (sg *ServiceGroup) GetActive() *service.Service {
 		if sg.active != nil {
 			return sg.active
 		}
-		fallthrough
 	default:
 		for _, svc := range sg.Members {
 			if svc.IsHealthy() {
@@ -92,7 +93,7 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 	}
 	switch sg.mode {
 	case ActivePassive:
-		if !healthy && sg.active == changedService { // active has gone down!
+		if !healthy && sg.active.GetID() == changedService.GetID() { // active has gone down!
 			sg.lastActive = sg.active
 			sg.OnPromotion(sg.promoteNext())
 			return
@@ -136,7 +137,7 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 		}
 
 		// unhealthy
-		if changedService == sg.active {
+		if changedService.GetID() == sg.active.GetID() {
 			next := sg.firstHealthy()
 			if next != nil {
 				sg.OnPromotion(&PromotionEvent{
@@ -196,10 +197,10 @@ func (sg *ServiceGroup) RegisterService(newService *service.Service) {
 func (sg *ServiceGroup) RemoveService(rmService *service.Service) bool {
 	for idx, member := range sg.Members {
 		if member.GetID() == rmService.GetID() {
-			if member == sg.active {
+			sg.Members = utils.RemoveIndexFromSlice(sg.Members, idx)
+			if member.GetID() == sg.active.GetID() {
 				sg.OnPromotion(sg.promoteNext())
 			}
-			sg.Members = utils.RemoveIndexFromSlice(sg.Members, idx)
 			sg.SetGroupMode()
 			break
 		}
@@ -309,4 +310,33 @@ func (sg *ServiceGroup) SetGroupMode() {
 
 func (sg *ServiceGroup) memberExists(member *service.Service) bool {
 	return slices.Contains(sg.Members, member)
+}
+
+func (sg *ServiceGroup) Failover(fqdn string, failover failover.Failover) error {
+	var failoverSvc *service.Service
+	for _, svc := range sg.Members {
+		if svc.Datacenter == failover.Datacenter {
+			failoverSvc = svc
+			break
+		}
+	}
+
+	if failoverSvc == nil {
+		return fmt.Errorf("no service in service group registered with datacenter: %s", failover.Datacenter)
+	}
+
+	if !failoverSvc.IsHealthy() {
+		return fmt.Errorf("%w: service not considered healthy: %v", ErrCannotPromoteUnHealthyService, failoverSvc)
+	}
+
+	sg.lastActive = sg.active
+	sg.active = failoverSvc
+	//TODO: is this enough?
+	sg.OnPromotion(&PromotionEvent{
+		Service:   fqdn,
+		NewActive: failoverSvc,
+		OldActive: sg.lastActive,
+	})
+
+	return nil
 }

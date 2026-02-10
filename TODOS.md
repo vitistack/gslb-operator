@@ -1,7 +1,5 @@
 ## TODOs
 
-- dnsdist parse show rules response into struct/model.Spoof
-
 - HTTPClient ReAuth, Retry Func
 
 - UnMarshall url params from struct to url.Values ✅

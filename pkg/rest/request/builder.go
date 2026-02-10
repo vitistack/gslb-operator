@@ -65,7 +65,7 @@ func (b *Builder) URL(url string) *Builder {
 }
 
 func (b *Builder) WithURLParams(params any) *Builder {
-	b.urlParams = UnMarshallParams(&params)
+	b.urlParams = MarshallParams(&params)
 	return b
 }
 

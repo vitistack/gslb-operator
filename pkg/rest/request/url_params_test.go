@@ -12,7 +12,7 @@ type Params struct {
 	Arg3 bool   `param:"arg3"`
 }
 
-func TestMarshallParams(t *testing.T) {
+func TestUnMarshallParams(t *testing.T) {
 
 	tUrl, err := url.Parse("example.com?arg1=1&arg2=hello_world&arg3=true")
 	if err != nil {
@@ -44,7 +44,7 @@ func TestMarshallParams(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotErr := MarshallParams(tt.urlValues, &tt.dest)
+			gotErr := UnMarshallParams(tt.urlValues, &tt.dest)
 			if gotErr != nil {
 				if !tt.wantErr {
 					t.Errorf("MarshallParams() failed: %v", gotErr)
@@ -60,7 +60,7 @@ func TestMarshallParams(t *testing.T) {
 	}
 }
 
-func TestUnMarshallParams(t *testing.T) {
+func TestMarshallParams(t *testing.T) {
 	t1 := make(url.Values)
 	t1.Add("arg2", "hello-world")
 	tests := []struct {
@@ -79,7 +79,7 @@ func TestUnMarshallParams(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := UnMarshallParams(&tt.params)
+			got := MarshallParams(&tt.params)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("UnMarshallParams() = %v, want %v", got, tt.want)
 			}

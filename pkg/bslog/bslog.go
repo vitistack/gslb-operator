@@ -55,3 +55,9 @@ func FatalContext(ctx context.Context, msg string, args ...any) {
 	slog.Log(ctx, LevelFatal, msg, args...)
 	panic(msg)
 }
+
+func With(args ...any) *Logger {
+	return &Logger{
+		Logger: *slog.With(args...),
+	}
+}

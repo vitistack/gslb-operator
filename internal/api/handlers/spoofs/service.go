@@ -1,17 +1,18 @@
 package spoofs
 
 import (
+	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
-	"github.com/vitistack/gslb-operator/internal/service"
 )
 
 type SpoofsService struct {
-	SpoofRepo        *spoof.Repository
-	GetCurrentActiveForFQDN func(fqdn string) *service.Service
+	SpoofRepo      *spoof.Repository
+	serviceManager manager.QueryManager
 }
 
-func NewSpoofsService(repo *spoof.Repository) *SpoofsService {
+func NewSpoofsService(repo *spoof.Repository, svcManager manager.QueryManager) *SpoofsService {
 	return &SpoofsService{
-		SpoofRepo: repo,
+		SpoofRepo:      repo,
+		serviceManager: svcManager,
 	}
 }

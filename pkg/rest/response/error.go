@@ -15,6 +15,7 @@ type RestError struct {
 const (
 	ErrInvalidInput  = Error("INVALID_INPUT")
 	ErrInternalError = Error("INTERNAL_ERROR")
+	ErrNotFound      = Error("NOT_FOUND")
 )
 
 var (
@@ -26,6 +27,10 @@ var (
 		ErrInternalError: {
 			Code:  http.StatusInternalServerError,
 			Title: string(ErrInternalError),
+		},
+		ErrNotFound: {
+			Code: http.StatusNotFound,
+			Title: string(ErrNotFound),
 		},
 	}
 )

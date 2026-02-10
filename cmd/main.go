@@ -17,7 +17,6 @@ import (
 	"github.com/vitistack/gslb-operator/internal/dns"
 	"github.com/vitistack/gslb-operator/internal/manager"
 	spoofsrepo "github.com/vitistack/gslb-operator/internal/repositories/spoof"
-	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/auth"
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
@@ -65,45 +64,54 @@ func main() {
 
 	api := http.NewServeMux()
 
-	// different routes handlers
-	spoofsApiService := spoofs.NewSpoofsService(spoofRepo)
-	spoofsApiService.GetCurrentActiveForFQDN = func(fqdn string) *service.Service {
-		return mgr.GetActiveForMemberOf(fqdn)
-	}
+	// routes handlers
+	spoofsApiService := spoofs.NewSpoofsService(spoofRepo, mgr)
 
-	failoverApiService := failover.NewFailoverService()
+	failoverApiService := failover.NewFailoverService(spoofRepo, mgr)
 
 	// initializing the service jwt self signer
 	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
 
-	api.HandleFunc(routes.POST_FAILOVER, failoverApiService.FailoverService)
+	api.HandleFunc(routes.POST_FAILOVER, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(failoverApiService.FailoverService))
 
 	api.HandleFunc(routes.GET_SPOOFS, middleware.Chain(
-		middleware.WithContextRequestID(),
 		middleware.WithIncomingRequestLogging(slog.Default()),
 		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetSpoofs))
 
 	api.HandleFunc(routes.GET_SPOOFID, middleware.Chain(
-		middleware.WithContextRequestID(),
 		middleware.WithIncomingRequestLogging(slog.Default()),
 		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetFQDNSpoof))
 
 	api.HandleFunc(routes.GET_SPOOFS_HASH, middleware.Chain(
-		middleware.WithContextRequestID(),
 		middleware.WithIncomingRequestLogging(slog.Default()),
 		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetSpoofsHash))
 
 	// spoofs/override
-	api.HandleFunc(routes.GET_OVERRIDE, spoofsApiService.GetOverride)
-	api.HandleFunc(routes.POST_OVERRIDE, spoofsApiService.CreateOverride)
-	api.HandleFunc(routes.DELETE_OVERRIDE, spoofsApiService.DeleteOverride)
+	// TODO: add auth!
+	api.HandleFunc(routes.GET_OVERRIDE, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(spoofsApiService.GetOverride))
+
+	api.HandleFunc(routes.PUT_OVERRIDE, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(spoofsApiService.UpdateOverride))
+
+	api.HandleFunc(routes.POST_OVERRIDE, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(spoofsApiService.CreateOverride))
+
+	api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(spoofsApiService.DeleteOverride))
 	/*
 		TODO: Does this need to be here?
 		api.HandleFunc(routes.POST_SPOOF, middleware.Chain(
-			middleware.WithContextRequestID(),
+
 			middleware.WithIncomingRequestLogging(slog.Default()),
 			auth.WithTokenValidation(slog.Default()),
 			)(spoofsApiService.CreateSpoof))

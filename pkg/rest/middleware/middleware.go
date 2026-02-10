@@ -19,7 +19,7 @@ func Chain(mws ...MiddlewareFunc) MiddlewareFunc {
 	}
 }
 
-func WithContextRequestID() MiddlewareFunc {
+func WithIncomingRequestLogging(logger *slog.Logger) MiddlewareFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			parent := r.Context() // re-use request context
@@ -31,14 +31,6 @@ func WithContextRequestID() MiddlewareFunc {
 				r = r.WithContext(context.WithValue(parent, "id", id.String()))
 			}
 
-			next.ServeHTTP(w, r)
-		}
-	}
-}
-
-func WithIncomingRequestLogging(logger *slog.Logger) MiddlewareFunc {
-	return func(next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
 			logger.Info("incoming request",
 				slog.GroupAttrs(
 					"meta_data",

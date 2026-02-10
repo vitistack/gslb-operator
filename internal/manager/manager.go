@@ -12,6 +12,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
+	"github.com/vitistack/gslb-operator/pkg/models/failover"
 	"github.com/vitistack/gslb-operator/pkg/pool"
 )
 
@@ -212,7 +213,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	if event.OldActive != nil && event.NewActive != nil { // just swap, and do dns updates
 		demotedInterval = event.NewActive.ScheduledInterval
 
-		bslog.Info("demoting service",
+		bslog.Warn("demoting service",
 			slog.Any("oldActive", event.OldActive),
 			slog.Group("intervalChange",
 				slog.String("from", event.OldActive.ScheduledInterval.String()),
@@ -221,7 +222,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 		sm.moveServiceToInterval(event.OldActive, demotedInterval)
 		sm.DNSUpdate(event.OldActive, false)
 
-		bslog.Info("promoting service",
+		bslog.Warn("promoting service",
 			slog.Any("newActive", event.NewActive),
 			slog.Group("intervalChange",
 				slog.String("from", event.NewActive.ScheduledInterval.String()),
@@ -247,14 +248,11 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 }
 
 func (sm *ServicesManager) newServiceGroup(memberOf string) *ServiceGroup {
-	sm.serviceGroups[memberOf] = new(ServiceGroup)
 	newGroup := NewEmptyServiceGroup()
-
 	newGroup.OnPromotion = func(event *PromotionEvent) {
 		sm.handlePromotion(event)
 	}
 	sm.serviceGroups[memberOf] = newGroup
-
 	return newGroup
 }
 
@@ -301,11 +299,25 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 	newScheduler.ScheduleService(svc)
 }
 
-func (sm *ServicesManager) GetActiveForMemberOf(memberOf string) *service.Service {
+func (sm *ServicesManager) GetActiveForFQDN(memberOf string) *service.Service {
 	sm.mutex.RLock()
 	defer sm.mutex.RUnlock()
 	if group, ok := sm.serviceGroups[memberOf]; ok {
 		return group.GetActive()
 	}
+	return nil
+}
+
+func (sm *ServicesManager) Failover(fqdn string, failover failover.Failover) error {
+	group, ok := sm.serviceGroups[fqdn]
+	if !ok {
+		return fmt.Errorf("no registered service group for: %s", fqdn)
+	}
+
+	err := group.Failover(fqdn, failover)
+	if err != nil {
+		return fmt.Errorf("could not failover for service group: %s: %w", fqdn, err)
+	}
+
 	return nil
 }
