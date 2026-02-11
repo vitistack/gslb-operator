@@ -1,0 +1,27 @@
+services:
+#  git-sync:
+#    image: registry.k8s.io/git-sync/git-sync:v4.0.0
+#    env_file:
+#      - .gitsync.env
+#    volumes:
+#      - ./policies:/policies
+  opa:
+    image: openpolicyagent/opa:0.60.0
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+      - "--watch"
+      - "/gslb-policies/policies/"
+      - "/gslb-policies/data/"
+    ports: 
+      - "8181:8181"
+    volumes:
+      - ./gslb-policies/:/gslb-policies:ro
+#    depends_on:
+#      - git-sync
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8181/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
