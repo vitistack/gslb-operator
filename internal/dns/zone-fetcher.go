@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ type ZoneFetcher struct {
 	Server   string
 	wg       sync.WaitGroup
 	interval timesutil.Duration
+	timeout  time.Duration
 	client   *dns.Client
 }
 
@@ -36,6 +38,7 @@ func NewZoneFetcherWithAutoPoll(opts ...fetcherOption) *ZoneFetcher {
 		Server:   gslb.NameServer(),
 		wg:       sync.WaitGroup{},
 		interval: fetcInterval,
+		timeout:  time.Second * 5,
 		client:   dns.NewClient(),
 	}
 
@@ -64,11 +67,18 @@ func WithFetchInterval(interval time.Duration) fetcherOption {
 	}
 }
 
+func WithTimeout(timeout time.Duration) fetcherOption {
+	return func(fetcher *ZoneFetcher) {
+		fetcher.timeout = timeout
+	}
+}
+
 // starts the auto-fetch, and listen for errors and records on the returned channels
 func (f *ZoneFetcher) StartAutoPoll(ctx context.Context) (zone chan []dns.RR, pollErrors chan error) {
-	zone = make(chan []dns.RR, 10)
-	pollErrors = make(chan error, 10)
+	zone = make(chan []dns.RR, 1)
+	pollErrors = make(chan error)
 
+	bslog.Debug("polling config zone", slog.String("interval", f.interval.String()))
 	ticker := time.NewTicker(time.Duration(f.interval))
 	f.wg.Go(func() {
 		defer close(zone)
@@ -113,19 +123,34 @@ func (f *ZoneFetcher) AXFRTransfer(ctx context.Context, zone chan []dns.RR, tran
 	for {
 		select {
 		case <-ctx.Done():
+			bslog.Debug("zone-transfer cancelled before sending records")
 			return
 
 		case envelope, ok := <-envelopes:
-			if !ok {
-				zone <- records
-				bslog.Debug("zone-transfer completed")
-				return // zone complete
+			if !ok { // transfer completed
+				// safe publish to consumer
+				select {
+				case <-ctx.Done():
+					bslog.Debug("zone-transfer cancelled before sending records")
+					return
+				case zone <- records:
+					bslog.Debug("zone-transfer completed")
+					return
+				case <-time.After(f.timeout): // dont block forever
+					bslog.Warn("zone-transfer timed out", slog.String("after", f.timeout.String()), slog.String("reason", "consumer may be blocked"))
+					return
+				}
 			}
+
 			if envelope.Error != nil {
 				transferErrors <- envelope.Error
 				return
 			}
 			records = append(records, envelope.Answer...)
+
+		case <-time.After(f.timeout):
+			bslog.Warn("zone-transfer timed out", slog.String("after", f.timeout.String()), slog.String("reason", "stopped receiving records, but connection did not terminate"))
+			return
 		}
 	}
 }

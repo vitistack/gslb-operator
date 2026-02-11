@@ -19,9 +19,9 @@ type Handler struct {
 	fetcher       *ZoneFetcher // fetch GSLB config from dns
 	svcManager    *manager.ServicesManager
 	updater       *Updater
-	knownServices map[string]*service.Service // key: service.ID
-	stopFetcher   chan struct{}
-	cancel        func() // cancels zone fetches
+	knownServices map[string]struct{} // service.ID: makes it easier to look up using map, but dont need a real value!
+	stop          chan struct{}
+	cancel        func() // cancels context
 	wg            sync.WaitGroup
 }
 
@@ -30,14 +30,17 @@ func NewHandler(fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater *Upd
 		fetcher:       fetcher,
 		svcManager:    mgr,
 		updater:       updater,
-		knownServices: make(map[string]*service.Service),
-		stopFetcher:   make(chan struct{}),
+		knownServices: make(map[string]struct{}),
+		stop:          make(chan struct{}),
 		wg:            sync.WaitGroup{},
 	}
 }
 
 func (h *Handler) Start(ctx context.Context, cancel func()) {
-	h.cancel = cancel // context cancellation
+	h.cancel = func() {
+		cancel() // context cancellation
+		close(h.stop)
+	}
 
 	// function to update DNS
 	h.svcManager.DNSUpdate = func(service *service.Service, healthy bool) {
@@ -57,12 +60,21 @@ func (h *Handler) Start(ctx context.Context, cancel func()) {
 	})
 }
 
-func (h *Handler) Stop() {
-	h.cancel()
-	close(h.stopFetcher)
-	h.wg.Wait()
-	h.svcManager.Stop()
-	bslog.Debug("Successfully stopped DNS - Handler")
+func (h *Handler) Stop(ctx context.Context) {
+	done := make(chan struct{})
+	go func() {
+		h.cancel() // cancel zone-updates
+		h.wg.Wait()
+		h.svcManager.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		bslog.Debug("successfully stopped DNS - Handler")
+	case <-ctx.Done():
+		bslog.Error("timed out during stop sequence", slog.String("reason", ctx.Err().Error()))
+	}
 }
 
 func (h *Handler) onServiceDown(svc *service.Service) {
@@ -80,20 +92,20 @@ func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan erro
 			if !ok { // chan is closed
 				return
 			}
-			servicesInBatch := make(map[string]*service.Service)
+			servicesInBatch := make(map[string]struct{}, 0)
 			for _, record := range records { // registers every service in the current batch
 				svc := h.handleRecord(record)
 				if svc != nil {
-					servicesInBatch[svc.GetID()] = svc
+					servicesInBatch[svc.GetID()] = struct{}{}
 				}
 			}
 
-			for key, oldSvc := range h.knownServices { // remove any services that dont exist in the current batch
+			for key := range h.knownServices { // remove any services that dont exist in the current batch
 				if _, exists := servicesInBatch[key]; !exists {
-					bslog.Info("service no longer exists in GSLB - config zone", slog.String("action", "removing"), slog.Any("service", oldSvc))
-					err := h.svcManager.RemoveService(oldSvc)
+					bslog.Info("service no longer exists in GSLB - config zone", slog.String("action", "removing"), slog.String("serviceID", key))
+					err := h.svcManager.RemoveService(key)
 					if err != nil {
-						bslog.Error("failed to remove service", slog.Any("service", oldSvc), slog.String("reason", err.Error()))
+						bslog.Error("failed to remove service", slog.Any("serviceID", key), slog.String("reason", err.Error()))
 					}
 				}
 			}
@@ -106,7 +118,8 @@ func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan erro
 			}
 			bslog.Error("zone transfer did not succeed", slog.String("reason", err.Error()))
 
-		case <-h.stopFetcher:
+		case <-h.stop:
+			bslog.Debug("no longer handling zone transfers")
 			return
 		}
 	}
@@ -123,7 +136,6 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 	svcConfig := model.GSLBConfig{
 		MemberOf:         txt.Hdr.Name,
 		FailureThreshold: service.DEFAULT_FAILURE_THRESHOLD,
-		Script: `return status_code ~= 503`,
 	}
 
 	err := json.Unmarshal([]byte(data), &svcConfig)
@@ -132,6 +144,7 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 		return nil
 	}
 
+	bslog.Debug("registering new GSLB - config", slog.Any("config", svcConfig))
 	svc, err := h.svcManager.RegisterService(svcConfig)
 	if err != nil {
 		bslog.Error("could not register service", slog.String("reason", err.Error()))

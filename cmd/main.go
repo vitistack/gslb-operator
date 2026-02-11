@@ -108,14 +108,6 @@ func main() {
 	api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),
 	)(spoofsApiService.DeleteOverride))
-	/*
-		TODO: Does this need to be here?
-		api.HandleFunc(routes.POST_SPOOF, middleware.Chain(
-
-			middleware.WithIncomingRequestLogging(slog.Default()),
-			auth.WithTokenValidation(slog.Default()),
-			)(spoofsApiService.CreateSpoof))
-	*/
 
 	server := http.Server{
 		Addr:    cfg.API().Port(),
@@ -135,17 +127,16 @@ func main() {
 
 	select {
 	case err := <-serverErr:
-		dnsHandler.Stop()
 		bslog.Fatal("server crashed unexpectedly, no longer serving http", slog.String("reason", err.Error()))
 	case <-quit:
 		bslog.Info("gracefully shutting down...")
-		dnsHandler.Stop()
 	}
-
-	serverCtx, cancel := context.WithTimeout(background, time.Second*5)
+	
+	shutdown, cancel := context.WithTimeout(background, time.Second*5)
 	defer cancel()
-
-	if err := server.Shutdown(serverCtx); err != nil {
+	
+	dnsHandler.Stop(shutdown)
+	if err := server.Shutdown(shutdown); err != nil {
 		panic("error shutting down server: " + err.Error())
 	}
 }
