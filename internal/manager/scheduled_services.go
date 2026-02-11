@@ -25,8 +25,8 @@ func (s *ScheduledServices) Add(svc *service.Service) {
 }
 
 // removes a service completely from the datastructure
-func (s *ScheduledServices) Delete(id string, interval timesutil.Duration) {
-	idx, svc := s.Search(id, interval)
+func (s *ScheduledServices) Delete(id string) {
+	idx, interval, svc := s.Search(id)
 	if idx == -1 {
 		return // not found
 	}
@@ -40,7 +40,7 @@ func (s *ScheduledServices) Delete(id string, interval timesutil.Duration) {
 // and returns wether the old interval is empty
 func (s *ScheduledServices) MoveToInterval(svc *service.Service, newInterval timesutil.Duration) {
 	svcID := svc.GetID()
-	idx, svc := s.Search(svc.GetID(), svc.ScheduledInterval)
+	idx, _, svc := s.Search(svc.GetID())
 
 	if idx == -1 { // not found
 		return
@@ -64,8 +64,20 @@ func (s *ScheduledServices) IntervalExists(interval timesutil.Duration) bool {
 	return ok
 }
 
-// uses binary search to quickly find the service on the given duration
-func (s *ScheduledServices) Search(id string, interval timesutil.Duration) (int, *service.Service) {
+// searches each interval in the datastructure for the given ID
+func (s *ScheduledServices) Search(id string) (int, timesutil.Duration, *service.Service) {
+	for interval := range *s {
+		idx, svc := s.SearchInterval(id, interval)
+		if svc != nil {
+			return idx, interval, svc
+		}
+	}
+
+	return -1, 0, nil
+}
+
+// uses binary search to find the given id on an interval
+func (s *ScheduledServices) SearchInterval(id string, interval timesutil.Duration) (int, *service.Service) {
 	queue, ok := (*s)[interval]
 	if !ok {
 		return -1, nil
@@ -74,9 +86,10 @@ func (s *ScheduledServices) Search(id string, interval timesutil.Duration) (int,
 	idx, ok := slices.BinarySearchFunc(queue, id, func(s *service.Service, target string) int {
 		return cmp.Compare(s.GetID(), target)
 	})
-	if !ok { // not found
-		return -1, nil
+
+	if ok {
+		return idx, queue[idx]
 	}
 
-	return idx, queue[idx]
+	return -1, nil
 }

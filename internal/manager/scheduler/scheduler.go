@@ -12,6 +12,17 @@ import (
 const OFFSETS_PER_SECOND = 2
 const OFFSET = time.Second / OFFSETS_PER_SECOND
 
+// wrapper for service which is scheduled on the heap
+type ScheduledService struct {
+	service       *service.Service
+	nextCheckTime time.Time
+	offsett       time.Duration
+
+	// only used when RemoveService wants to remove the service
+	// that is currently at the top of the heap
+	shouldReSchedule bool
+}
+
 type Scheduler struct {
 	// base-interval that the service distributes services on
 	interval time.Duration
@@ -29,7 +40,7 @@ type Scheduler struct {
 	jitterRange time.Duration
 
 	stop chan struct{}
-	wg   sync.WaitGroup
+	wg   *sync.WaitGroup
 	mu   sync.Mutex
 
 	isRunning bool
@@ -38,18 +49,7 @@ type Scheduler struct {
 	OnTick func(*service.Service)
 }
 
-// wrapper for service which is scheduled on the heap
-type ScheduledService struct {
-	service       *service.Service
-	nextCheckTime time.Time
-	offsett       time.Duration
-
-	// only used when RemoveService wants to remove the service
-	// that is currently at the top of the heap
-	shouldReSchedule bool
-}
-
-func NewScheduler(interval time.Duration) *Scheduler {
+func NewScheduler(interval time.Duration, wg *sync.WaitGroup) *Scheduler {
 	h := make(ServiceHeap, 0)
 
 	maxOffsets := int(interval.Seconds() * 2)
@@ -61,7 +61,7 @@ func NewScheduler(interval time.Duration) *Scheduler {
 		heap:        h,
 		jitterRange: time.Duration(float64(interval) * 0.1),
 		stop:        make(chan struct{}),
-		wg:          sync.WaitGroup{},
+		wg:          wg,
 		mu:          sync.Mutex{},
 		isRunning:   false,
 	}
@@ -69,7 +69,6 @@ func NewScheduler(interval time.Duration) *Scheduler {
 
 func (s *Scheduler) Stop() {
 	close(s.stop)
-	s.wg.Wait()
 }
 
 // schedule a new service on the heap

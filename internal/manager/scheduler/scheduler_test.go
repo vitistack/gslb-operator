@@ -3,6 +3,7 @@ package scheduler
 import (
 	"fmt"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ var genericGSLBConfig = model.GSLBConfig{
 	Datacenter: "dc1",
 	Interval:   timesutil.Duration(5 * time.Second),
 	Priority:   1,
-	CheckType:       "TCP-FULL",
+	CheckType:  "TCP-FULL",
 }
 
 func TestNewScheduler(t *testing.T) {
@@ -40,7 +41,7 @@ func TestNewScheduler(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewScheduler(tt.interval)
+			got := NewScheduler(tt.interval, &sync.WaitGroup{})
 
 			if got.interval != tt.want.interval {
 				t.Errorf("expected interval: %v, got: %v", tt.want.interval, got.interval)
@@ -97,7 +98,7 @@ func TestScheduler_Loop(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		scheduler := NewScheduler(tt.interval)
+		scheduler := NewScheduler(tt.interval, &sync.WaitGroup{})
 		scheduler.OnTick = func(s *service.Service) {
 			t.Logf("received tick for: %s\n", s.Fqdn)
 		}

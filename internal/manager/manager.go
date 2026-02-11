@@ -25,7 +25,7 @@ type ServicesManager struct {
 	mutex             sync.RWMutex
 	stop              sync.Once
 	pool              pool.WorkerPool
-	wg                sync.WaitGroup
+	wg                *sync.WaitGroup // schedulers use this when scheduling services asynchronously
 	DNSUpdate         func(*service.Service, bool)
 	dryrun            bool
 }
@@ -52,7 +52,7 @@ func NewManager(opts ...serviceManagerOption) *ServicesManager {
 		mutex:             sync.RWMutex{},
 		pool:              *pool.NewWorkerPool(cfg.MinRunningWorkers, cfg.NonBlockingBufferSize),
 		stop:              sync.Once{},
-		wg:                sync.WaitGroup{},
+		wg:                &sync.WaitGroup{},
 		dryrun:            cfg.DryRun,
 	}
 }
@@ -66,7 +66,6 @@ func (sm *ServicesManager) Start() {
 func (sm *ServicesManager) Stop() {
 	sm.pool.Stop()
 	sm.stop.Do(func() {
-
 		for interval, scheduler := range sm.schedulers {
 			scheduler.Stop()
 			bslog.Debug("scheduler closed", slog.String("interval", interval.String()))
@@ -78,19 +77,22 @@ func (sm *ServicesManager) Stop() {
 }
 
 func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*service.Service, error) {
-	sm.mutex.Lock()
-	defer sm.mutex.Unlock()
-
 	newService, err := service.NewServiceFromGSLBConfig(serviceCfg, sm.dryrun) // create the service object
 	if err != nil {
 		return nil, fmt.Errorf("unable to register service: %s", err.Error())
 	}
 
-	_, oldSvc := sm.scheduledServices.Search(newService.GetID(), newService.ScheduledInterval)
+	sm.mutex.RLock()
+	_, _, oldSvc := sm.scheduledServices.Search(newService.GetID())
 	if oldSvc != nil { // update service if already exists
-		sm.updateServiceUnlocked(oldSvc, newService)
+		sm.mutex.RUnlock()
+		sm.updateService(oldSvc, newService)
 		return newService, nil
 	}
+	sm.mutex.RUnlock()
+
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
 
 	// set healthchange callback action
 	newService.SetHealthChangeCallback(func(healthy bool) {
@@ -119,57 +121,104 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 }
 
 // removes the service from its healthcheck queue
-func (sm *ServicesManager) RemoveService(service *service.Service) error {
-	sm.mutex.Lock()
-	defer sm.mutex.Unlock()
-
-	_, svc := sm.scheduledServices.Search(service.GetID(), service.ScheduledInterval)
+func (sm *ServicesManager) RemoveService(id string) error {
+	sm.mutex.RLock()
+	_, interval, svc := sm.scheduledServices.Search(id)
+	sm.mutex.RUnlock()
 	if svc == nil { // cannot remove something that does not exists
 		return ErrServiceNotFound
 	}
 
-	sm.schedulers[service.ScheduledInterval].RemoveService(service) // remove the service from its scheduler
+	sm.schedulers[interval].RemoveService(svc) // remove the service from its scheduler
 
-	group := sm.serviceGroups[service.MemberOf]
-	empty := group.RemoveService(service) // registered in group
+	sm.mutex.RLock()
+	group := sm.serviceGroups[svc.MemberOf]
+	sm.mutex.RUnlock()
+	empty := group.RemoveService(svc.GetID()) // registered in group
 	if empty {
-		delete(sm.serviceGroups, service.MemberOf)
+		delete(sm.serviceGroups, svc.MemberOf)
 	}
-	sm.scheduledServices.Delete(service.GetID(), service.ScheduledInterval)
-	bslog.Debug("removed service", slog.Any("service", service))
+
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+	sm.scheduledServices.Delete(id)
+	bslog.Debug("removed service", slog.Any("service", svc))
 
 	return nil
 }
 
 // updates an existing service with new configuration
-// assumes sm.mutex is held by the caller
-func (sm *ServicesManager) updateServiceUnlocked(old, new *service.Service) {
+func (sm *ServicesManager) updateService(old, new *service.Service) {
+	/*
+		- move to new scheduler if default is changed, and service is currently scheduled on that interval (easy part) (done.)
+		- move to new group if memberOf has changed (medium part)
+		- the affected servicegroups needs to be notified about a change that possibly leads to a new active service (hard part)
+	*/
 	if old == new {
 		return
 	}
 
+	sm.mutex.Lock()
 	if !old.ConfigChanged(new) { // nothing to do
+		bslog.Debug("skipping update due to unchanged config", slog.Any("service", old))
+		sm.mutex.Unlock()
 		return
 	}
 
 	oldDefaultInterval, newDefaultInterval := old.GetDefaultInterval(), new.GetDefaultInterval()
+	oldMemberOf, newMemberOf := old.MemberOf, new.MemberOf
+
+	old.Assign(new) // assigning changed config variables to the registered service
+	sm.mutex.Unlock()
+
+	if oldMemberOf != newMemberOf {
+		sm.mutex.Lock()
+		newGroup, newOk := sm.serviceGroups[newMemberOf]
+		if !newOk {
+			newGroup = sm.newServiceGroup(newMemberOf)
+		}
+
+		oldGroup, oldOk := sm.serviceGroups[oldMemberOf]
+		sm.mutex.Unlock()
+
+		newGroup.RegisterService(old)
+		var empty bool
+		if oldOk {
+			empty = oldGroup.RemoveService(old.GetID())
+
+		}
+		if empty { // delete empty service group
+			delete(sm.serviceGroups, oldMemberOf)
+		}
+		bslog.Debug(
+			"updated service group membership",
+			slog.String("oldGroup", oldMemberOf),
+			slog.String("newGroup", newMemberOf),
+		)
+	} else {
+		sm.mutex.RLock()
+		oldGroup, ok := sm.serviceGroups[oldMemberOf]
+		sm.mutex.RUnlock()
+		if ok {
+			oldGroup.Update() // notify potential changes to group
+		} else { // this will probably never run, but you never know in concurrency!
+			sm.mutex.Lock()
+			delete(sm.serviceGroups, oldMemberOf)
+			sm.mutex.Unlock()
+		}
+	}
+
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+
+	// important that this checked AFTER the service groups have ran their update
+	// this is because the group may trigger a promotion event that needs to be handled first
+	// if the promotion event does not happen, we just simply move it to a new interval
 	if oldDefaultInterval != newDefaultInterval && oldDefaultInterval == old.ScheduledInterval {
 		// we need to move the service to a new interval
 		// otherwise the service will get rescheduled back to its default interval on its own, when it is needed
 		sm.moveServiceToInterval(old, newDefaultInterval)
 	}
-
-	if old.MemberOf != new.MemberOf {
-		oldGroup := sm.serviceGroups[old.MemberOf]
-		oldGroup.RemoveService(old)
-
-		if len(oldGroup.Members) == 0 {
-			// TODO: delete service group
-			bslog.Error("TODO: delete service group")
-		}
-	}
-
-	old.Assign(new)
 
 	bslog.Debug("updated service", slog.Any("service", old))
 }
@@ -198,7 +247,8 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	var demotedInterval timesutil.Duration
 
 	msg := "received promotion event for service: " + event.Service + ": "
-	if event.OldActive != nil { // set baseInterval
+	// set baseInterval
+	if event.OldActive != nil {
 		msg += " OldActive: " + event.OldActive.Datacenter + " "
 		baseInterval = event.OldActive.GetBaseInterval()
 	}
@@ -262,7 +312,7 @@ func (sm *ServicesManager) newScheduler(interval timesutil.Duration) *scheduler.
 		return scheduler
 	}
 
-	scheduler := scheduler.NewScheduler(time.Duration(interval))
+	scheduler := scheduler.NewScheduler(time.Duration(interval), sm.wg)
 	sm.schedulers[interval] = scheduler
 
 	scheduler.OnTick = func(s *service.Service) {
@@ -296,7 +346,15 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 	if last {
 		sm.cleanupInterval(oldInterval)
 	}
+
+	if newScheduler == nil {
+		newScheduler = sm.newScheduler(newInterval)
+	}
 	newScheduler.ScheduleService(svc)
+	bslog.Debug("sucessfully moved service to new interval",
+		slog.String("oldInterval", oldInterval.String()),
+		slog.String("newInterval", newInterval.String()),
+		slog.Any("service", svc))
 }
 
 func (sm *ServicesManager) GetActiveForFQDN(memberOf string) *service.Service {

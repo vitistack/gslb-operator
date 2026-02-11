@@ -249,6 +249,9 @@ func (s *Service) Assign(new *Service) {
 }
 
 func (s *Service) LogValue() slog.Value {
+	if s == nil {
+		return slog.StringValue("nil")
+	}
 	ip, _ := s.GetIP()
 	return slog.GroupValue(
 		slog.String("id", s.id),
