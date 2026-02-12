@@ -3,6 +3,6 @@ package spoofs
 import "net"
 
 type Override struct {
-	FQDN string `json:"fqdn"`
+	MemberOf string `json:"memberOf"`
 	IP   net.IP `json:"ip,omitempty"`
 }

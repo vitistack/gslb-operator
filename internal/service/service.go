@@ -225,6 +225,10 @@ func (s *Service) GetID() string {
 	return s.id
 }
 
+func (s *Service) GetFailureCount() int {
+	return s.failureCount
+}
+
 func (s *Service) ConfigChanged(other *Service) bool {
 	if s.Fqdn != other.Fqdn ||
 		s.addr != other.addr ||

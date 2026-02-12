@@ -357,7 +357,7 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 		slog.Any("service", svc))
 }
 
-func (sm *ServicesManager) GetActiveForFQDN(memberOf string) *service.Service {
+func (sm *ServicesManager) GetActiveForMemberOf(memberOf string) *service.Service {
 	sm.mutex.RLock()
 	defer sm.mutex.RUnlock()
 	if group, ok := sm.serviceGroups[memberOf]; ok {

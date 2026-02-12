@@ -8,7 +8,10 @@
 - flags loader for config variables
 
 - OnShutDown functions to save current state on shutdown
+    - expand to OnStart
 
 - If svc not in DC, then roundtrip decides priority
 
 - AUTH
+
+- Webhooks notifies on event?

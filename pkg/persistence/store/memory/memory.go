@@ -53,3 +53,7 @@ func (s *Store[T]) Delete(key string) error {
 	delete(s.data, key)
 	return nil
 }
+
+func (s *Store[T]) Close() error {
+	return nil
+}

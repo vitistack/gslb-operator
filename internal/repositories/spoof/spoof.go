@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
 )
@@ -12,69 +13,56 @@ var (
 	ErrSpoofWithFQDNNotFound = errors.New("spoof with fqdn not found")
 )
 
-type Repository struct {
-	storage persistence.Store[spoofs.Spoof]
+// read-only repo for spoofs
+type SpoofRepo struct {
+	store persistence.Store[model.Service]
 }
 
-func NewRepository(storage persistence.Store[spoofs.Spoof]) *Repository {
-	return &Repository{
-		storage: storage,
+func NewSpoofRepo(storage persistence.Store[model.Service]) *SpoofRepo {
+	return &SpoofRepo{
+		store: storage,
 	}
 }
 
-func (r *Repository) Create(key string, new *spoofs.Spoof) error {
-	err := r.storage.Save(key, *new)
+func (r *SpoofRepo) Read(id string) (spoofs.Spoof, error) {
+	svc, err := r.store.Load(id)
 	if err != nil {
-		return fmt.Errorf("unable to store entry: %s", err.Error())
+		return spoofs.Spoof{}, fmt.Errorf("failed to read from storage: %w", err)
 	}
-	return nil
+
+	return svc.Spoof(), nil
 }
 
-func (r *Repository) Update(id string, new *spoofs.Spoof) error {
-	err := r.storage.Save(id, *new)
+func (r *SpoofRepo) ReadFQDN(fqdn string) (spoofs.Spoof, error) {
+	allServices, err := r.store.LoadAll()
 	if err != nil {
-		return fmt.Errorf("unable to update entry with id: %s: %s", id, err.Error())
-	}
-	return nil
-}
-
-func (r *Repository) Delete(id string) error {
-	err := r.storage.Delete(id)
-	if err != nil {
-		return fmt.Errorf("unable to delete entry with id: %s: %s", id, err.Error())
-	}
-	return nil
-}
-
-func (r *Repository) Read(id string) (spoofs.Spoof, error) {
-	spoof, err := r.storage.Load(id)
-	if err != nil {
-		return spoofs.Spoof{}, fmt.Errorf("unable to read resource with id: %s", err.Error())
+		return spoofs.Spoof{}, fmt.Errorf("failed to read from storage: %w", err)
 	}
 
-	return spoof, nil
-}
-
-func (r *Repository) ReadFQDN(fqdn string) (spoofs.Spoof, error) {
-	allSpoofs, err := r.storage.LoadAll()
-	if err != nil {
-		return spoofs.Spoof{}, fmt.Errorf("unable to read all spoofs: %w", err)
-	}
-
-	for _, spoof := range allSpoofs {
-		if spoof.FQDN == fqdn {
-			return spoof, nil
+	for _, svc := range allServices {
+		if svc.Fqdn == fqdn {
+			return svc.Spoof(), nil
 		}
 	}
 
 	return spoofs.Spoof{}, fmt.Errorf("%w: fqdn: %s", ErrSpoofWithFQDNNotFound, fqdn)
 }
 
-func (r *Repository) ReadAll() ([]spoofs.Spoof, error) {
-	return r.storage.LoadAll()
+func (r *SpoofRepo) ReadAll() ([]spoofs.Spoof, error) {
+	allServices, err := r.store.LoadAll()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read from storage: %w", err)
+	}
+
+	spoofs := make([]spoofs.Spoof, 0)
+	for _, svc := range allServices {
+		spoofs = append(spoofs, svc.Spoof())
+	}
+
+	return spoofs, nil
 }
 
-func (r *Repository) HasOverride(fqdn string) (bool, error) {
+func (r *SpoofRepo) HasOverride(fqdn string) (bool, error) {
 	spoof, err := r.ReadFQDN(fqdn)
 	if err != nil {
 		if errors.Is(err, ErrSpoofWithFQDNNotFound) {

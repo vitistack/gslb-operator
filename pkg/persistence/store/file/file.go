@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"os"
 	"sync"
+
+	"github.com/vitistack/gslb-operator/pkg/persistence/store/memory"
 )
 
 type Store[T any] struct {
-	lock sync.RWMutex
+	lock     sync.RWMutex
+	cache    *memory.Store[T]
 	fileName string
 }
 
@@ -20,8 +23,9 @@ func NewStore[T any](fileName string) (*Store[T], error) {
 	store.Close()
 
 	return &Store[T]{
-		lock: sync.RWMutex{},
+		lock:     sync.RWMutex{},
 		fileName: fileName,
+		cache:    memory.NewStore[T](),
 	}, nil
 }
 
@@ -128,5 +132,9 @@ func (s *Store[T]) Delete(key string) error {
 		return fmt.Errorf("could not write to file: %s", err.Error())
 	}
 
+	return nil
+}
+
+func (s *Store[T]) Close() error {
 	return nil
 }
