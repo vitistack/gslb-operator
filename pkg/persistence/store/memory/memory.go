@@ -43,7 +43,7 @@ func (s *Store[T]) LoadAll() ([]T, error) {
 	for _, val := range s.data {
 		result = append(result, val)
 	}
-	
+
 	return result, nil
 }
 

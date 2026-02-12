@@ -9,7 +9,7 @@ import (
 // without exposing all functionality
 type QueryManager interface {
 	GetActiveForMemberOf(memberOf string) *service.Service
-	
+
 	//write operations
 	Failover(fqdn string, failover failover.Failover) error
 }
