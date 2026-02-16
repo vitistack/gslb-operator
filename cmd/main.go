@@ -34,22 +34,21 @@ func main() {
 		bslog.Fatal("could not load lua configuration", slog.Any("reason", err))
 	}
 
+	serviceFileStore, err := file.NewStore[model.GSLBServiceGroup]("store.json")
+	if err != nil {
+		bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
+	}
+	svcRepo := service.NewServiceRepo(serviceFileStore)
+
 	// creating dns - handler objects
 	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
 	mgr := manager.NewManager(
 		manager.WithMinRunningWorkers(100),
 		manager.WithNonBlockingBufferSize(110),
+		manager.WithServiceRepository(svcRepo),
 	)
 
-	serviceFileStore, err := file.NewStore[model.Service]("store.json")
-	if err != nil {
-		bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
-	}
-
-	svcRepo := service.NewServiceRepo(serviceFileStore)
-	updater, err := dns.NewUpdater(
-		dns.UpdaterWithSpoofRepo(svcRepo),
-	)
+	updater, err := dns.NewUpdater()
 	if err != nil {
 		bslog.Fatal("unable to create updater", slog.String("error", err.Error()))
 	}
@@ -71,7 +70,6 @@ func main() {
 
 	// initializing the service jwt self signer
 	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
-	fmt.Println(jwt.GetInstance().GetServiceToken())
 
 	api.HandleFunc(routes.POST_FAILOVER, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),

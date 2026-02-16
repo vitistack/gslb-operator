@@ -1,6 +1,8 @@
 package routes
 
-import "net/http"
+import (
+	"net/http"
+)
 
 const (
 	ROOT = "/"
@@ -13,9 +15,9 @@ const (
 	GET_SPOOFS_HASH = http.MethodGet + " " + SPOOFS_HASH // Route to hash all spoofs, for config validation
 	POST_SPOOF      = http.MethodPost + " " + SPOOFS     // Route POST
 
-	OVERRIDE        = SPOOFS + "/override"                        // override DNSDIST configuration
-	GET_OVERRIDE    = http.MethodGet + " " + OVERRIDE + "/{fqdn}" // Route GET
-	POST_OVERRIDE   = http.MethodPost + " " + OVERRIDE            // Route POST
+	OVERRIDE        = SPOOFS + "/override"                                    // override DNSDIST configuration
+	GET_OVERRIDE    = http.MethodGet + " " + OVERRIDE + "/{" + MemberOf + "}" // Route GET
+	POST_OVERRIDE   = http.MethodPost + " " + OVERRIDE                        // Route POST
 	PUT_OVERRIDE    = http.MethodPut + " " + OVERRIDE + "/{fqdn}"
 	DELETE_OVERRIDE = http.MethodDelete + " " + OVERRIDE // Route DELETE
 
@@ -25,4 +27,8 @@ const (
 	AUTH            = ROOT + "auth"
 	AUTH_LOGIN      = AUTH + "/login"
 	POST_AUTH_LOGIN = http.MethodPost + " " + AUTH_LOGIN
+)
+
+const (
+	MemberOf = "memberOf"
 )

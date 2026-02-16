@@ -18,7 +18,7 @@ type HealthChangeCallback func(healthy bool)
 
 type Service struct {
 	id                   string
-	addr                 string
+	addr                 *net.TCPAddr
 	Fqdn                 string
 	MemberOf             string
 	Datacenter           string
@@ -51,7 +51,7 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, dryRun bool) (*Service, e
 	interval := CalculateInterval(config.Priority, config.Interval)
 	svc := &Service{
 		id:                config.ServiceID,
-		addr:              addr.String(),
+		addr:              addr,
 		Fqdn:              config.Fqdn,
 		MemberOf:          config.MemberOf,
 		Datacenter:        config.Datacenter,
@@ -60,7 +60,7 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, dryRun bool) (*Service, e
 		defaultInterval:   interval,
 		priority:          config.Priority,
 		FailureThreshold:  config.FailureThreshold,
-		failureCount:      config.FailureThreshold,
+		failureCount:      config.FailureThreshold, // need to succeed check N times before healthy!
 		isHealthy:         false,
 	}
 
@@ -75,13 +75,13 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, dryRun bool) (*Service, e
 		svc.checker = checks.NewHTTPChecker("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, config.Script)
 
 	case config.CheckType == checks.TCP_FULL:
-		svc.checker = checks.NewTCPFullChecker(svc.addr, checks.DEFAULT_TIMEOUT)
+		svc.checker = checks.NewTCPFullChecker(svc.addr.String(), checks.DEFAULT_TIMEOUT)
 
 	case config.CheckType == checks.TCP_HALF:
-		svc.checker = checks.NewTCPHalfChecker(svc.addr, checks.DEFAULT_TIMEOUT)
+		svc.checker = checks.NewTCPHalfChecker(svc.addr.String(), checks.DEFAULT_TIMEOUT)
 
 	default:
-		svc.checker = checks.NewTCPFullChecker(svc.addr, checks.DEFAULT_TIMEOUT)
+		svc.checker = checks.NewTCPFullChecker(svc.addr.String(), checks.DEFAULT_TIMEOUT)
 	}
 
 	return svc, nil
@@ -209,12 +209,8 @@ func (s *Service) GetPriority() int {
 	return s.priority
 }
 
-func (s *Service) GetIP() (string, error) {
-	ip, _, err := net.SplitHostPort(s.addr)
-	if err != nil {
-		return "", fmt.Errorf("could not read ip from network address: %s: %s", s.addr, err.Error())
-	}
-	return ip, nil
+func (s *Service) GetIP() string {
+	return s.addr.IP.String()
 }
 
 func (s *Service) GetDefaultInterval() timesutil.Duration {
@@ -231,7 +227,7 @@ func (s *Service) GetFailureCount() int {
 
 func (s *Service) ConfigChanged(other *Service) bool {
 	if s.Fqdn != other.Fqdn ||
-		s.addr != other.addr ||
+		s.addr.String() != other.addr.String() ||
 		s.Datacenter != other.Datacenter ||
 		s.FailureThreshold != other.FailureThreshold ||
 		s.priority != other.priority ||
@@ -244,9 +240,11 @@ func (s *Service) ConfigChanged(other *Service) bool {
 // updates the configuration values of s with the values of new
 func (s *Service) Assign(new *Service) {
 	s.addr = new.addr
+	s.Fqdn = new.Fqdn
 	s.checker = new.checker
 	s.MemberOf = new.MemberOf
 	s.priority = new.priority
+	s.checkType = new.checkType
 	s.Datacenter = new.Datacenter
 	s.defaultInterval = new.defaultInterval
 	s.FailureThreshold = new.FailureThreshold
@@ -256,18 +254,29 @@ func (s *Service) LogValue() slog.Value {
 	if s == nil {
 		return slog.StringValue("nil")
 	}
-	ip, _ := s.GetIP()
+
 	return slog.GroupValue(
 		slog.String("id", s.id),
 		slog.String("memberOf", s.MemberOf),
 		slog.String("fqdn", s.Fqdn),
 		slog.String("datacenter", s.Datacenter),
-		slog.String("ip", ip),
+		slog.String("ip", s.GetIP()),
 	)
 }
 
 // satisfies the stringer interface to allow passing s for %v in formatted strings
 func (s *Service) String() string {
-	ip, _ := s.GetIP()
-	return fmt.Sprintf("id:%s, memberOf: %s, fqdn: %s, datacenter: %s, ip: %s", s.id, s.MemberOf, s.Fqdn, s.Datacenter, ip)
+	return fmt.Sprintf("id:%s, memberOf: %s, fqdn: %s, datacenter: %s, ip: %s", s.id, s.MemberOf, s.Fqdn, s.Datacenter, s.GetIP())
+}
+
+func (s *Service) GSLBService() *model.GSLBService {
+	return &model.GSLBService{
+		ID:           s.id,
+		MemberOf:     s.MemberOf,
+		Fqdn:         s.Fqdn,
+		Datacenter:   s.Datacenter,
+		IP:           s.GetIP(),
+		IsHealthy:    s.isHealthy,
+		FailureCount: s.failureCount,
+	}
 }

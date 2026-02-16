@@ -9,10 +9,12 @@ import (
 
 	"github.com/vitistack/gslb-operator/internal/manager/scheduler"
 	"github.com/vitistack/gslb-operator/internal/model"
+	svcRepo "github.com/vitistack/gslb-operator/internal/repositories/service"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/failover"
+	"github.com/vitistack/gslb-operator/pkg/persistence/store/memory"
 	"github.com/vitistack/gslb-operator/pkg/pool"
 )
 
@@ -22,6 +24,7 @@ type ServicesManager struct {
 	scheduledServices ScheduledServices                           // services that are scheduled on an interval
 	schedulers        map[timesutil.Duration]*scheduler.Scheduler // schedulers for health-checks
 	serviceGroups     map[string]*ServiceGroup
+	svcRepo           *svcRepo.ServiceRepo
 	mutex             sync.RWMutex
 	stop              sync.Once
 	pool              pool.WorkerPool
@@ -35,6 +38,7 @@ func NewManager(opts ...serviceManagerOption) *ServicesManager {
 		MinRunningWorkers:     100,
 		NonBlockingBufferSize: 110,
 		DryRun:                false,
+		repo:                  svcRepo.NewServiceRepo(memory.NewStore[model.GSLBServiceGroup]()),
 	}
 
 	for _, opt := range opts {
@@ -49,6 +53,7 @@ func NewManager(opts ...serviceManagerOption) *ServicesManager {
 		scheduledServices: make(ScheduledServices),
 		schedulers:        make(map[timesutil.Duration]*scheduler.Scheduler),
 		serviceGroups:     make(map[string]*ServiceGroup),
+		svcRepo:           cfg.repo,
 		mutex:             sync.RWMutex{},
 		pool:              *pool.NewWorkerPool(cfg.MinRunningWorkers, cfg.NonBlockingBufferSize),
 		stop:              sync.Once{},
@@ -76,6 +81,11 @@ func (sm *ServicesManager) Stop() {
 	})
 }
 
+func (sm *ServicesManager) OnShutdown() error {
+
+	return nil
+}
+
 func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*service.Service, error) {
 	newService, err := service.NewServiceFromGSLBConfig(serviceCfg, sm.dryrun) // create the service object
 	if err != nil {
@@ -94,9 +104,22 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
+	err = sm.svcRepo.Create(newService.GSLBService())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create new service: %w", err)
+	}
+
 	// set healthchange callback action
 	newService.SetHealthChangeCallback(func(healthy bool) {
 		bslog.Debug("received health-change", slog.Any("service", newService), slog.Bool("healthy", healthy))
+		err := sm.svcRepo.Update(newService.GSLBService())
+		if err != nil {
+			bslog.Error(
+				"failed to update service health on health-change",
+				slog.String("reason", err.Error()),
+				slog.Any("service", newService),
+			)
+		}
 		sm.serviceGroups[newService.MemberOf].OnServiceHealthChange(newService, healthy)
 	})
 
@@ -141,9 +164,14 @@ func (sm *ServicesManager) RemoveService(id string) error {
 
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
-	sm.scheduledServices.Delete(id)
-	bslog.Debug("removed service", slog.Any("service", svc))
 
+	sm.scheduledServices.Delete(id)
+	err := sm.svcRepo.Delete(svc.MemberOf, svc.GetID())
+	if err != nil {
+		return fmt.Errorf("failed to delete service: %w", err)
+	}
+
+	bslog.Debug("removed service", slog.Any("service", svc))
 	return nil
 }
 
@@ -172,29 +200,7 @@ func (sm *ServicesManager) updateService(old, new *service.Service) {
 	sm.mutex.Unlock()
 
 	if oldMemberOf != newMemberOf {
-		sm.mutex.Lock()
-		newGroup, newOk := sm.serviceGroups[newMemberOf]
-		if !newOk {
-			newGroup = sm.newServiceGroup(newMemberOf)
-		}
-
-		oldGroup, oldOk := sm.serviceGroups[oldMemberOf]
-		sm.mutex.Unlock()
-
-		newGroup.RegisterService(old)
-		var empty bool
-		if oldOk {
-			empty = oldGroup.RemoveService(old.GetID())
-
-		}
-		if empty { // delete empty service group
-			delete(sm.serviceGroups, oldMemberOf)
-		}
-		bslog.Debug(
-			"updated service group membership",
-			slog.String("oldGroup", oldMemberOf),
-			slog.String("newGroup", newMemberOf),
-		)
+		sm.memberOfChanged(oldMemberOf, newMemberOf, old)
 	} else {
 		sm.mutex.RLock()
 		oldGroup, ok := sm.serviceGroups[oldMemberOf]
@@ -211,6 +217,15 @@ func (sm *ServicesManager) updateService(old, new *service.Service) {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
+	err := sm.svcRepo.Update(old.GSLBService())
+	if err != nil {
+		bslog.Error(
+			"failed to update service config persistently",
+			slog.String("reason", err.Error()),
+			slog.Any("service", old),
+		)
+	}
+
 	// important that this checked AFTER the service groups have ran their update
 	// this is because the group may trigger a promotion event that needs to be handled first
 	// if the promotion event does not happen, we just simply move it to a new interval
@@ -221,6 +236,56 @@ func (sm *ServicesManager) updateService(old, new *service.Service) {
 	}
 
 	bslog.Debug("updated service", slog.Any("service", old))
+}
+
+func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc *service.Service) {
+	sm.mutex.Lock()
+
+	err := sm.svcRepo.Delete(oldMemberOf, svc.GetID())
+	if err != nil {
+		bslog.Error(
+			"failed to remove service from old service group",
+			slog.String("reason", err.Error()),
+			slog.String("oldMemberOf", oldMemberOf),
+			slog.Any("service", svc),
+		)
+		return
+	}
+
+	err = sm.svcRepo.Create(svc.GSLBService())
+	if err != nil {
+		bslog.Error(
+			"failed to add service to new group",
+			slog.String("reason", err.Error()),
+			slog.String("newMemberOf", newMemberOf),
+			slog.Any("service", svc),
+		)
+		return
+	}
+
+	newGroup, newOk := sm.serviceGroups[newMemberOf]
+	if !newOk {
+		newGroup = sm.newServiceGroup(newMemberOf)
+	}
+
+	oldGroup, oldOk := sm.serviceGroups[oldMemberOf]
+	sm.mutex.Unlock()
+
+	newGroup.RegisterService(svc)
+
+	var empty bool
+	if oldOk {
+		empty = oldGroup.RemoveService(svc.GetID())
+
+	}
+	if empty { // delete empty service group
+		delete(sm.serviceGroups, oldMemberOf)
+	}
+	bslog.Debug(
+		"updated service group membership",
+		slog.String("oldGroup", oldMemberOf),
+		slog.String("newGroup", newMemberOf),
+	)
 }
 
 // re-schedules the relevant services in the PromotionEvent
@@ -263,6 +328,22 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	if event.OldActive != nil && event.NewActive != nil { // just swap, and do dns updates
 		demotedInterval = event.NewActive.ScheduledInterval
 
+		oldActiveGSLBService := event.OldActive.GSLBService()
+		oldActiveGSLBService.IsActive = false
+		err := sm.svcRepo.Update(oldActiveGSLBService)
+		if err != nil {
+			bslog.Error("failed to remove active flag from service", slog.Any("oldActive", event.OldActive))
+			return
+		}
+
+		newActiveGSLBService := event.NewActive.GSLBService()
+		newActiveGSLBService.IsActive = true
+		err = sm.svcRepo.Update(newActiveGSLBService)
+		if err != nil {
+			bslog.Error("failed to update active flag on service", slog.Any("newActive", event.NewActive))
+			return
+		}
+
 		bslog.Warn("demoting service",
 			slog.Any("oldActive", event.OldActive),
 			slog.Group("intervalChange",
@@ -270,6 +351,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 				slog.String("to", demotedInterval.String()),
 			))
 		sm.moveServiceToInterval(event.OldActive, demotedInterval)
+
 		sm.DNSUpdate(event.OldActive, false)
 
 		bslog.Warn("promoting service",
@@ -284,6 +366,13 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	}
 
 	if event.NewActive != nil { // first service to come up when all services are down
+		newActiveGSLBService := event.NewActive.GSLBService()
+		newActiveGSLBService.IsActive = true
+		err := sm.svcRepo.Update(newActiveGSLBService)
+		if err != nil {
+			bslog.Error("failed to update active flag on service", slog.Any("newActive", event.NewActive))
+			return
+		}
 		bslog.Info("new active service", slog.Any("service", event.NewActive))
 		sm.moveServiceToInterval(event.NewActive, baseInterval)
 		sm.DNSUpdate(event.NewActive, true)
@@ -291,6 +380,13 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	}
 
 	if event.OldActive != nil { // no service to take over
+		oldActiveGSLBService := event.OldActive.GSLBService()
+		oldActiveGSLBService.IsActive = false
+		err := sm.svcRepo.Update(oldActiveGSLBService)
+		if err != nil {
+			bslog.Error("failed to remove active flag from service", slog.Any("oldActive", event.OldActive))
+			return
+		}
 		bslog.Warn("no available sites", slog.String("serviceGroup", event.Service))
 		sm.DNSUpdate(event.OldActive, false)
 		return

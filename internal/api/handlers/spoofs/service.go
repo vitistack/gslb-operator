@@ -14,7 +14,7 @@ type SpoofsService struct {
 	serviceManager manager.QueryManager
 }
 
-func NewSpoofsService(store persistence.Store[model.Service], svcManager manager.QueryManager) *SpoofsService {
+func NewSpoofsService(store persistence.Store[model.GSLBServiceGroup], svcManager manager.QueryManager) *SpoofsService {
 	return &SpoofsService{
 		svcRepo:        service.NewServiceRepo(store),
 		spoofRepo:      spoof.NewSpoofRepo(store), // create read-only

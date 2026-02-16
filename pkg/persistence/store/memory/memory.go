@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"fmt"
 	"sync"
 )
 
@@ -30,7 +29,7 @@ func (s *Store[T]) Load(key string) (T, error) {
 	val, exist := s.data[key]
 	if !exist {
 		var zero T
-		return zero, fmt.Errorf("resource: %s, does not exist", key)
+		return zero, nil
 	}
 	return val, nil
 }

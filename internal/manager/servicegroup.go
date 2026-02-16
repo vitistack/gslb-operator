@@ -112,15 +112,16 @@ func (sg *ServiceGroup) firstHealthy() *service.Service {
 
 func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, healthy bool) {
 	sg.mu.Lock()
-	defer sg.mu.Unlock()
 	oldActive := sg.active
 	if oldActive == nil {
 		oldActive = sg.lastActive
 	}
+
 	switch sg.mode {
 	case ActivePassive:
 		if !healthy && sg.active.GetID() == changedService.GetID() { // active has gone down!
 			sg.lastActive = sg.active
+			sg.mu.Unlock()
 			sg.OnPromotion(sg.promoteNextHealthy())
 			return
 		}
@@ -164,6 +165,7 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 
 		// unhealthy
 		if changedService.GetID() == sg.active.GetID() {
+			sg.mu.Unlock()
 			next := sg.firstHealthy()
 			if next != nil {
 				sg.OnPromotion(&PromotionEvent{
@@ -186,6 +188,7 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 			sg.active = nil
 		}
 	}
+	sg.mu.Unlock()
 }
 
 // This does not take in to account if the registered service has the highest priority

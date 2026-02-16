@@ -11,7 +11,7 @@ import (
 
 type Store[T any] struct {
 	lock     sync.RWMutex
-	cache    *memory.Store[T]
+	cache    *memory.Store[T] // dont check error because it is in memory
 	fileName string
 }
 
@@ -32,6 +32,8 @@ func NewStore[T any](fileName string) (*Store[T], error) {
 func (s *Store[T]) Save(key string, data T) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+
+	s.cache.Save(key, data)
 
 	saved, err := os.ReadFile(s.fileName)
 	if err != nil {
@@ -62,50 +64,23 @@ func (s *Store[T]) Save(key string, data T) error {
 }
 
 func (s *Store[T]) Load(key string) (T, error) {
-	var zero T
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	saved, err := os.ReadFile(s.fileName)
-	if err != nil {
-		return zero, fmt.Errorf("unable to read from storage: %s", err.Error())
-	}
-
-	store := make(map[string]T)
-	err = json.Unmarshal(saved, &store)
-	if err != nil {
-		return zero, fmt.Errorf("unable to read: %s: %s", key, err.Error())
-	}
-
-	return store[key], nil
+	return s.cache.Load(key)
 }
 
 func (s *Store[T]) LoadAll() ([]T, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	all := []T{}
-
-	saved, err := os.ReadFile(s.fileName)
-	if err != nil {
-		return nil, fmt.Errorf("unable to read from storage: %s", err.Error())
-	}
-
-	store := make(map[string]T)
-	err = json.Unmarshal(saved, &store)
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse JSON: %s", err.Error())
-	}
-
-	for _, val := range store {
-		all = append(all, val)
-	}
-
-	return all, nil
+	return s.cache.LoadAll()
 }
 
 func (s *Store[T]) Delete(key string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+
+	s.cache.Delete(key)
 
 	saved, err := os.ReadFile(s.fileName)
 	if err != nil {
