@@ -39,8 +39,8 @@ var active *service.Service
 var passive *service.Service
 
 func TestMain(m *testing.M) {
-	active, _ = service.NewServiceFromGSLBConfig(activeConfig, true)
-	passive, _ = service.NewServiceFromGSLBConfig(passiveConfig, true)
+	active, _ = service.NewServiceFromGSLBConfig(activeConfig, service.WithDryRunChecks(true))
+	passive, _ = service.NewServiceFromGSLBConfig(passiveConfig, service.WithDryRunChecks(true))
 	m.Run()
 }
 

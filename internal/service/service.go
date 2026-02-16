@@ -15,6 +15,7 @@ import (
 const DEFAULT_FAILURE_THRESHOLD = 3
 
 type HealthChangeCallback func(healthy bool)
+type ServiceOption func(s *Service)
 
 type Service struct {
 	id                   string
@@ -31,9 +32,10 @@ type Service struct {
 	checker              checks.Checker
 	healthChangeCallback HealthChangeCallback
 	isHealthy            bool
+	dryRun               bool
 }
 
-func NewServiceFromGSLBConfig(config model.GSLBConfig, dryRun bool) (*Service, error) {
+func NewServiceFromGSLBConfig(config model.GSLBConfig, opts ...ServiceOption) (*Service, error) {
 	ip := net.ParseIP(config.Ip)
 	if ip == nil {
 		return nil, ErrUnableToParseIpAddr
@@ -62,10 +64,15 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, dryRun bool) (*Service, e
 		FailureThreshold:  config.FailureThreshold,
 		failureCount:      config.FailureThreshold, // need to succeed check N times before healthy!
 		isHealthy:         false,
+		dryRun:            false,
+	}
+
+	for _, opt := range opts {
+		opt(svc)
 	}
 
 	switch {
-	case dryRun:
+	case svc.dryRun:
 		svc.checker = &checks.DryRun{}
 
 	case config.CheckType == checks.HTTPS:
@@ -85,6 +92,26 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, dryRun bool) (*Service, e
 	}
 
 	return svc, nil
+}
+
+func WithDryRunChecks(enabled bool) ServiceOption {
+	return func(s *Service) {
+		s.dryRun = enabled
+	}
+}
+
+func WithHealthy() ServiceOption {
+	return func(s *Service) {
+		s.isHealthy = true
+	}
+}
+
+func WithFailureCount(count int) ServiceOption {
+	return func(s *Service) {
+		if count > -1 {
+			s.failureCount = count
+		} // default values are handled in the creation of the service!
+	}
 }
 
 // 5s, 15s, 45s, checks.MAX_CHECK_INTERVAL.

@@ -11,6 +11,7 @@ import (
 
 var (
 	ErrServiceWithMemberOfNotFound = errors.New("service with member-of not found")
+	ErrServiceInGroupNotFound      = errors.New("service in service-group not found")
 )
 
 // repository for services that are considered active in a service group
@@ -54,7 +55,8 @@ func (sr *ServiceRepo) Create(new *model.GSLBService) error {
 		func(s model.GSLBService) bool {
 			return s.ID == new.ID
 		}) {
-		return fmt.Errorf("failed to store service: service already exists")
+		//update instead
+		return sr.Update(new)
 	}
 
 	group = append(group, *new)
@@ -77,26 +79,27 @@ func (sr *ServiceRepo) Update(new *model.GSLBService) error {
 		return fmt.Errorf("failed to check for existing service group: %w", err)
 	}
 
-	if group == nil {
-		return fmt.Errorf("failed to update service: service group for: %s does not exist", new.MemberOf)
+	if len(group) == 0 {
+		return fmt.Errorf("failed to update service group: %s does not exist", new.MemberOf)
 	}
 
-	for idx, svc := range group {
-		if svc.ID == new.ID {
-			if svc.IsActive {
-				if override {
-					new.IP = svc.IP // preserve ip on override, but only for active
-					new.HasOverride = true
-				}
-			}
-			group[idx] = *new
-			err = sr.store.Save(new.MemberOf, group)
+	idx := slices.IndexFunc(group, func(s model.GSLBService) bool {
+		return s.ID == new.ID
+	})
 
-			if err != nil {
-				return fmt.Errorf("failed to update entry with id: %s: %w", new.MemberOf, err)
-			}
-			break
-		}
+	if idx == -1 {
+		return fmt.Errorf("%w: %s id: %s", ErrServiceInGroupNotFound, new.MemberOf, new.ID)
+	}
+
+	if group[idx].IsActive && override {
+		new.IP = group[idx].IP
+		new.HasOverride = true
+	}
+
+	group[idx] = *new
+
+	if err := sr.store.Save(new.MemberOf, group); err != nil {
+		return fmt.Errorf("failed to update entry with id: %s: %w", new.MemberOf, err)
 	}
 
 	return nil
@@ -110,21 +113,22 @@ func (sr *ServiceRepo) UpdateOverride(ip string, service *model.GSLBService) err
 		return fmt.Errorf("failed to retrieve service group: %w", err)
 	}
 
-	if group == nil {
+	if len(group) == 0 {
 		return fmt.Errorf("failed to update service: service group for: %s does not exist", service.MemberOf)
 	}
 
-	for idx, svc := range group {
-		if svc.ID == service.ID {
-			group[idx] = *service
-			err = sr.store.Save(service.MemberOf, group)
+	idx := slices.IndexFunc(group, func(s model.GSLBService) bool {
+		return s.ID == service.ID
+	})
 
-			if err != nil {
-				return fmt.Errorf("failed to update override: %w", err)
-			}
-			break
-		}
+	if idx == -1 {
+		return fmt.Errorf("%w: %s id: %s", ErrServiceInGroupNotFound, service.MemberOf, service.ID)
 	}
+	group[idx] = *service
+	if err := sr.store.Save(service.MemberOf, group); err != nil {
+		return fmt.Errorf("failed to update override: %w", err)
+	}
+
 	return nil
 }
 
@@ -203,6 +207,22 @@ func (sr *ServiceRepo) GetActive(memberOf string) (model.GSLBService, error) {
 	}
 
 	return model.GSLBService{}, fmt.Errorf("%w: member-of %s", ErrServiceWithMemberOfNotFound, memberOf)
+}
+
+func (sr *ServiceRepo) GetMemberInGroup(memberOf, memberId string) (model.GSLBService, error) {
+	group, err := sr.Read(memberOf)
+	if err != nil {
+		return model.GSLBService{}, err
+	}
+
+	idx := slices.IndexFunc(group, func(s model.GSLBService) bool {
+		return s.ID == memberId
+	})
+	if idx == -1 {
+		return model.GSLBService{}, fmt.Errorf("%w: member-of: %s: member-id: %s", ErrServiceInGroupNotFound, memberOf, memberId)
+	}
+
+	return group[idx], nil
 }
 
 func (sr *ServiceRepo) HasOverride(memberOf string) (bool, error) {

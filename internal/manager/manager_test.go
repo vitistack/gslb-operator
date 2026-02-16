@@ -206,7 +206,7 @@ func TestServicesManager_updateServiceUnlocked(t *testing.T) {
 				t.Fatalf("could not create service during testing: %s", err.Error())
 			}
 
-			new, err := service.NewServiceFromGSLBConfig(tt.new, true)
+			new, err := service.NewServiceFromGSLBConfig(tt.new, service.WithDryRunChecks(true))
 			if err != nil {
 				t.Fatalf("could not create service during testing: %s", err.Error())
 			}

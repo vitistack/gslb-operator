@@ -71,6 +71,11 @@ func (sm *ServicesManager) Start() {
 func (sm *ServicesManager) Stop() {
 	sm.pool.Stop()
 	sm.stop.Do(func() {
+		err := sm.OnShutdown()
+		if err != nil {
+			bslog.Error("error while performing shutdown tasks", slog.String("error", err.Error()))
+		}
+
 		for interval, scheduler := range sm.schedulers {
 			scheduler.Stop()
 			bslog.Debug("scheduler closed", slog.String("interval", interval.String()))
@@ -82,12 +87,38 @@ func (sm *ServicesManager) Stop() {
 }
 
 func (sm *ServicesManager) OnShutdown() error {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+
+	for memberOf, group := range sm.serviceGroups {
+		active := group.GetActive()
+
+		for _, svc := range group.Members {
+			gslbService := svc.GSLBService()
+
+			gslbService.IsActive = (active != nil && active.GetID() == svc.GetID())
+			override, err := sm.svcRepo.HasOverride(memberOf)
+			if err != nil {
+				return fmt.Errorf("unable to check whether service group has active override: member-of: %s: %w", memberOf, err)
+			}
+			gslbService.HasOverride = override
+
+			err = sm.svcRepo.Update(gslbService)
+			if err != nil {
+				return fmt.Errorf("failed to persist service state: service: %v: %w", svc, err)
+			}
+		}
+	}
 
 	return nil
 }
 
 func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*service.Service, error) {
-	newService, err := service.NewServiceFromGSLBConfig(serviceCfg, sm.dryrun) // create the service object
+	opts := sm.BuildServiceOptions(serviceCfg)
+	newService, err := service.NewServiceFromGSLBConfig( // create the service object
+		serviceCfg,
+		opts...,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to register service: %s", err.Error())
 	}
@@ -474,4 +505,31 @@ func (sm *ServicesManager) Failover(fqdn string, failover failover.Failover) err
 	}
 
 	return nil
+}
+
+func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig) []service.ServiceOption {
+	opts := make([]service.ServiceOption, 0, 5)
+	opts = append(opts, service.WithDryRunChecks(sm.dryrun))
+
+	gslbService, err := sm.svcRepo.GetMemberInGroup(config.MemberOf, config.ServiceID)
+	if err != nil {
+		if errors.Is(err, svcRepo.ErrServiceInGroupNotFound) {
+			bslog.Debug("could not find member in group",
+				slog.String("group", config.MemberOf),
+				slog.String("member", config.ServiceID),
+			)
+		}
+		// max out the failure count
+		// means a long time before service will be considered healthy
+		opts = append(opts, service.WithFailureCount(config.FailureThreshold))
+
+		return opts
+	}
+
+	opts = append(opts, service.WithFailureCount(gslbService.FailureCount))
+	if gslbService.IsHealthy {
+		opts = append(opts, service.WithHealthy())
+	}
+
+	return opts
 }

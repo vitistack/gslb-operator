@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"os"
 	"sync"
-
-	"github.com/vitistack/gslb-operator/pkg/persistence/store/memory"
 )
 
 type Store[T any] struct {
 	lock     sync.RWMutex
-	cache    *memory.Store[T] // dont check error because it is in memory
+	cache    map[string]T
 	fileName string
 }
 
@@ -25,7 +23,7 @@ func NewStore[T any](fileName string) (*Store[T], error) {
 	return &Store[T]{
 		lock:     sync.RWMutex{},
 		fileName: fileName,
-		cache:    memory.NewStore[T](),
+		cache:    make(map[string]T),
 	}, nil
 }
 
@@ -33,7 +31,7 @@ func (s *Store[T]) Save(key string, data T) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	s.cache.Save(key, data)
+	s.cache[key] = data
 
 	saved, err := os.ReadFile(s.fileName)
 	if err != nil {
@@ -66,21 +64,55 @@ func (s *Store[T]) Save(key string, data T) error {
 func (s *Store[T]) Load(key string) (T, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	var zero T
 
-	return s.cache.Load(key)
+	data, ok := s.cache[key]
+	if ok {
+		return data, nil
+	}
+
+	file, err := os.ReadFile(s.fileName)
+	if err != nil {
+		return zero, fmt.Errorf("unable to read storage: %w", err)
+	}
+
+	err = json.Unmarshal(file, &s.cache)
+	if err != nil {
+		return zero, fmt.Errorf("unable to parse: %s: %s", key, err.Error())
+	}
+
+	return s.cache[key], nil
 }
 
 func (s *Store[T]) LoadAll() ([]T, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	return s.cache.LoadAll()
+	all := []T{}
+
+	saved, err := os.ReadFile(s.fileName)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read from storage: %s", err.Error())
+	}
+
+	store := make(map[string]T)
+	err = json.Unmarshal(saved, &store)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse JSON: %s", err.Error())
+	}
+
+	for key, val := range store {
+		s.cache[key] = val
+		all = append(all, val)
+	}
+
+	return all, nil
 }
 
 func (s *Store[T]) Delete(key string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	s.cache.Delete(key)
+	delete(s.cache, key)
 
 	saved, err := os.ReadFile(s.fileName)
 	if err != nil {
