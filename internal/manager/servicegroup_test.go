@@ -22,7 +22,7 @@ var activeConfig = model.GSLBConfig{
 	Datacenter: "dc1",
 	Interval:   timesutil.Duration(5 * time.Second),
 	Priority:   1,
-	CheckType:       "TCP-FULL",
+	CheckType:  "TCP-FULL",
 }
 
 var passiveConfig = model.GSLBConfig{
@@ -32,15 +32,15 @@ var passiveConfig = model.GSLBConfig{
 	Datacenter: "dc2",
 	Interval:   timesutil.Duration(5 * time.Second),
 	Priority:   2,
-	CheckType:       "TCP-FULL",
+	CheckType:  "TCP-FULL",
 }
 
 var active *service.Service
 var passive *service.Service
 
 func TestMain(m *testing.M) {
-	active, _ = service.NewServiceFromGSLBConfig(activeConfig, true)
-	passive, _ = service.NewServiceFromGSLBConfig(passiveConfig, true)
+	active, _ = service.NewServiceFromGSLBConfig(activeConfig, service.WithDryRunChecks(true))
+	passive, _ = service.NewServiceFromGSLBConfig(passiveConfig, service.WithDryRunChecks(true))
 	m.Run()
 }
 
@@ -66,10 +66,10 @@ func TestServiceGroup_RegisterService(t *testing.T) {
 		t.Errorf("Expected group mode: %v, but got: %v, after two services with different priorities registered", ActivePassive, group.mode)
 	}
 	/*
-	if group.active != 0 {
-		t.Errorf("Expected activeIndex: %v, but got: %v", 0, group.activeIndex)
-	}
-		*/
+		if group.active != 0 {
+			t.Errorf("Expected activeIndex: %v, but got: %v", 0, group.activeIndex)
+		}
+	*/
 }
 
 func TestServiceGroup_OnServiceHealthChange(t *testing.T) {
@@ -140,7 +140,6 @@ func TestServiceGroup_OnServiceHealthChange(t *testing.T) {
 	}
 	makeServiceHealthy(active)
 
-
 }
 
 func makeServiceHealthy(service *service.Service) {
@@ -166,15 +165,15 @@ func TestServiceGroup_memberExists(t *testing.T) {
 		{
 			name: "exists",
 			member: &service.Service{
-				Fqdn: "test.example.com",
+				Fqdn:       "test.example.com",
 				Datacenter: "JK",
 			},
 			want: true,
 		},
 		{
-			name: "does-not-exist",
+			name:   "does-not-exist",
 			member: &service.Service{},
-			want: false,
+			want:   false,
 		},
 	}
 	for _, tt := range tests {

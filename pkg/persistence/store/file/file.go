@@ -8,7 +8,8 @@ import (
 )
 
 type Store[T any] struct {
-	lock sync.RWMutex
+	lock     sync.RWMutex
+	cache    map[string]T
 	fileName string
 }
 
@@ -20,14 +21,17 @@ func NewStore[T any](fileName string) (*Store[T], error) {
 	store.Close()
 
 	return &Store[T]{
-		lock: sync.RWMutex{},
+		lock:     sync.RWMutex{},
 		fileName: fileName,
+		cache:    make(map[string]T),
 	}, nil
 }
 
 func (s *Store[T]) Save(key string, data T) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+
+	s.cache[key] = data
 
 	saved, err := os.ReadFile(s.fileName)
 	if err != nil {
@@ -58,22 +62,26 @@ func (s *Store[T]) Save(key string, data T) error {
 }
 
 func (s *Store[T]) Load(key string) (T, error) {
-	var zero T
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	var zero T
 
-	saved, err := os.ReadFile(s.fileName)
-	if err != nil {
-		return zero, fmt.Errorf("unable to read from storage: %s", err.Error())
+	data, ok := s.cache[key]
+	if ok {
+		return data, nil
 	}
 
-	store := make(map[string]T)
-	err = json.Unmarshal(saved, &store)
+	file, err := os.ReadFile(s.fileName)
 	if err != nil {
-		return zero, fmt.Errorf("unable to read: %s: %s", key, err.Error())
+		return zero, fmt.Errorf("unable to read storage: %w", err)
 	}
 
-	return store[key], nil
+	err = json.Unmarshal(file, &s.cache)
+	if err != nil {
+		return zero, fmt.Errorf("unable to parse: %s: %s", key, err.Error())
+	}
+
+	return s.cache[key], nil
 }
 
 func (s *Store[T]) LoadAll() ([]T, error) {
@@ -92,7 +100,8 @@ func (s *Store[T]) LoadAll() ([]T, error) {
 		return nil, fmt.Errorf("unable to parse JSON: %s", err.Error())
 	}
 
-	for _, val := range store {
+	for key, val := range store {
+		s.cache[key] = val
 		all = append(all, val)
 	}
 
@@ -102,6 +111,8 @@ func (s *Store[T]) LoadAll() ([]T, error) {
 func (s *Store[T]) Delete(key string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+
+	delete(s.cache, key)
 
 	saved, err := os.ReadFile(s.fileName)
 	if err != nil {
@@ -128,5 +139,9 @@ func (s *Store[T]) Delete(key string) error {
 		return fmt.Errorf("could not write to file: %s", err.Error())
 	}
 
+	return nil
+}
+
+func (s *Store[T]) Close() error {
 	return nil
 }

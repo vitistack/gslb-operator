@@ -124,7 +124,7 @@ func (wp *WorkerPool) worker(id uint32) {
 			err := job.Execute()
 			if err != nil {
 				job.OnFailure(err)
-			}else {
+			} else {
 				job.OnSuccess()
 			}
 

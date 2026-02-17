@@ -16,7 +16,7 @@ func WithTokenValidation(logger *slog.Logger) middleware.MiddlewareFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), "request_method", r.Method)
 			ctx = context.WithValue(ctx, "request_route", r.URL.String())
-			
+
 			resp, err := jwt.Validate(ctx, strings.Split(r.Header.Get("Authorization"), "Bearer")[1])
 			if err != nil {
 				logger.Error("token-validation failed", slog.String("reason", err.Error()))

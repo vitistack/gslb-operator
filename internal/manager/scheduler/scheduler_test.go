@@ -93,7 +93,7 @@ func TestScheduler_Loop(t *testing.T) {
 
 	for idx := range numServices {
 		genericGSLBConfig.Fqdn = urls[idx]
-		svc, _ := service.NewServiceFromGSLBConfig(genericGSLBConfig, true)
+		svc, _ := service.NewServiceFromGSLBConfig(genericGSLBConfig, service.WithDryRunChecks(true))
 		services = append(services, svc)
 	}
 

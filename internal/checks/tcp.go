@@ -9,8 +9,13 @@ import (
 )
 
 type TCPChecker struct {
+	*RoundTripper
 	addr    string
 	timeout time.Duration
+}
+
+func (c *TCPChecker) Roundtrip() time.Duration {
+	return c.AverageRoundtripTime()
 }
 
 type TCPFullChecker struct {
@@ -30,15 +35,18 @@ func NewTCPChecker(typ, addr string, timeout time.Duration) Checker {
 
 func NewTCPFullChecker(addr string, timeout time.Duration) Checker {
 	return &TCPFullChecker{
-		TCPChecker: TCPChecker{
-			addr:    addr,
-			timeout: timeout,
+		TCPChecker{
+			RoundTripper: NewRoundtripper(),
+			addr:         addr,
+			timeout:      timeout,
 		},
 	}
 }
 
 func (tf *TCPFullChecker) Check() error {
+	tf.startRecording()
 	conn, err := net.DialTimeout("tcp", tf.addr, tf.timeout)
+	tf.endRecording()
 	if err != nil {
 		return err
 	}
@@ -53,8 +61,9 @@ type TCPHalfChecker struct {
 func NewTCPHalfChecker(addr string, timeout time.Duration) Checker {
 	return &TCPHalfChecker{
 		TCPChecker{
-			addr:    addr,
-			timeout: timeout,
+			RoundTripper: NewRoundtripper(),
+			addr:         addr,
+			timeout:      timeout,
 		},
 	}
 }
@@ -62,7 +71,9 @@ func NewTCPHalfChecker(addr string, timeout time.Duration) Checker {
 func (th *TCPHalfChecker) Check() error {
 	checker := tcpshaker.DefaultChecker()
 
+	th.startRecording()
 	err := checker.CheckAddr(th.addr, th.timeout)
+	th.endRecording()
 	if err != nil {
 		if errors.Is(err, tcpshaker.ErrTimeout) {
 			return err

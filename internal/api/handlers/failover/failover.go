@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"github.com/vitistack/gslb-operator/internal/manager"
-	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/failover"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
@@ -13,13 +12,11 @@ import (
 )
 
 type FailoverService struct {
-	spoofRepo      *spoof.Repository
 	serviceManager manager.QueryManager
 }
 
-func NewFailoverService(repo *spoof.Repository, mgr manager.QueryManager) *FailoverService {
+func NewFailoverService(mgr manager.QueryManager) *FailoverService {
 	return &FailoverService{
-		spoofRepo:      repo,
 		serviceManager: mgr,
 	}
 }

@@ -11,17 +11,17 @@ import (
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/api/handlers/failover"
-	spoofs "github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
+	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
 	"github.com/vitistack/gslb-operator/internal/manager"
-	spoofsrepo "github.com/vitistack/gslb-operator/internal/repositories/spoof"
+	"github.com/vitistack/gslb-operator/internal/model"
+	"github.com/vitistack/gslb-operator/internal/repositories/service"
 	"github.com/vitistack/gslb-operator/pkg/auth"
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/lua"
-	apiContractSpoof "github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence/store/file"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 )
@@ -34,22 +34,21 @@ func main() {
 		bslog.Fatal("could not load lua configuration", slog.Any("reason", err))
 	}
 
+	serviceFileStore, err := file.NewStore[model.GSLBServiceGroup]("store.json")
+	if err != nil {
+		bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
+	}
+	svcRepo := service.NewServiceRepo(serviceFileStore)
+
 	// creating dns - handler objects
 	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
 	mgr := manager.NewManager(
 		manager.WithMinRunningWorkers(100),
 		manager.WithNonBlockingBufferSize(110),
+		manager.WithServiceRepository(svcRepo),
 	)
 
-	spoofsFileStore, err := file.NewStore[apiContractSpoof.Spoof]("store.json")
-	if err != nil {
-		bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
-	}
-
-	spoofRepo := spoofsrepo.NewRepository(spoofsFileStore)
-	updater, err := dns.NewUpdater(
-		dns.UpdaterWithSpoofRepo(spoofRepo),
-	)
+	updater, err := dns.NewUpdater()
 	if err != nil {
 		bslog.Fatal("unable to create updater", slog.String("error", err.Error()))
 	}
@@ -65,9 +64,9 @@ func main() {
 	api := http.NewServeMux()
 
 	// routes handlers
-	spoofsApiService := spoofs.NewSpoofsService(spoofRepo, mgr)
+	spoofsApiService := spoofs.NewSpoofsService(serviceFileStore, mgr)
 
-	failoverApiService := failover.NewFailoverService(spoofRepo, mgr)
+	failoverApiService := failover.NewFailoverService(mgr)
 
 	// initializing the service jwt self signer
 	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
@@ -131,10 +130,10 @@ func main() {
 	case <-quit:
 		bslog.Info("gracefully shutting down...")
 	}
-	
+
 	shutdown, cancel := context.WithTimeout(background, time.Second*5)
 	defer cancel()
-	
+
 	dnsHandler.Stop(shutdown)
 	if err := server.Shutdown(shutdown); err != nil {
 		panic("error shutting down server: " + err.Error())

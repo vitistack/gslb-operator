@@ -8,8 +8,8 @@ import (
 // interface for API handlers that needs specific functionality from the manager.
 // without exposing all functionality
 type QueryManager interface {
-	GetActiveForFQDN(fqdn string) *service.Service
-	
+	GetActiveForMemberOf(memberOf string) *service.Service
+
 	//write operations
 	Failover(fqdn string, failover failover.Failover) error
 }

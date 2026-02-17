@@ -78,11 +78,17 @@ func (h *Handler) Stop(ctx context.Context) {
 }
 
 func (h *Handler) onServiceDown(svc *service.Service) {
-	h.updater.ServiceDown(svc)
+	err := h.updater.ServiceDown(svc)
+	if err != nil {
+		bslog.Warn("error while updating service on service down", slog.String("error", err.Error()))
+	}
 }
 
 func (h *Handler) onServiceUp(svc *service.Service) {
-	h.updater.ServiceUp(svc)
+	err := h.updater.ServiceUp(svc)
+	if err != nil {
+		bslog.Warn("error while updating service state on service up", slog.String("error", err.Error()))
+	}
 }
 
 func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan error) {

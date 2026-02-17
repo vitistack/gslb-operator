@@ -13,6 +13,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/vitistack/gslb-operator/internal/api/routes"
+	"github.com/vitistack/gslb-operator/internal/model"
 	spoofRepo "github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
@@ -22,23 +24,23 @@ import (
 
 func (ss *SpoofsService) GetOverride(w http.ResponseWriter, r *http.Request) {
 	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
-	fqdn := r.PathValue("fqdn")
+	memberOf := r.PathValue(routes.MemberOf)
 
-	if fqdn == "" {
-		logger.Error("skipping request due to insufficient input parameters", slog.String("reason", "missing fqdn"))
-		response.Err(w, response.ErrInvalidInput, "missing fqdn")
+	if memberOf == "" {
+		logger.Error("skipping request due to insufficient input parameters", slog.String("reason", "missing member-of"))
+		response.Err(w, response.ErrInvalidInput, "missing member-of")
 		return
 	}
 
-	exist, err := ss.SpoofRepo.ReadFQDN(fqdn)
+	exist, err := ss.svcRepo.GetActive(memberOf)
 	if err != nil {
 		logger.Error("could not read spoofs", slog.String("reason", err.Error()))
 		response.Err(w, response.ErrInternalError, "")
 		return
 	}
 
-	if exist.DC != "OVERRIDE" {
-		logger.Error("service does not have an active override", slog.String("fqdn", exist.FQDN))
+	if !exist.HasOverride {
+		logger.Error("service does not have an active override", slog.String("memberOf", exist.MemberOf))
 		response.Err(w, response.ErrNotFound, "not an active override")
 		return
 	}
@@ -63,8 +65,8 @@ func (ss *SpoofsService) CreateOverride(w http.ResponseWriter, r *http.Request) 
 	err = ss.newOverride(override)
 	if err != nil {
 		logger.Error("could not override spoof", slog.String("reason", err.Error()))
-		if errors.Is(err, spoofRepo.ErrSpoofWithFQDNNotFound) {
-			response.Err(w, response.ErrNotFound, "fqdn not found: "+override.FQDN)
+		if errors.Is(err, spoofRepo.ErrSpoofInServiceGroupNotFound) {
+			response.Err(w, response.ErrNotFound, "group: "+override.MemberOf)
 			return
 		}
 
@@ -89,8 +91,8 @@ func (ss *SpoofsService) UpdateOverride(w http.ResponseWriter, r *http.Request) 
 	err = ss.updateOverride(override)
 	if err != nil {
 		logger.Error("could not update spoof", slog.String("reason", err.Error()))
-		if errors.Is(err, spoofRepo.ErrSpoofWithFQDNNotFound) {
-			response.Err(w, response.ErrNotFound, "fqdn not found: "+override.FQDN)
+		if errors.Is(err, spoofRepo.ErrSpoofInServiceGroupNotFound) {
+			response.Err(w, response.ErrNotFound, "group: "+override.MemberOf)
 			return
 		}
 
@@ -123,93 +125,75 @@ func (ss *SpoofsService) DeleteOverride(w http.ResponseWriter, r *http.Request) 
 }
 
 func (ss *SpoofsService) newOverride(override spoofs.Override) error {
-	exist, err := ss.SpoofRepo.ReadFQDN(override.FQDN)
+	exist, err := ss.svcRepo.GetActive(override.MemberOf)
 	if err != nil {
-		return fmt.Errorf("unable to read spoofs from storage: %w", err)
+		return fmt.Errorf("unable to get active service for group: %s: %w", override.MemberOf, err)
 	}
 
-	if exist.DC == "OVERRIDE" {
-		return fmt.Errorf("service already has active override: %s", exist.FQDN)
+	if exist.HasOverride {
+		return fmt.Errorf("service already has active override: %s", exist.MemberOf)
 	}
 
-	err = ss.SpoofRepo.Delete(exist.Key())
-	if err != nil {
-		return fmt.Errorf("could not delete old spoof: %w", err)
-	}
-
-	exist.DC = "OVERRIDE"
 	exist.IP = override.IP.String()
+	exist.HasOverride = true
 
-	err = ss.SpoofRepo.Create(exist.Key(), &exist)
+	err = ss.svcRepo.Update(&exist)
 	if err != nil {
-		return fmt.Errorf("could not create spoof: %w", err)
+		return fmt.Errorf("failed to update GSLB service with override flag: %w", err)
 	}
 
 	return nil
 }
 
 func (ss *SpoofsService) updateOverride(override spoofs.Override) error {
-	exist, err := ss.SpoofRepo.ReadFQDN(override.FQDN)
+	active, err := ss.svcRepo.GetActive(override.MemberOf)
 	if err != nil {
-		return fmt.Errorf("unable to read spoofs from storage: %w", err)
+		return fmt.Errorf("unable to get active service for group: %s: %w", override.MemberOf, err)
 	}
 
-	if exist.DC != "OVERRIDE" {
-		return fmt.Errorf("%s does not have an active override", override.FQDN)
+	if active.HasOverride {
+		return fmt.Errorf("service already has active override: %s", active.MemberOf)
 	}
 
-	exist.IP = override.IP.String()
+	active.IP = override.IP.String()
 
-	err = ss.SpoofRepo.Update(exist.Key(), &exist)
+	err = ss.svcRepo.UpdateOverride(override.IP.String(), &active)
 	if err != nil {
-		return fmt.Errorf("could not update spoof: %w", err)
+		return fmt.Errorf("failed to update GSLB service with override flag: %w", err)
 	}
 
 	return nil
 }
 
 func (ss *SpoofsService) deleteOverride(override spoofs.Override) error {
-	exist, err := ss.SpoofRepo.ReadFQDN(override.FQDN)
+	exist, err := ss.svcRepo.GetActive(override.MemberOf)
 	if err != nil {
-		return fmt.Errorf("unable to read spoofs from storage: %w", err)
+		return fmt.Errorf("unable to get active service for group: %s: %w", override.MemberOf, err)
 	}
 
-	if exist.DC != "OVERRIDE" {
-		return fmt.Errorf("%s does not have an override currently set", override.FQDN)
+	if !exist.HasOverride {
+		return fmt.Errorf("%s does not have an override currently set", override.MemberOf)
 	}
 
-	spoof := ss.restoreSpoof(override)
-	err = ss.SpoofRepo.Delete(exist.Key())
+	err = ss.svcRepo.RemoveOverrideFlag(override.MemberOf)
 	if err != nil {
-		return fmt.Errorf("could not update spoof: %w", err)
+		return fmt.Errorf("failed to remove override flag: %w", err)
 	}
 
-	if spoof == nil { // if not possible to create new spoof, we return with NO spoof for the fqdn
-		return nil
-	}
-
-	err = ss.SpoofRepo.Create(spoof.Key(), spoof)
+	active := ss.restoreActive(override)
+	err = ss.svcRepo.Update(active)
 	if err != nil {
-		return fmt.Errorf("could not create spoof for active service: %w", err)
+		return fmt.Errorf("could not restore active service in group after override flag has been removed: %w", err)
 	}
 
 	return nil
 }
 
-func (ss *SpoofsService) restoreSpoof(override spoofs.Override) *spoofs.Spoof {
-	svc := ss.serviceManager.GetActiveForFQDN(override.FQDN)
+func (ss *SpoofsService) restoreActive(override spoofs.Override) *model.GSLBService {
+	svc := ss.serviceManager.GetActiveForMemberOf(override.MemberOf)
 	if svc == nil { // no active service: e.g. no spoof should be there
 		return nil
 	}
 
-	ip, err := svc.GetIP()
-	if err != nil {
-		return nil
-	}
-
-	return &spoofs.Spoof{
-		FQDN: svc.Fqdn,
-		DC:   svc.Datacenter,
-		IP:   ip,
-	}
+	return svc.GSLBService()
 }

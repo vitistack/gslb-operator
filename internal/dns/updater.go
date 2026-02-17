@@ -7,12 +7,9 @@ import (
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/config"
-	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
-	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
-	"github.com/vitistack/gslb-operator/pkg/persistence/store/memory"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
 	"github.com/vitistack/gslb-operator/pkg/rest/request/client"
 )
@@ -20,11 +17,10 @@ import (
 type updaterOption func(u *Updater)
 
 type Updater struct {
-	Server    string
-	spoofRepo *spoof.Repository
-	client    client.HTTPClient
-	builder   *request.Builder
-	mu        *sync.Mutex
+	Server  string
+	client  client.HTTPClient
+	builder *request.Builder
+	mu      *sync.Mutex
 }
 
 func NewUpdater(opts ...updaterOption) (*Updater, error) {
@@ -39,10 +35,9 @@ func NewUpdater(opts ...updaterOption) (*Updater, error) {
 	}
 
 	u := &Updater{
-		Server:    config.GetInstance().GSLB().UpdaterHost(),
-		spoofRepo: spoof.NewRepository(memory.NewStore[spoofs.Spoof]()),
-		client:    *c,
-		mu:        &sync.Mutex{},
+		Server: config.GetInstance().GSLB().UpdaterHost(),
+		client: *c,
+		mu:     &sync.Mutex{},
 	}
 
 	for _, opt := range opts {
@@ -51,12 +46,6 @@ func NewUpdater(opts ...updaterOption) (*Updater, error) {
 	u.builder = request.NewBuilder(u.Server).SetHeader("User-Agent", config.GetInstance().JWT().User())
 
 	return u, nil
-}
-
-func UpdaterWithSpoofRepo(spoofRep *spoof.Repository) updaterOption {
-	return func(u *Updater) {
-		u.spoofRepo = spoofRep
-	}
 }
 
 func UpdaterWithServer(server string) updaterOption {
@@ -72,23 +61,6 @@ func UpdaterWithClient(client *client.HTTPClient) updaterOption {
 }
 
 func (u *Updater) ServiceDown(svc *service.Service) error {
-	u.mu.Lock()
-	override, err := u.spoofRepo.HasOverride(svc.MemberOf)
-	if err != nil {
-		return fmt.Errorf("unable to delete spoof: %w", err)
-	}
-
-	if override {
-		bslog.Debug("service has spoof active override", slog.Any("service", svc))
-		return nil
-	}
-
-	err = u.spoofRepo.Delete(fmt.Sprintf("%s:%s", svc.MemberOf, svc.Datacenter))
-	u.mu.Unlock()
-	if err != nil {
-		return fmt.Errorf("unable to delete service from storage: %s", err.Error())
-	}
-
 	token, err := jwt.GetInstance().GetServiceToken()
 	if err != nil {
 		return fmt.Errorf("could not fetch service token: %w", err)
@@ -115,34 +87,6 @@ func (u *Updater) ServiceDown(svc *service.Service) error {
 }
 
 func (u *Updater) ServiceUp(svc *service.Service) error {
-	u.mu.Lock()
-	override, err := u.spoofRepo.HasOverride(svc.MemberOf)
-	if err != nil {
-		return fmt.Errorf("unable to store spoof: %w", err)
-	}
-
-	if override {
-		bslog.Debug("service has spoof active override", slog.Any("service", svc))
-		return nil
-	}
-
-	ip, err := svc.GetIP()
-	if err != nil {
-		return fmt.Errorf("unable to get ip address: %s", err.Error())
-	}
-
-	spoof := &spoofs.Spoof{
-		FQDN: svc.MemberOf,
-		IP:   ip,
-		DC:   svc.Datacenter,
-	}
-
-	err = u.spoofRepo.Create(fmt.Sprintf("%s:%s", svc.MemberOf, svc.Datacenter), spoof)
-	u.mu.Unlock()
-	if err != nil {
-		return fmt.Errorf("could not store new spoof: %s", err.Error())
-	}
-
 	token, err := jwt.GetInstance().GetServiceToken()
 	if err != nil {
 		return fmt.Errorf("could not fetch service token: %w", err)
@@ -150,7 +94,11 @@ func (u *Updater) ServiceUp(svc *service.Service) error {
 
 	req, err := u.builder.POST().SetHeader("Authorization", token).
 		URL("/spoofs").
-		Body(spoof).
+		Body(spoofs.Spoof{
+			FQDN: svc.MemberOf,
+			IP:   svc.GetIP(),
+			DC:   svc.Datacenter,
+		}).
 		Build()
 	if err != nil {
 		return fmt.Errorf("could not create post request for update: %s", err.Error())

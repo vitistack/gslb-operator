@@ -206,7 +206,7 @@ func TestServicesManager_updateServiceUnlocked(t *testing.T) {
 				t.Fatalf("could not create service during testing: %s", err.Error())
 			}
 
-			new, err := service.NewServiceFromGSLBConfig(tt.new, true)
+			new, err := service.NewServiceFromGSLBConfig(tt.new, service.WithDryRunChecks(true))
 			if err != nil {
 				t.Fatalf("could not create service during testing: %s", err.Error())
 			}
@@ -234,7 +234,7 @@ func TestServicesManager_moveServiceToInterval(t *testing.T) {
 		// Named input parameters for target function.
 		config      model.GSLBConfig
 		newInterval timesutil.Duration
-		shouldExist    bool
+		shouldExist bool
 	}{
 		{
 			name:        "change-to-non-existing-interval",
@@ -245,7 +245,7 @@ func TestServicesManager_moveServiceToInterval(t *testing.T) {
 			name:        "change-to-existing-interval",
 			config:      genericGSLBConfig,
 			newInterval: timesutil.FromDuration(time.Second),
-			shouldExist:    true,
+			shouldExist: true,
 		},
 	}
 	for _, tt := range tests {
@@ -257,7 +257,7 @@ func TestServicesManager_moveServiceToInterval(t *testing.T) {
 				sm.newScheduler(tt.newInterval)
 			}
 			sm.moveServiceToInterval(svc, tt.newInterval)
-			
+
 			_, interval, _ := sm.scheduledServices.Search(svc.GetID())
 			if interval != tt.newInterval {
 				t.Errorf("expected new interval: %s but got: %s", tt.newInterval.String(), interval.String())

@@ -13,7 +13,7 @@ func TestNewClient(t *testing.T) {
 	if err != nil {
 		t.Errorf("could not create client: %v", err.Error())
 	}
-	
+
 }
 
 func TestCommand(t *testing.T) {

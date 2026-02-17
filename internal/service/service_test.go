@@ -278,7 +278,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 				Datacenter: "Abels1",
 				Interval:   timesutil.FromDuration(time.Second * 5),
 				Priority:   1,
-				CheckType:       "TCP-FULL",
+				CheckType:  "TCP-FULL",
 			},
 			dryRun: true,
 			want:   timesutil.FromDuration(time.Second * 5),
@@ -292,7 +292,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 				Datacenter: "Abels1",
 				Interval:   timesutil.FromDuration(time.Second * 5),
 				Priority:   2,
-				CheckType:       "TCP-FULL",
+				CheckType:  "TCP-FULL",
 			},
 			dryRun: true,
 			want:   timesutil.FromDuration(time.Second * 5),
@@ -306,7 +306,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 				Datacenter: "Abels1",
 				Interval:   timesutil.FromDuration(time.Second * 5),
 				Priority:   3,
-				CheckType:       "TCP-FULL",
+				CheckType:  "TCP-FULL",
 			},
 			dryRun: true,
 			want:   timesutil.FromDuration(time.Second * 5),
@@ -320,7 +320,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 				Datacenter: "Abels1",
 				Interval:   timesutil.FromDuration(time.Second * 5),
 				Priority:   4,
-				CheckType:       "TCP-FULL",
+				CheckType:  "TCP-FULL",
 			},
 			dryRun: true,
 			want:   timesutil.FromDuration(time.Second * 5),
@@ -328,7 +328,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, err := NewServiceFromGSLBConfig(tt.config, tt.dryRun)
+			s, err := NewServiceFromGSLBConfig(tt.config, WithDryRunChecks(tt.dryRun))
 			if err != nil {
 				t.Fatalf("could not construct receiver type: %v", err)
 			}
