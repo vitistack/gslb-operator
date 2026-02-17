@@ -3,6 +3,7 @@ package checks
 import (
 	"errors"
 	"math/rand"
+	"time"
 )
 
 type DryRun struct{}
@@ -13,4 +14,8 @@ func (dr *DryRun) Check() error {
 		return errors.New("dry-run fail")
 	}
 	return nil
+}
+
+func (dr *DryRun) Roundtrip() time.Duration {
+	return time.Duration(0)
 }

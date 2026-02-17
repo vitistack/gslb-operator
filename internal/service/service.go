@@ -252,6 +252,10 @@ func (s *Service) GetFailureCount() int {
 	return s.failureCount
 }
 
+func (s *Service) GetAverageRoundtrip() time.Duration {
+	return s.checker.Roundtrip()
+}
+
 func (s *Service) ConfigChanged(other *Service) bool {
 	if s.Fqdn != other.Fqdn ||
 		s.addr.String() != other.addr.String() ||
