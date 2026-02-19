@@ -1,7 +1,7 @@
 package scheduler
 
 import (
-	"github.com/vitistack/gslb-operator/internal/service"
+	"slices"
 )
 
 type ServiceHeap []*ScheduledService
@@ -38,11 +38,8 @@ func (h ServiceHeap) Peek() *ScheduledService {
 	return h[0]
 }
 
-func (h *ServiceHeap) GetServiceIndex(service *service.Service) int {
-	for index, scheduled := range *h {
-		if scheduled.service.GetID() == service.GetID() {
-			return index
-		}
-	}
-	return -1
+func (h *ServiceHeap) GetServiceIndex(id string) int {
+	return slices.IndexFunc(*h, func(s *ScheduledService) bool {
+		return s.service.GetID() == id
+	})
 }
