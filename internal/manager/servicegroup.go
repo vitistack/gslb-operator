@@ -207,11 +207,14 @@ func (sg *ServiceGroup) RegisterService(newService *service.Service) {
 
 func (sg *ServiceGroup) RemoveService(id string) bool {
 	sg.mu.Lock()
-	defer sg.mu.Unlock()
+	members := sg.Members
+	sg.mu.Unlock()
 
-	for idx, member := range sg.Members {
+	for idx, member := range members {
 		if member.GetID() == id {
+			sg.mu.Lock()
 			sg.Members = utils.RemoveIndexFromSlice(sg.Members, idx)
+			sg.mu.Unlock()
 			sg.Update()
 			break
 		}

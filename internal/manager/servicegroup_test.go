@@ -16,6 +16,7 @@ type Test struct {
 }
 
 var activeConfig = model.GSLBConfig{
+	ServiceID: "123",
 	Fqdn:       "test.example.com",
 	Ip:         "192.168.1.1",
 	Port:       "80",
@@ -26,6 +27,7 @@ var activeConfig = model.GSLBConfig{
 }
 
 var passiveConfig = model.GSLBConfig{
+	ServiceID: "456",
 	Fqdn:       "test.example.com",
 	Ip:         "192.168.1.1",
 	Port:       "80",

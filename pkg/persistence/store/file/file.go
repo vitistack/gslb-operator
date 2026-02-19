@@ -76,6 +76,10 @@ func (s *Store[T]) Load(key string) (T, error) {
 		return zero, fmt.Errorf("unable to read storage: %w", err)
 	}
 
+	if len(file) == 0 {
+		return zero, nil
+	}
+
 	err = json.Unmarshal(file, &s.cache)
 	if err != nil {
 		return zero, fmt.Errorf("unable to parse: %s: %s", key, err.Error())
@@ -92,6 +96,10 @@ func (s *Store[T]) LoadAll() ([]T, error) {
 	saved, err := os.ReadFile(s.fileName)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read from storage: %s", err.Error())
+	}
+
+	if len(saved) == 0 {
+		return all, nil
 	}
 
 	store := make(map[string]T)

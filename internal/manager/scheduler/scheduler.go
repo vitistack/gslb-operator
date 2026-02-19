@@ -93,12 +93,15 @@ func (s *Scheduler) ScheduleService(svc *service.Service) {
 func (s *Scheduler) RemoveService(svc *service.Service) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	idx := s.heap.GetServiceIndex(svc)
+
+	idx := s.heap.GetServiceIndex(svc.GetID())
 	if idx == -1 {
 		return s.heap.Len() == 0
-	}
-	if idx == 0 {
+	} else if idx == 0 {
 		s.heap[0].shouldReSchedule = false
+		if len(s.heap) == 1 {
+			return true
+		}
 	} else {
 		heap.Remove(&s.heap, idx)
 	}

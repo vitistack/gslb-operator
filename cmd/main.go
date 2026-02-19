@@ -26,7 +26,16 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 )
 
+var ( // injected at buildtime
+	version   string
+	buildDate string
+)
+
 func main() {
+	bslog.Info("Running GSLB - Operator",
+		slog.String("version", version),
+		slog.String("build-date", buildDate),
+	)
 	cfg := config.GetInstance()
 
 	// initialize lua execution environment

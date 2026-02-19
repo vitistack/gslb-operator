@@ -310,22 +310,20 @@ func incrementNonce(nonce *[NONCE_LEN]byte) {
 	binary.BigEndian.PutUint32(nonce[:4], value)
 }
 
-func (c *Client) AddDomainSpoof(domain string, ips []string) error {
-	// addAction(QNameRule('example.com'), SpoofAction({"192.168.1.0","192.168.1.2"}), {name="example.com"})
-	cmd := fmt.Sprintf("addAction(QNameRule('%v'), SpoofAction({", domain)
-
-	for _, ip := range ips {
-		cmd += fmt.Sprintf("'%v', ", ip)
-	}
-	idx := strings.LastIndex(cmd, ",")
-	if idx == -1 {
-		return fmt.Errorf("no trailing comma found in command: %s", cmd)
-	}
-	cmd = fmt.Sprintf("%v {name='%v'})", cmd[:idx]+"}),", domain)
-
+func (c *Client) AddDomainSpoof(ruleName, domain, ip string) error {
+	// addAction(QNameRule('example.com'), SpoofAction({"192.168.1.0"}), {name="example.com:DC"})
+	cmd := fmt.Sprintf("addAction(QNameRule('%v'), SpoofAction({'%s'}, {ttl=3600}), {name='%s'})", domain, ip, ruleName)
 	return Must(c.command(cmd))
 }
 
-func (c *Client) RmDomainSpoof(domain string) error {
-	return Must(c.command(fmt.Sprintf("rmRule(%s)", domain)))
+func (c *Client) RmRuleWithName(ruleName string) error {
+	return Must(c.command(fmt.Sprintf("rmRule('%s')", ruleName)))
+}
+
+func (c *Client) RmRuleWithIndex(idx int) error {
+	return Must(c.command(fmt.Sprintf("rmRule('%d')", idx)))
+}
+
+func (c *Client) ShowRules() (string, error) {
+	return c.command("showRules()")
 }

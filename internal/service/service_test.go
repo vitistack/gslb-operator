@@ -2,7 +2,6 @@ package service
 
 import (
 	"errors"
-	"log"
 	"testing"
 	"time"
 
@@ -132,9 +131,7 @@ func TestOnSuccess(t *testing.T) {
 	for range svc0.FailureThreshold - 1 {
 		svc0.OnFailure(errors.New("test error"))
 	}
-	log.Printf("count: %v", svc0.failureCount)
 	svc0.OnSuccess()
-	log.Printf("count: %v", svc0.failureCount)
 
 	if !svc0.isHealthy {
 		t.Errorf("Expected health: %v, but got: %v. After 2x OnFailure before OnSuccess()", true, svc0.IsHealthy())
@@ -143,9 +140,7 @@ func TestOnSuccess(t *testing.T) {
 	for range svc0.FailureThreshold {
 		svc0.OnFailure(errors.New("test error"))
 	}
-	log.Printf("count: %v", svc0.failureCount)
 	svc0.OnSuccess()
-	log.Printf("count: %v", svc0.failureCount)
 
 	if svc0.isHealthy {
 		t.Fatalf("Expected health: %v, but got: %v. After 3x OnFailure before OnSuccess()", false, svc0.IsHealthy())
@@ -241,9 +236,7 @@ func TestOnFailure(t *testing.T) {
 	for range svc0.FailureThreshold - 1 {
 		svc0.OnSuccess()
 	}
-	log.Printf("count: %v", svc0.failureCount)
 	svc0.OnFailure(errors.New("test"))
-	log.Printf("count: %v", svc0.failureCount)
 
 	if svc0.isHealthy {
 		t.Errorf("Expected health: %v, but got: %v. After 2x OnSuccess() before OnFailure()", false, svc0.IsHealthy())
@@ -252,9 +245,7 @@ func TestOnFailure(t *testing.T) {
 	for range svc0.FailureThreshold {
 		svc0.OnSuccess()
 	}
-	log.Printf("count: %v", svc0.failureCount)
 	svc0.OnFailure(errors.New("test"))
-	log.Printf("count: %v", svc0.failureCount)
 
 	if !svc0.isHealthy {
 		t.Fatalf("Expected health: %v, but got: %v. After 3x OnSuccess() before OnFailure()", true, svc0.IsHealthy())
@@ -272,6 +263,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 		{
 			name: "baseinterval-5-priority-1",
 			config: model.GSLBConfig{
+				ServiceID: "123",
 				Fqdn:       "test.nhn.no",
 				Ip:         "127.0.0.1",
 				Port:       "80",
@@ -286,6 +278,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 		{
 			name: "baseinterval-5-priority-2",
 			config: model.GSLBConfig{
+				ServiceID: "123",
 				Fqdn:       "test.nhn.no",
 				Ip:         "127.0.0.1",
 				Port:       "80",
@@ -300,6 +293,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 		{
 			name: "baseinterval-5-priority-3",
 			config: model.GSLBConfig{
+				ServiceID: "123",
 				Fqdn:       "test.nhn.no",
 				Ip:         "127.0.0.1",
 				Port:       "80",
@@ -314,6 +308,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 		{
 			name: "baseinterval-5-priority-4",
 			config: model.GSLBConfig{
+				ServiceID: "123",
 				Fqdn:       "test.nhn.no",
 				Ip:         "127.0.0.1",
 				Port:       "80",

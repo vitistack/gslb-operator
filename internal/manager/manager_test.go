@@ -16,7 +16,7 @@ var genericGSLBConfig = model.GSLBConfig{
 	Ip:         "192.168.1.1",
 	Port:       "80",
 	Datacenter: "dc1",
-	Interval:   timesutil.Duration(5 * time.Second),
+	Interval:   timesutil.Duration(30 * time.Second),
 	Priority:   1,
 	CheckType:  "TCP-FULL",
 }
@@ -96,7 +96,7 @@ func TestStartAndStop(t *testing.T) {
 	}
 }
 
-func TestServicesManager_updateServiceUnlocked(t *testing.T) {
+func TestServicesManager_updateService(t *testing.T) {
 	tests := []struct {
 		name string // description of this test case
 		old  model.GSLBConfig
@@ -112,7 +112,7 @@ func TestServicesManager_updateServiceUnlocked(t *testing.T) {
 				Ip:         "192.168.1.1",
 				Port:       "80",
 				Datacenter: "dc1",
-				Interval:   timesutil.Duration(5 * time.Second),
+				Interval:   timesutil.Duration(30 * time.Second),
 				Priority:   2,
 				CheckType:  "TCP-FULL",
 			},
@@ -127,7 +127,7 @@ func TestServicesManager_updateServiceUnlocked(t *testing.T) {
 				Ip:         "192.168.1.1",
 				Port:       "80",
 				Datacenter: "dc2",
-				Interval:   timesutil.Duration(5 * time.Second),
+				Interval:   timesutil.Duration(30 * time.Second),
 				Priority:   1,
 				CheckType:  "TCP-FULL",
 			},
@@ -142,7 +142,7 @@ func TestServicesManager_updateServiceUnlocked(t *testing.T) {
 				Ip:         "192.168.1.2",
 				Port:       "80",
 				Datacenter: "dc1",
-				Interval:   timesutil.Duration(5 * time.Second),
+				Interval:   timesutil.Duration(30 * time.Second),
 				Priority:   1,
 				CheckType:  "TCP-FULL",
 			},
@@ -157,7 +157,7 @@ func TestServicesManager_updateServiceUnlocked(t *testing.T) {
 				Ip:         "192.168.1.1",
 				Port:       "80",
 				Datacenter: "dc1",
-				Interval:   timesutil.Duration(5 * time.Second),
+				Interval:   timesutil.Duration(30 * time.Second),
 				Priority:   1,
 				CheckType:  "TCP-HALF",
 			},
@@ -172,7 +172,7 @@ func TestServicesManager_updateServiceUnlocked(t *testing.T) {
 				Ip:         "192.168.1.1",
 				Port:       "80",
 				Datacenter: "dc1",
-				Interval:   timesutil.Duration(5 * time.Second),
+				Interval:   timesutil.Duration(30 * time.Second),
 				Priority:   1,
 				CheckType:  "TCP-FULL",
 			},
@@ -182,12 +182,12 @@ func TestServicesManager_updateServiceUnlocked(t *testing.T) {
 			old:  genericGSLBConfig,
 			new: model.GSLBConfig{
 				ServiceID:  "123-test-456",
-				MemberOf:   "example.example.com",
+				MemberOf:   "example.com",
 				Fqdn:       "testing.example.com",
 				Ip:         "192.168.1.1",
 				Port:       "80",
 				Datacenter: "dc1",
-				Interval:   timesutil.Duration(5 * time.Second),
+				Interval:   timesutil.Duration(30 * time.Second),
 				Priority:   1,
 				CheckType:  "TCP-FULL",
 			},
@@ -197,6 +197,7 @@ func TestServicesManager_updateServiceUnlocked(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			sm := NewManager(WithDryRun(true))
 			sm.Start()
+			defer sm.Stop()
 
 			sm.DNSUpdate = func(s *service.Service, b bool) {
 
@@ -213,12 +214,16 @@ func TestServicesManager_updateServiceUnlocked(t *testing.T) {
 			sm.updateService(old, new)
 
 			if old.ConfigChanged(new) {
-				t.Error("still pending config changes after update")
+				t.Fatal("still pending config changes after update")
 			}
 
 			_, interval, svc := sm.scheduledServices.Search(old.GetID())
 			if interval != new.GetDefaultInterval() {
-				t.Errorf("the service was not located at its correct interval, expected: %s but got: %s", new.GetDefaultInterval(), interval)
+				t.Fatalf("the service was not located at its correct interval, expected: %s but got: %s", new.GetDefaultInterval(), interval)
+			}
+
+			if ok := sm.serviceGroups[old.MemberOf].memberExists(old); !ok {
+				t.Fatalf("service does not exist in expected service group, expected: %s", old.MemberOf)
 			}
 
 			if svc != old {
@@ -227,6 +232,7 @@ func TestServicesManager_updateServiceUnlocked(t *testing.T) {
 		})
 	}
 }
+
 
 func TestServicesManager_moveServiceToInterval(t *testing.T) {
 	tests := []struct {
@@ -251,6 +257,8 @@ func TestServicesManager_moveServiceToInterval(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sm := NewManager(WithDryRun(true))
+			sm.Start()
+			defer sm.Stop()
 			svc, _ := sm.RegisterService(tt.config)
 
 			if tt.shouldExist {
@@ -270,3 +278,4 @@ func TestServicesManager_moveServiceToInterval(t *testing.T) {
 		})
 	}
 }
+

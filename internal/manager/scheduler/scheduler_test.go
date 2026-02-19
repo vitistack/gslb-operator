@@ -1,8 +1,6 @@
 package scheduler
 
 import (
-	"fmt"
-	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -13,10 +11,21 @@ import (
 )
 
 var genericGSLBConfig = model.GSLBConfig{
+	ServiceID:  "123",
 	Ip:         "192.168.1.1",
 	Port:       "80",
 	Datacenter: "dc1",
-	Interval:   timesutil.Duration(5 * time.Second),
+	Interval:   timesutil.Duration(time.Second),
+	Priority:   1,
+	CheckType:  "TCP-FULL",
+}
+
+var genericGSLBConfig2 = model.GSLBConfig{
+	ServiceID:  "456",
+	Ip:         "192.168.1.2",
+	Port:       "80",
+	Datacenter: "dc2",
+	Interval:   timesutil.Duration(time.Second),
 	Priority:   1,
 	CheckType:  "TCP-FULL",
 }
@@ -62,63 +71,96 @@ func TestNewScheduler(t *testing.T) {
 	}
 }
 
-func TestScheduler_Loop(t *testing.T) {
+func TestScheduleService(t *testing.T) {
+	svc, err := service.NewServiceFromGSLBConfig(genericGSLBConfig)
+	if err != nil {
+		t.Fatalf("could not create test service: %s", err.Error())
+	}
+
+	receivedTick := false
+
+	wg := sync.WaitGroup{}
+	scheduler := NewScheduler(time.Duration(svc.GetDefaultInterval()), &wg)
+	scheduler.OnTick = func(s *service.Service) {
+		receivedTick = true
+	}
+	defer scheduler.Stop()
+
+	scheduler.ScheduleService(svc)
+	if !scheduler.isRunning {
+		t.Errorf("scheduler is not running, expected: isRunning == true, but got: isRunning == false")
+	}
+
+	if len(scheduler.heap) == 0 && !receivedTick {
+		t.Errorf("scheduler is running, but heap size is 0, means scheduler has pop'ed the heap before received tick")
+	}
+
+}
+
+func TestScheduler_RemoveService(t *testing.T) {
+	svc1, _ := service.NewServiceFromGSLBConfig(genericGSLBConfig)
+	svc2, _ := service.NewServiceFromGSLBConfig(genericGSLBConfig2)
 	tests := []struct {
 		name string // description of this test case
 		// Named input parameters for receiver constructor.
 		interval time.Duration
+		wg       *sync.WaitGroup
+		// Named input parameters for target function.
+		svc          *service.Service
+		want         bool
+		addSecond    bool
+		removeSecond bool
 	}{
 		{
-			name:     "100-services-on-5s",
-			interval: time.Second * 5,
+			name:         "only-one",
+			interval:     time.Second,
+			wg:           &sync.WaitGroup{},
+			svc:          svc1,
+			want:         true,
+			addSecond:    false,
+			removeSecond: false,
 		},
 		{
-			name:     "100-services-on-15s",
-			interval: time.Second * 15,
+			name:         "add-second-remove-first",
+			interval:     time.Second,
+			wg:           &sync.WaitGroup{},
+			svc:          svc1,
+			want:         false,
+			addSecond:    true,
+			removeSecond: false,
 		},
 		{
-			name:     "100-services-on-45s",
-			interval: time.Second * 45,
-		},
-		{
-			name:     "100-services-on-60s",
-			interval: time.Second * 60,
+			name:         "add-second-remove-second",
+			interval:     time.Second,
+			wg:           &sync.WaitGroup{},
+			svc:          svc1,
+			want:         false,
+			addSecond:    true,
+			removeSecond: true,
 		},
 	}
-
-	numServices := 100
-	urls := randomUrlIDs(numServices)
-
-	services := make([]*service.Service, 0, 100)
-
-	for idx := range numServices {
-		genericGSLBConfig.Fqdn = urls[idx]
-		svc, _ := service.NewServiceFromGSLBConfig(genericGSLBConfig, service.WithDryRunChecks(true))
-		services = append(services, svc)
-	}
-
 	for _, tt := range tests {
-		scheduler := NewScheduler(tt.interval, &sync.WaitGroup{})
-		scheduler.OnTick = func(s *service.Service) {
-			t.Logf("received tick for: %s\n", s.Fqdn)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewScheduler(tt.interval, tt.wg)
 
-		for _, svc := range services {
-			scheduler.ScheduleService(svc)
-		}
-		time.Sleep(time.Second * 6)
+			s.ScheduleService(tt.svc)
+			var got bool
+			if tt.addSecond {
+				s.ScheduleService(svc2)
+			}
+
+			if tt.removeSecond {
+				got = s.RemoveService(svc2)
+			} else {
+				got = s.RemoveService(tt.svc)
+				if s.heap.Peek().shouldReSchedule {
+					t.Errorf("scheduled service are set to be rescheduled after remove has been called")
+				}
+			}
+
+			if got != tt.want {
+				t.Errorf("RemoveService() = %v, but wanted %v", got, tt.want)
+			}
+		})
 	}
-}
-
-func randomUrlIDs(num int) []string {
-	baseUrl := "test.example.com"
-	urls := make([]string, 0, num)
-
-	const charSet = "abcdefghijklmnopqrstuvwxyz"
-	for range num {
-		idx := rand.Intn(len(charSet))
-		urls = append(urls, fmt.Sprintf("%v/%v", baseUrl, charSet[idx]))
-	}
-
-	return urls
 }
