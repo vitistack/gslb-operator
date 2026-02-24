@@ -84,6 +84,6 @@ jobs:
           export HELM_VERSION=${VERSION#v*}
           ./yq e -i '.version = strenv(HELM_VERSION),.appVersion = strenv(VERSION)' charts/gslb-operator/Chart.yaml
           ./yq e -i '.global.controller.tag = strenv(HELM_VERSION),.global.controller.repository = "ncr.sky.nhn.no/ghcr/vitistack/gslb-operator"' charts/gslb-operator/values.yaml
-          helm package chart/ipam-operator
+          helm package charts/gslb-operator
           echo  ${{ secrets.GITHUB_TOKEN }} | helm registry login -u ${{ github.actor }} ghcr.io --password-stdin
           helm push ipam-operator-${HELM_VERSION}.tgz oci://ghcr.io/vitistack/helm/
