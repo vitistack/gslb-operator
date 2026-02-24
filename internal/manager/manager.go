@@ -69,19 +69,19 @@ func (sm *ServicesManager) Start() {
 }
 
 func (sm *ServicesManager) Stop() {
-	sm.pool.Stop()
 	sm.stop.Do(func() {
+		for _, scheduler := range sm.schedulers {
+			scheduler.Stop()
+		}
+		bslog.Debug("waiting for schedulers to stop")
+		sm.wg.Wait()
+
+		bslog.Debug("schedulers stopped - closing pool")
+		sm.pool.Stop()
 		err := sm.OnShutdown()
 		if err != nil {
 			bslog.Error("error while performing shutdown tasks", slog.String("error", err.Error()))
 		}
-
-		for interval, scheduler := range sm.schedulers {
-			scheduler.Stop()
-			bslog.Debug("scheduler closed", slog.String("interval", interval.String()))
-		}
-
-		sm.wg.Wait()
 		bslog.Debug("service manager closed")
 	})
 }
@@ -89,6 +89,7 @@ func (sm *ServicesManager) Stop() {
 func (sm *ServicesManager) OnShutdown() error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
+	bslog.Debug("executing manager.OnShutdown()")
 
 	for memberOf, group := range sm.serviceGroups {
 		active := group.GetActive()
@@ -406,6 +407,9 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 		}
 		bslog.Info("new active service", slog.Any("service", event.NewActive))
 		sm.moveServiceToInterval(event.NewActive, baseInterval)
+		if sm.DNSUpdate == nil {
+			bslog.Fatal("DNSUpdate is nil!!!!")
+		}
 		sm.DNSUpdate(event.NewActive, true)
 		return
 	}

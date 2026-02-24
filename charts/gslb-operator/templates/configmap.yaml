@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gslb-operator-config
+  namespace: {{ .Values.namespace }}
+data:
+  SRV_ENV: {{ .Values.settings.env }}
+  SRV_LUA_SANDBOX: {{ .Values.settings.sandbox }}
+  API_PORT: {{ .Values.settings.port }}
+  GSLB_POLL_INTERVAL: {{ .Values.settings.poll_interval }}
+  GSLB_UPDATER_HOST: {{ .Values.settings.gslb_updater }}

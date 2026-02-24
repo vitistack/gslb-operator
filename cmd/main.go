@@ -13,11 +13,13 @@ import (
 	"github.com/vitistack/gslb-operator/internal/api/handlers/failover"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
+	"github.com/vitistack/gslb-operator/internal/checks"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/service"
+	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/auth"
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
@@ -55,6 +57,7 @@ func main() {
 		manager.WithMinRunningWorkers(100),
 		manager.WithNonBlockingBufferSize(110),
 		manager.WithServiceRepository(svcRepo),
+		manager.WithDryRun(true),
 	)
 
 	updater, err := dns.NewUpdater()
@@ -69,6 +72,14 @@ func main() {
 
 	background := context.Background()
 	dnsHandler.Start(context.WithCancel(background))
+
+	configs := getRandomGSLBConfig()
+	for _, cfg := range configs {
+		_, err := mgr.RegisterService(cfg)
+		if err != nil {
+			bslog.Fatal("could not create service", slog.String("reason", err.Error()))
+		}
+	}
 
 	api := http.NewServeMux()
 
@@ -140,11 +151,36 @@ func main() {
 		bslog.Info("gracefully shutting down...")
 	}
 
-	shutdown, cancel := context.WithTimeout(background, time.Second*5)
+	shutdown, cancel := context.WithTimeout(background, time.Second*20)
 	defer cancel()
 
 	dnsHandler.Stop(shutdown)
 	if err := server.Shutdown(shutdown); err != nil {
 		panic("error shutting down server: " + err.Error())
 	}
+}
+
+func getRandomGSLBConfig() []model.GSLBConfig {
+	configs := make([]model.GSLBConfig, 0, 500)
+
+	cfg := model.GSLBConfig{
+		Fqdn:             "test.example.com",
+		Ip:               "10.10.0.1",
+		Port:             "80",
+		Datacenter:       "DC1",
+		Interval:         timesutil.FromDuration(time.Second * 5),
+		Priority:         1,
+		FailureThreshold: 3,
+		CheckType:        checks.TCP_FULL,
+	}
+
+	for idx := range cap(configs) {
+
+		cfg.ServiceID = fmt.Sprintf("%d", idx)
+		cfg.MemberOf = fmt.Sprintf("%s.%s", cfg.ServiceID, cfg.Fqdn)
+
+		configs = append(configs, cfg)
+	}
+
+	return configs
 }

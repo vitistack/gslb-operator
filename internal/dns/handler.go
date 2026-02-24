@@ -63,10 +63,10 @@ func (h *Handler) Start(ctx context.Context, cancel func()) {
 func (h *Handler) Stop(ctx context.Context) {
 	done := make(chan struct{})
 	go func() {
-		h.cancel() // cancel zone-updates
-		h.wg.Wait()
-		h.svcManager.Stop()
-		close(done)
+	h.cancel() // cancel zone-updates
+	h.wg.Wait()
+	h.svcManager.Stop()
+	close(done)
 	}()
 
 	select {
