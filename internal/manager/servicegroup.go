@@ -132,6 +132,7 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 
 			sg.lastActive = sg.active
 			sg.active = changedService
+			sg.mu.Unlock()
 			sg.OnPromotion(event)
 		}
 
@@ -139,6 +140,7 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 		if healthy {
 			// If prioritized DC service becomes healthy, it must become active (single DNS record).
 			if changedService.Datacenter == sg.prioritizedDatacenter && changedService != sg.active {
+				sg.mu.Unlock()
 				sg.OnPromotion(&PromotionEvent{
 					Service:   changedService.Fqdn,
 					NewActive: changedService,
@@ -149,6 +151,7 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 			}
 			// If there is no active or the current active is unhealthy, promote this healthy service.
 			if sg.active == nil || !sg.active.IsHealthy() {
+				sg.mu.Unlock()
 				sg.OnPromotion(&PromotionEvent{
 					Service:   changedService.Fqdn,
 					NewActive: changedService,
@@ -183,9 +186,9 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 			})
 			sg.lastActive = sg.active
 			sg.active = nil
+			return
 		}
 	}
-	sg.mu.Unlock()
 }
 
 // This does not take in to account if the registered service has the highest priority

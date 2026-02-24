@@ -73,16 +73,11 @@ func (c *Config) JWT() *JWT {
 // Server configuration
 type Server struct {
 	ENV         string `env:"SRV_ENV" flag:"env"`
-	DC          string `env:"SRV_DATACENTER" flag:"datacenter"`
 	LUA_SANDBOX string `env:"SRV_LUA_SANDBOX" flag:"lua-sandbox"`
 }
 
 func (s *Server) Env() string {
 	return s.ENV
-}
-
-func (s *Server) Datacenter() string {
-	return s.DC
 }
 
 func (s *Server) LuaSandbox() string {
@@ -141,9 +136,18 @@ func (jwt *JWT) User() string {
 }
 
 func newConfig() (*Config, error) {
+	fileLoader, err := loaders.NewFileLoader(
+		".env",
+		"./secrets",
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
 	loader := loaders.NewChainLoader(
 		loaders.NewEnvloader(),
-		loaders.NewFileLoader(".env"),
+		fileLoader,
 		loaders.NewFlagLoader(),
 	)
 
@@ -154,7 +158,9 @@ func newConfig() (*Config, error) {
 	apiCfg := API{
 		PORT: ":8080",
 	}
-	gslbCfg := GSLB{}
+	gslbCfg := GSLB{
+		POLLINTERVAL: "1m",
+	}
 	jwtCfg := JWT{}
 
 	configs := []any{
