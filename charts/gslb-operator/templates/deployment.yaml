@@ -43,7 +43,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           envFrom:
             - configMapRef:
-              name: gslb-operator-config
+                name: gslb-operator-config
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}

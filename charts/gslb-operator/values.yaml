@@ -9,7 +9,7 @@ namespace: "gslb-operator"
 
 # This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
 image:
-  repository: ghcr.io/vitistack/gslb-operator
+  repository: ncr.sky.nhn.no/vitistack/gslb-operator
   # This sets the pull policy for images.
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
@@ -51,9 +51,9 @@ securityContext:
   capabilities:
     drop:
       - ALL
-  readOnlyRootFilesystem: true
-  runAsNonRoot: true
-  runAsUser: 1000
+  readOnlyRootFilesystem: false
+  #runAsNonRoot: true
+  #runAsUser: 1000
   seccompProfile:
     type: RuntimeDefault
 
@@ -139,15 +139,17 @@ volumes:
     secret:
       secretName: gslb-operator-secrets
       optional: false
+  - name: data
+    emptyDir: {}
 
 # Additional volumeMounts on the output Deployment definition.
 volumeMounts:
   - name: secrets
     mountPath: "/app/secrets"
     readOnly: true
-# - name: foo
-#   mountPath: "/etc/foo"
-#   readOnly: true
+  - name: data
+    mountPath: "/app/data"
+    readOnly: false
 
 nodeSelector: {}
 

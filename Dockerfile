@@ -19,11 +19,15 @@ FROM alpine:3.23
 WORKDIR /app
 
 RUN addgroup -S gslb-group && adduser -S gslb-operator -G gslb-group
-RUN chown -R gslb-operator:gslb-group /app
 
 COPY --from=build /app/gslb-operator /app/gslb-operator
 COPY sandbox.lua /app
 
+# change ownership of directory
+RUN chown -R gslb-operator:gslb-group /app
+
+# sandbox is read-only
+RUN chmod 440 sandbox.lua
 USER gslb-operator
 
 CMD [ "./gslb-operator" ]
