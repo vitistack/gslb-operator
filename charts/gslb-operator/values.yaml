@@ -51,7 +51,7 @@ securityContext:
   capabilities:
     drop:
       - ALL
-  readOnlyRootFilesystem: true
+  readOnlyRootFilesystem: false
   runAsNonRoot: true
   runAsUser: 1000
   seccompProfile:
@@ -139,15 +139,17 @@ volumes:
     secret:
       secretName: gslb-operator-secrets
       optional: false
+  - name: data
+    emptyDir: {}
 
 # Additional volumeMounts on the output Deployment definition.
 volumeMounts:
   - name: secrets
     mountPath: "/app/secrets"
     readOnly: true
-# - name: foo
-#   mountPath: "/etc/foo"
-#   readOnly: true
+  - name: data
+    mountPath: "/app/data"
+    readOnly: false
 
 nodeSelector: {}
 

@@ -45,7 +45,7 @@ func main() {
 		bslog.Fatal("could not load lua configuration", slog.Any("reason", err))
 	}
 
-	serviceFileStore, err := file.NewStore[model.GSLBServiceGroup]("store.json")
+	serviceFileStore, err := file.NewStore[model.GSLBServiceGroup]("./data/store.json")
 	if err != nil {
 		bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
 	}
