@@ -119,6 +119,15 @@ func (f *FileLoader) loadJSON(dest any, file string) error {
 }
 
 func (f *FileLoader) loadPlainText(dest any, file string) error {
+	info, err := os.Stat(file)
+	if err != nil {
+		return fmt.Errorf("unable to load file: %s: %w", file, err)
+	}
+
+	if info.IsDir() { // skip directories
+		return nil
+	}
+
 	val := reflect.ValueOf(dest).Elem()
 	typ := val.Type()
 
