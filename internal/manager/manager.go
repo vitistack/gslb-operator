@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vitistack/gslb-operator/internal/manager/healthcheck"
 	"github.com/vitistack/gslb-operator/internal/manager/scheduler"
 	"github.com/vitistack/gslb-operator/internal/model"
 	svcRepo "github.com/vitistack/gslb-operator/internal/repositories/service"
@@ -27,7 +28,7 @@ type ServicesManager struct {
 	svcRepo           *svcRepo.ServiceRepo
 	mutex             sync.RWMutex
 	stop              sync.Once
-	pool              pool.WorkerPool
+	pool              *pool.WorkerPool
 	wg                *sync.WaitGroup // schedulers use this when scheduling services asynchronously
 	DNSUpdate         func(*service.Service, bool)
 	dryrun            bool
@@ -49,13 +50,21 @@ func NewManager(opts ...serviceManagerOption) *ServicesManager {
 		bslog.Warn("dry-run enabled")
 	}
 
+	pool := pool.NewWorkerPool(cfg.MinRunningWorkers, cfg.NonBlockingBufferSize)
+	pool.OnScaleUp = func() {
+		workerPoolSize.Inc()
+	}
+	pool.OnScaleDown = func() {
+		workerPoolSize.Dec()
+	}
+
 	return &ServicesManager{
 		scheduledServices: make(ScheduledServices),
 		schedulers:        make(map[timesutil.Duration]*scheduler.Scheduler),
 		serviceGroups:     make(map[string]*ServiceGroup),
 		svcRepo:           cfg.repo,
 		mutex:             sync.RWMutex{},
-		pool:              *pool.NewWorkerPool(cfg.MinRunningWorkers, cfg.NonBlockingBufferSize),
+		pool:              pool,
 		stop:              sync.Once{},
 		wg:                &sync.WaitGroup{},
 		dryrun:            cfg.DryRun,
@@ -188,9 +197,10 @@ func (sm *ServicesManager) RemoveService(id string) error {
 	sm.mutex.RLock()
 	group := sm.serviceGroups[svc.MemberOf]
 	sm.mutex.RUnlock()
+
 	empty := group.RemoveService(svc.GetID()) // registered in group
 	if empty {
-		delete(sm.serviceGroups, svc.MemberOf)
+		sm.deleteGroup(svc.MemberOf)
 	}
 
 	sm.mutex.Lock()
@@ -239,9 +249,7 @@ func (sm *ServicesManager) updateService(old, new *service.Service) {
 		if ok {
 			oldGroup.Update() // notify potential changes to group
 		} else { // this will probably never run, but you never know in concurrency!
-			sm.mutex.Lock()
-			delete(sm.serviceGroups, oldMemberOf)
-			sm.mutex.Unlock()
+			sm.deleteGroup(oldMemberOf)
 		}
 	}
 
@@ -310,7 +318,7 @@ func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc 
 
 	}
 	if empty { // delete empty service group
-		delete(sm.serviceGroups, oldMemberOf)
+		sm.deleteGroup(oldMemberOf)
 	}
 	bslog.Debug(
 		"updated service group membership",
@@ -425,12 +433,22 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 }
 
 func (sm *ServicesManager) newServiceGroup(memberOf string) *ServiceGroup {
-	newGroup := NewEmptyServiceGroup()
+	newGroup := NewEmptyServiceGroup(memberOf)
 	newGroup.OnPromotion = func(event *PromotionEvent) {
 		sm.handlePromotion(event)
 	}
 	sm.serviceGroups[memberOf] = newGroup
+
+	serviceGroups.Inc()
 	return newGroup
+}
+
+// only called when we know it is safe to delete a group
+func (sm *ServicesManager) deleteGroup(memberOf string) {
+	sm.mutex.Lock()
+	delete(sm.serviceGroups, memberOf)
+	sm.mutex.Unlock()
+	serviceGroups.Dec()
 }
 
 // creates a new scheduler, and starts its loop
@@ -442,8 +460,8 @@ func (sm *ServicesManager) newScheduler(interval timesutil.Duration) *scheduler.
 	scheduler := scheduler.NewScheduler(time.Duration(interval), sm.wg)
 	sm.schedulers[interval] = scheduler
 
-	scheduler.OnTick = func(s *service.Service) {
-		err := sm.pool.Put(s)
+	scheduler.OnTick = func(svc *service.Service) {
+		err := sm.pool.Put(healthcheck.NewJob(svc))
 		if errors.Is(err, pool.ErrPutOnClosedPool) {
 			bslog.Error("failed to schedule health check", slog.String("reason", err.Error()))
 		}
@@ -477,6 +495,7 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 	if newScheduler == nil {
 		newScheduler = sm.newScheduler(newInterval)
 	}
+
 	newScheduler.ScheduleService(svc)
 	bslog.Debug("sucessfully moved service to new interval",
 		slog.String("oldInterval", oldInterval.String()),

@@ -27,6 +27,9 @@ const (
 	AUTH            = ROOT + "auth"
 	AUTH_LOGIN      = AUTH + "/login"
 	POST_AUTH_LOGIN = http.MethodPost + " " + AUTH_LOGIN
+
+	METRICS     = ROOT + "metrics"
+	GET_METRICS = http.MethodGet + " " + METRICS
 )
 
 const (

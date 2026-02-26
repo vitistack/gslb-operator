@@ -297,7 +297,7 @@ func (s *Service) LogValue() slog.Value {
 
 // satisfies the stringer interface to allow passing s for %v in formatted strings
 func (s *Service) String() string {
-	return fmt.Sprintf("id:%s, memberOf: %s, fqdn: %s, datacenter: %s, ip: %s", s.id, s.MemberOf, s.Fqdn, s.Datacenter, s.GetIP())
+	return fmt.Sprintf("%s:%s:%s:%s:%s", s.id, s.MemberOf, s.Fqdn, s.Datacenter, s.GetIP())
 }
 
 func (s *Service) GSLBService() *model.GSLBService {

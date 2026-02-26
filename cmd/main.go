@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/failover"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
@@ -116,6 +117,9 @@ func main() {
 	api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),
 	)(spoofsApiService.DeleteOverride))
+
+	// metrics
+	api.Handle(routes.METRICS, promhttp.Handler())
 
 	server := http.Server{
 		Addr:    cfg.API().Port(),
