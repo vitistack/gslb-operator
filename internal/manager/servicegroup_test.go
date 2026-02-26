@@ -47,7 +47,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestServiceGroup_RegisterService(t *testing.T) {
-	group := NewEmptyServiceGroup()
+	group := NewEmptyServiceGroup("test")
 	group.OnPromotion = func(pe *PromotionEvent) {
 		log.Println("got promotion")
 		if pe != nil {
@@ -75,7 +75,7 @@ func TestServiceGroup_RegisterService(t *testing.T) {
 }
 
 func TestServiceGroup_OnServiceHealthChange(t *testing.T) {
-	group := NewEmptyServiceGroup()
+	group := NewEmptyServiceGroup("test")
 
 	group.RegisterService(active)
 	group.OnPromotion = func(pe *PromotionEvent) {
@@ -180,7 +180,7 @@ func TestServiceGroup_memberExists(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sg := NewEmptyServiceGroup()
+			sg := NewEmptyServiceGroup("test")
 			if tt.want {
 				sg.RegisterService(tt.member)
 			}
