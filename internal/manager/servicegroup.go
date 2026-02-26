@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"github.com/vitistack/gslb-operator/internal/service"
-	"github.com/vitistack/gslb-operator/internal/utils"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/failover"
 )
@@ -222,18 +221,11 @@ func (sg *ServiceGroup) RemoveService(id string) bool {
 	if idx != -1 {
 		sg.mu.Lock()
 		sg.Members = append(members[:idx], members[idx+1:]...)
+		sg.mu.Unlock()
 		sg.Update()
-		serviceGroupMembers.WithLabelValues().Dec()
+		serviceGroupMembers.WithLabelValues(sg.Name).Dec()
 	}
-	for idx, member := range members {
-		if member.GetID() == id {
-			sg.mu.Lock()
-			sg.Members = utils.RemoveIndexFromSlice(sg.Members, idx)
-			sg.mu.Unlock()
-			sg.Update()
-			break
-		}
-	}
+
 	return len(sg.Members) == 0
 }
 
