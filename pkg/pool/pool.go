@@ -81,8 +81,12 @@ func (wp *WorkerPool) Put(job Job) error {
 }
 
 func (wp *WorkerPool) scale() {
+	wp.lock.Lock()
 	if wp.jobs.Blocked() {
+		wp.lock.Unlock()
 		wp.newWorker()
+	} else {
+		wp.lock.Unlock()
 	}
 }
 
@@ -106,13 +110,13 @@ func (wp *WorkerPool) ScaleTo(targetWorkers uint) {
 
 func (wp *WorkerPool) newWorker() {
 	wp.lock.Lock()
-	defer wp.lock.Unlock()
 
 	wp.numRunningWorkers++
 	id := uuid.New().ID()
 
 	wp.poolWg.Add(1)
 	go wp.worker(id)
+	wp.lock.Unlock()
 
 	if wp.OnScaleUp != nil {
 		wp.OnScaleUp()

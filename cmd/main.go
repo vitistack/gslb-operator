@@ -56,7 +56,7 @@ func main() {
 	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
 	mgr := manager.NewManager(
 		manager.WithMinRunningWorkers(100),
-		manager.WithNonBlockingBufferSize(110),
+		manager.WithNonBlockingBufferSize(50),
 		manager.WithServiceRepository(svcRepo),
 		manager.WithDryRun(true),
 	)
@@ -165,7 +165,7 @@ func main() {
 }
 
 func getRandomGSLBConfig() []model.GSLBConfig {
-	configs := make([]model.GSLBConfig, 0, 500)
+	configs := make([]model.GSLBConfig, 0, 1000)
 
 	cfg := model.GSLBConfig{
 		Fqdn:             "test.example.com",

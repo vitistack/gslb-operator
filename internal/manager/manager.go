@@ -37,7 +37,7 @@ type ServicesManager struct {
 func NewManager(opts ...serviceManagerOption) *ServicesManager {
 	cfg := managerConfig{
 		MinRunningWorkers:     100,
-		NonBlockingBufferSize: 110,
+		NonBlockingBufferSize: 100,
 		DryRun:                false,
 		repo:                  svcRepo.NewServiceRepo(memory.NewStore[model.GSLBServiceGroup]()),
 	}
@@ -52,9 +52,11 @@ func NewManager(opts ...serviceManagerOption) *ServicesManager {
 
 	pool := pool.NewWorkerPool(cfg.MinRunningWorkers, cfg.NonBlockingBufferSize)
 	pool.OnScaleUp = func() {
+		bslog.Debug("worker-pool on scale up", slog.Int("numWorkers", int(pool.NumWorkers())))
 		workerPoolSize.Inc()
 	}
 	pool.OnScaleDown = func() {
+		bslog.Debug("worker-pool on scale down", slog.Int("numWorkers", int(pool.NumWorkers())))
 		workerPoolSize.Dec()
 	}
 
