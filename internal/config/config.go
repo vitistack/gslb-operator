@@ -99,6 +99,7 @@ type GSLB struct {
 	NAMESERVER   string `env:"GSLB_NAMESERVER" flag:"gslb-nameserver"`
 	POLLINTERVAL string `env:"GSLB_POLL_INTERVAL" flag:"poll-interval"`
 	UPDATERHOST  string `env:"GSLB_UPDATER_HOST" flag:"updater-host"`
+	SERVERS      string `env:"GSLB_DNSDIST_SERVERS_FILE"`
 }
 
 func (g *GSLB) Zone() string {
@@ -120,6 +121,10 @@ func (g *GSLB) PollInterval() (timesutil.Duration, error) {
 
 func (g *GSLB) UpdaterHost() string {
 	return g.UPDATERHOST
+}
+
+func (g *GSLB) Servers() string {
+	return g.SERVERS
 }
 
 type JWT struct {
