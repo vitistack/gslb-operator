@@ -14,13 +14,12 @@ import (
 	"github.com/vitistack/gslb-operator/internal/api/handlers/failover"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
-	"github.com/vitistack/gslb-operator/internal/checks"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
+	"github.com/vitistack/gslb-operator/internal/dns/update"
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/service"
-	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/auth"
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
@@ -58,13 +57,14 @@ func main() {
 		manager.WithMinRunningWorkers(100),
 		manager.WithNonBlockingBufferSize(50),
 		manager.WithServiceRepository(svcRepo),
-		manager.WithDryRun(true),
+		//manager.WithDryRun(true),
 	)
 
-	updater, err := dns.NewUpdater()
+	updater, err := update.NewDNSDISTUpdater(serviceFileStore)
 	if err != nil {
 		bslog.Fatal("unable to create updater", slog.String("error", err.Error()))
 	}
+
 	dnsHandler := dns.NewHandler(
 		zoneFetcher,
 		mgr,
@@ -72,15 +72,17 @@ func main() {
 	)
 
 	background := context.Background()
-	dnsHandler.Start(context.WithCancel(background))
+	ctx, cancel := context.WithCancel(background)
+	dnsHandler.Start(ctx, cancel)
+	updater.Synchronize(ctx)
 
-	configs := getRandomGSLBConfig()
-	for _, cfg := range configs {
-		_, err := mgr.RegisterService(cfg)
-		if err != nil {
-			bslog.Fatal("could not create service", slog.String("reason", err.Error()))
-		}
-	}
+	//configs := getRandomGSLBConfig()
+	//for _, cfg := range configs {
+	//	_, err := mgr.RegisterService(cfg)
+	//	if err != nil {
+	//		bslog.Fatal("could not create service", slog.String("reason", err.Error()))
+	//	}
+	//}
 
 	api := http.NewServeMux()
 
@@ -164,27 +166,27 @@ func main() {
 	}
 }
 
-func getRandomGSLBConfig() []model.GSLBConfig {
-	configs := make([]model.GSLBConfig, 0, 1000)
-
-	cfg := model.GSLBConfig{
-		Fqdn:             "test.example.com",
-		Ip:               "10.10.0.1",
-		Port:             "80",
-		Datacenter:       "DC1",
-		Interval:         timesutil.FromDuration(time.Second * 5),
-		Priority:         1,
-		FailureThreshold: 3,
-		CheckType:        checks.TCP_FULL,
-	}
-
-	for idx := range cap(configs) {
-
-		cfg.ServiceID = fmt.Sprintf("%d", idx)
-		cfg.MemberOf = fmt.Sprintf("%s.%s", cfg.ServiceID, cfg.Fqdn)
-
-		configs = append(configs, cfg)
-	}
-
-	return configs
-}
+//func getRandomGSLBConfig() []model.GSLBConfig {
+//	configs := make([]model.GSLBConfig, 0, 500)
+//
+//	cfg := model.GSLBConfig{
+//		Fqdn:             "test.example.com",
+//		Ip:               "10.10.0.1",
+//		Port:             "80",
+//		Datacenter:       "DC1",
+//		Interval:         timesutil.FromDuration(time.Second * 5),
+//		Priority:         1,
+//		FailureThreshold: 3,
+//		CheckType:        checks.TCP_FULL,
+//	}
+//
+//	for idx := range cap(configs) {
+//
+//		cfg.ServiceID = fmt.Sprintf("%d", idx)
+//		cfg.MemberOf = fmt.Sprintf("%s.%s", cfg.ServiceID, cfg.Fqdn)
+//
+//		configs = append(configs, cfg)
+//	}
+//
+//	return configs
+//}

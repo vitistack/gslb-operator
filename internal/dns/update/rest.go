@@ -1,4 +1,6 @@
-package dns
+package update
+
+// sends HTTP request to update dns
 
 import (
 	"fmt"
@@ -14,16 +16,16 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/rest/request/client"
 )
 
-type updaterOption func(u *Updater)
+type updaterOption func(u *RESTUpdater)
 
-type Updater struct {
+type RESTUpdater struct {
 	Server  string
 	client  client.HTTPClient
 	builder *request.Builder
 	mu      *sync.Mutex
 }
 
-func NewUpdater(opts ...updaterOption) (*Updater, error) {
+func NewUpdater(opts ...updaterOption) (*RESTUpdater, error) {
 	c, err := client.NewClient(
 		time.Second*5,
 		client.WithRetry(3),
@@ -34,7 +36,7 @@ func NewUpdater(opts ...updaterOption) (*Updater, error) {
 		return nil, fmt.Errorf("unable to create http client: %s", err.Error())
 	}
 
-	u := &Updater{
+	u := &RESTUpdater{
 		Server: config.GetInstance().GSLB().UpdaterHost(),
 		client: *c,
 		mu:     &sync.Mutex{},
@@ -49,18 +51,18 @@ func NewUpdater(opts ...updaterOption) (*Updater, error) {
 }
 
 func UpdaterWithServer(server string) updaterOption {
-	return func(u *Updater) {
+	return func(u *RESTUpdater) {
 		u.Server = server
 	}
 }
 
 func UpdaterWithClient(client *client.HTTPClient) updaterOption {
-	return func(u *Updater) {
+	return func(u *RESTUpdater) {
 		u.client = *client
 	}
 }
 
-func (u *Updater) ServiceDown(svc *service.Service) error {
+func (u *RESTUpdater) ServiceDown(svc *service.Service) error {
 	token, err := jwt.GetInstance().GetServiceToken()
 	if err != nil {
 		return fmt.Errorf("could not fetch service token: %w", err)
@@ -86,7 +88,7 @@ func (u *Updater) ServiceDown(svc *service.Service) error {
 	return nil
 }
 
-func (u *Updater) ServiceUp(svc *service.Service) error {
+func (u *RESTUpdater) ServiceUp(svc *service.Service) error {
 	token, err := jwt.GetInstance().GetServiceToken()
 	if err != nil {
 		return fmt.Errorf("could not fetch service token: %w", err)
