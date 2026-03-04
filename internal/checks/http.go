@@ -8,6 +8,7 @@ import (
 )
 
 type HTTPChecker struct {
+	*RoundTripper
 	url       string
 	client    *http.Client
 	validator *LuaValidator
@@ -25,7 +26,8 @@ func NewHTTPChecker(url string, timeout time.Duration, validationScripts ...stri
 	}
 
 	return &HTTPChecker{
-		url: url,
+		RoundTripper: NewRoundtripper(),
+		url:          url,
 		client: &http.Client{
 			Timeout:   timeout,
 			Transport: transport,
@@ -35,7 +37,9 @@ func NewHTTPChecker(url string, timeout time.Duration, validationScripts ...stri
 }
 
 func (c *HTTPChecker) Check() error {
+	c.startRecording()
 	resp, err := c.client.Get(c.url)
+	c.endRecording()
 	if err != nil {
 		return err
 	}
@@ -50,4 +54,8 @@ func (c *HTTPChecker) Check() error {
 
 	resp.Body.Close()
 	return nil
+}
+
+func (c *HTTPChecker) Roundtrip() time.Duration {
+	return c.AverageRoundtripTime()
 }

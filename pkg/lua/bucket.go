@@ -28,7 +28,7 @@ func (pl *LuaBucket) get() *glua.LState {
 
 func (pl *LuaBucket) new() *glua.LState {
 	L := glua.NewState(glua.Options{
-		SkipOpenLibs: true,
+		SkipOpenLibs:        true,
 		IncludeGoStackTrace: true,
 		MinimizeStackMemory: true,
 	})

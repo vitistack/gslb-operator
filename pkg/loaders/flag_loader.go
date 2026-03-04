@@ -1,7 +1,6 @@
 package loaders
 
-
-type FlagLoader struct {}
+type FlagLoader struct{}
 
 func NewFlagLoader() *FileLoader {
 	return &FileLoader{}

@@ -2,11 +2,13 @@ package scheduler
 
 import (
 	"container/heap"
+	"log/slog"
 	"math/rand/v2"
 	"sync"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/service"
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 )
 
 const OFFSETS_PER_SECOND = 2
@@ -39,7 +41,7 @@ type Scheduler struct {
 	// random jitter to spread out scheduled service on interval and sub-tick
 	jitterRange time.Duration
 
-	stop chan struct{}
+	stop chan struct{} // signal stop
 	wg   *sync.WaitGroup
 	mu   sync.Mutex
 
@@ -93,12 +95,15 @@ func (s *Scheduler) ScheduleService(svc *service.Service) {
 func (s *Scheduler) RemoveService(svc *service.Service) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	idx := s.heap.GetServiceIndex(svc)
+
+	idx := s.heap.GetServiceIndex(svc.GetID())
 	if idx == -1 {
 		return s.heap.Len() == 0
-	}
-	if idx == 0 {
+	} else if idx == 0 {
 		s.heap[0].shouldReSchedule = false
+		if len(s.heap) == 1 {
+			return true
+		}
 	} else {
 		heap.Remove(&s.heap, idx)
 	}
@@ -140,27 +145,52 @@ func (s *Scheduler) loop() {
 			s.mu.Lock()
 			s.isRunning = false
 			s.mu.Unlock()
+			bslog.Debug("scheduler closed", slog.String("interval", s.interval.String()))
 		}()
 
 		for {
+			select {
+			case <-s.stop: // check stop
+				bslog.Debug("got stop, exiting scheduler...")
+				return
+			default:
+			}
+
 			s.mu.Lock()
 			if s.heap.Len() == 0 { // no need to infinitly run on an empty queue
 				s.mu.Unlock()
-				break
+				return
 			}
 
 			next := s.heap.Peek()
 			s.mu.Unlock()
 			if next.nextCheckTime.Before(time.Now()) { // check time already past, do action immediately and reschedule
 				s.OnTick(next.service)
+
+				select {
+				case <-s.stop: // check stop
+					bslog.Debug("got stop, exiting scheduler...")
+					return
+				default:
+				}
+
 				s.reSchedule()
 			} else {
 				timeUntil := time.Until(next.nextCheckTime)
 				select {
 				case <-s.stop:
+					bslog.Debug("got stop, exiting scheduler...")
 					return
 				case <-time.After(timeUntil):
 					s.OnTick(next.service)
+
+					select {
+					case <-s.stop: // check stop
+						bslog.Debug("got stop, exiting scheduler...")
+						return
+					default:
+					}
+
 					s.reSchedule()
 				}
 			}

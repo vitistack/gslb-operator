@@ -13,8 +13,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strconv"
-	"strings"
 	"time"
 
 	"golang.org/x/crypto/nacl/secretbox"
@@ -24,8 +22,6 @@ const (
 	KEY_LEN   = 32
 	NONCE_LEN = 24
 )
-
-type clientOption func(c *Client) error
 
 type Client struct {
 	conn    net.Conn //raw connection to configured Host and Port
@@ -70,57 +66,6 @@ func NewClient(key string, options ...clientOption) (*Client, error) {
 	}
 
 	return client, nil
-}
-
-func WithHost(host string) clientOption {
-	return func(c *Client) error {
-		ip := net.ParseIP(host)
-		if ip == nil {
-			return ErrCouldNotParseAddr
-		}
-		c.host = ip
-		return nil
-	}
-}
-
-func WithPort(port string) clientOption {
-	return func(c *Client) error {
-		port = strings.TrimSpace(port)
-		if port == "" {
-			return ErrCouldNotParseAddr
-		}
-		// Ensure all characters are digits
-		for _, r := range port {
-			if r < '0' || r > '9' {
-				return ErrCouldNotParseAddr
-			}
-		}
-
-		p, err := strconv.Atoi(port)
-		if err != nil || p < 1 || p > 65535 {
-			return ErrCouldNotParseAddr
-		}
-
-		c.port = port
-		return nil
-	}
-}
-
-func WithTimeout(timeout time.Duration) clientOption {
-	return func(c *Client) error {
-		c.timeout = timeout
-		return nil
-	}
-}
-
-func WithNumRetriesOnCommandFailure(retries int) clientOption {
-	return func(c *Client) error {
-		if retries < 0 {
-			return ErrNegativeRetryCount
-		}
-		c.retries = retries
-		return nil
-	}
 }
 
 func (c *Client) generateClientNonce() error {
@@ -310,22 +255,20 @@ func incrementNonce(nonce *[NONCE_LEN]byte) {
 	binary.BigEndian.PutUint32(nonce[:4], value)
 }
 
-func (c *Client) AddDomainSpoof(domain string, ips []string) error {
-	// addAction(QNameRule('example.com'), SpoofAction({"192.168.1.0","192.168.1.2"}), {name="example.com"})
-	cmd := fmt.Sprintf("addAction(QNameRule('%v'), SpoofAction({", domain)
-
-	for _, ip := range ips {
-		cmd += fmt.Sprintf("'%v', ", ip)
-	}
-	idx := strings.LastIndex(cmd, ",")
-	if idx == -1 {
-		return fmt.Errorf("no trailing comma found in command: %s", cmd)
-	}
-	cmd = fmt.Sprintf("%v {name='%v'})", cmd[:idx]+"}),", domain)
-
+func (c *Client) AddDomainSpoof(ruleName, domain, ip string) error {
+	// addAction(QNameRule('example.com'), SpoofAction({"192.168.1.0"}), {name="example.com:DC"})
+	cmd := fmt.Sprintf("addAction(QNameRule('%v'), SpoofAction({'%s'}, {ttl=3600}), {name='%s'})", domain, ip, ruleName)
 	return Must(c.command(cmd))
 }
 
-func (c *Client) RmDomainSpoof(domain string) error {
-	return Must(c.command(fmt.Sprintf("rmRule(%s)", domain)))
+func (c *Client) RmRuleWithName(ruleName string) error {
+	return Must(c.command(fmt.Sprintf("rmRule('%s')", ruleName)))
+}
+
+func (c *Client) RmRuleWithIndex(idx int) error {
+	return Must(c.command(fmt.Sprintf("rmRule('%d')", idx)))
+}
+
+func (c *Client) ShowRules() (string, error) {
+	return c.command("showRules()")
 }

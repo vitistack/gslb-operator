@@ -10,23 +10,34 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/failover"
-	spoofs "github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
+	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
+	"github.com/vitistack/gslb-operator/internal/dns/update"
 	"github.com/vitistack/gslb-operator/internal/manager"
-	spoofsrepo "github.com/vitistack/gslb-operator/internal/repositories/spoof"
+	"github.com/vitistack/gslb-operator/internal/model"
+	"github.com/vitistack/gslb-operator/internal/repositories/service"
 	"github.com/vitistack/gslb-operator/pkg/auth"
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/lua"
-	apiContractSpoof "github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence/store/file"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 )
 
+var ( // injected at buildtime
+	version   string
+	buildDate string
+)
+
 func main() {
+	bslog.Info("Running GSLB - Operator",
+		slog.String("version", version),
+		slog.String("build-date", buildDate),
+	)
 	cfg := config.GetInstance()
 
 	// initialize lua execution environment
@@ -34,25 +45,26 @@ func main() {
 		bslog.Fatal("could not load lua configuration", slog.Any("reason", err))
 	}
 
-	// creating dns - handler objects
-	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
-	mgr := manager.NewManager(
-		manager.WithMinRunningWorkers(100),
-		manager.WithNonBlockingBufferSize(110),
-	)
-
-	spoofsFileStore, err := file.NewStore[apiContractSpoof.Spoof]("store.json")
+	serviceFileStore, err := file.NewStore[model.GSLBServiceGroup]("./data/store.json")
 	if err != nil {
 		bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
 	}
+	svcRepo := service.NewServiceRepo(serviceFileStore)
 
-	spoofRepo := spoofsrepo.NewRepository(spoofsFileStore)
-	updater, err := dns.NewUpdater(
-		dns.UpdaterWithSpoofRepo(spoofRepo),
+	// creating dns - handler objects
+	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
+	mgr := manager.NewManager(
+		manager.WithMinRunningWorkers(80),
+		manager.WithNonBlockingBufferSize(50),
+		manager.WithServiceRepository(svcRepo),
+		//manager.WithDryRun(true),
 	)
+
+	updater, err := update.NewDNSDISTUpdater(serviceFileStore)
 	if err != nil {
 		bslog.Fatal("unable to create updater", slog.String("error", err.Error()))
 	}
+
 	dnsHandler := dns.NewHandler(
 		zoneFetcher,
 		mgr,
@@ -60,14 +72,24 @@ func main() {
 	)
 
 	background := context.Background()
-	dnsHandler.Start(context.WithCancel(background))
+	ctx, cancel := context.WithCancel(background)
+	dnsHandler.Start(ctx, cancel)
+	updater.Synchronize(ctx)
+
+	//configs := getRandomGSLBConfig()
+	//for _, cfg := range configs {
+	//	_, err := mgr.RegisterService(cfg)
+	//	if err != nil {
+	//		bslog.Fatal("could not create service", slog.String("reason", err.Error()))
+	//	}
+	//}
 
 	api := http.NewServeMux()
 
 	// routes handlers
-	spoofsApiService := spoofs.NewSpoofsService(spoofRepo, mgr)
+	spoofsApiService := spoofs.NewSpoofsService(serviceFileStore, mgr)
 
-	failoverApiService := failover.NewFailoverService(spoofRepo, mgr)
+	failoverApiService := failover.NewFailoverService(mgr)
 
 	// initializing the service jwt self signer
 	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
@@ -109,6 +131,9 @@ func main() {
 		middleware.WithIncomingRequestLogging(slog.Default()),
 	)(spoofsApiService.DeleteOverride))
 
+	// metrics
+	api.Handle(routes.METRICS, promhttp.Handler())
+
 	server := http.Server{
 		Addr:    cfg.API().Port(),
 		Handler: api,
@@ -131,12 +156,37 @@ func main() {
 	case <-quit:
 		bslog.Info("gracefully shutting down...")
 	}
-	
-	shutdown, cancel := context.WithTimeout(background, time.Second*5)
+
+	shutdown, cancel := context.WithTimeout(background, time.Second*20)
 	defer cancel()
-	
+
 	dnsHandler.Stop(shutdown)
 	if err := server.Shutdown(shutdown); err != nil {
 		panic("error shutting down server: " + err.Error())
 	}
 }
+
+//func getRandomGSLBConfig() []model.GSLBConfig {
+//	configs := make([]model.GSLBConfig, 0, 500)
+//
+//	cfg := model.GSLBConfig{
+//		Fqdn:             "test.example.com",
+//		Ip:               "10.10.0.1",
+//		Port:             "80",
+//		Datacenter:       "DC1",
+//		Interval:         timesutil.FromDuration(time.Second * 5),
+//		Priority:         1,
+//		FailureThreshold: 3,
+//		CheckType:        checks.TCP_FULL,
+//	}
+//
+//	for idx := range cap(configs) {
+//
+//		cfg.ServiceID = fmt.Sprintf("%d", idx)
+//		cfg.MemberOf = fmt.Sprintf("%s.%s", cfg.ServiceID, cfg.Fqdn)
+//
+//		configs = append(configs, cfg)
+//	}
+//
+//	return configs
+//}

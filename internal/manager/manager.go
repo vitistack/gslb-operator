@@ -7,12 +7,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vitistack/gslb-operator/internal/manager/healthcheck"
 	"github.com/vitistack/gslb-operator/internal/manager/scheduler"
 	"github.com/vitistack/gslb-operator/internal/model"
+	svcRepo "github.com/vitistack/gslb-operator/internal/repositories/service"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/failover"
+	"github.com/vitistack/gslb-operator/pkg/persistence/store/memory"
 	"github.com/vitistack/gslb-operator/pkg/pool"
 )
 
@@ -22,9 +25,10 @@ type ServicesManager struct {
 	scheduledServices ScheduledServices                           // services that are scheduled on an interval
 	schedulers        map[timesutil.Duration]*scheduler.Scheduler // schedulers for health-checks
 	serviceGroups     map[string]*ServiceGroup
+	svcRepo           *svcRepo.ServiceRepo
 	mutex             sync.RWMutex
 	stop              sync.Once
-	pool              pool.WorkerPool
+	pool              *pool.WorkerPool
 	wg                *sync.WaitGroup // schedulers use this when scheduling services asynchronously
 	DNSUpdate         func(*service.Service, bool)
 	dryrun            bool
@@ -33,8 +37,9 @@ type ServicesManager struct {
 func NewManager(opts ...serviceManagerOption) *ServicesManager {
 	cfg := managerConfig{
 		MinRunningWorkers:     100,
-		NonBlockingBufferSize: 110,
+		NonBlockingBufferSize: 100,
 		DryRun:                false,
+		repo:                  svcRepo.NewServiceRepo(memory.NewStore[model.GSLBServiceGroup]()),
 	}
 
 	for _, opt := range opts {
@@ -45,12 +50,23 @@ func NewManager(opts ...serviceManagerOption) *ServicesManager {
 		bslog.Warn("dry-run enabled")
 	}
 
+	pool := pool.NewWorkerPool(cfg.MinRunningWorkers, cfg.NonBlockingBufferSize)
+	pool.OnScaleUp = func() {
+		bslog.Debug("worker-pool on scale up", slog.Int("numWorkers", int(pool.NumWorkers())))
+		workerPoolSize.Inc()
+	}
+	pool.OnScaleDown = func() {
+		bslog.Debug("worker-pool on scale down", slog.Int("numWorkers", int(pool.NumWorkers())))
+		workerPoolSize.Dec()
+	}
+
 	return &ServicesManager{
 		scheduledServices: make(ScheduledServices),
 		schedulers:        make(map[timesutil.Duration]*scheduler.Scheduler),
 		serviceGroups:     make(map[string]*ServiceGroup),
+		svcRepo:           cfg.repo,
 		mutex:             sync.RWMutex{},
-		pool:              *pool.NewWorkerPool(cfg.MinRunningWorkers, cfg.NonBlockingBufferSize),
+		pool:              pool,
 		stop:              sync.Once{},
 		wg:                &sync.WaitGroup{},
 		dryrun:            cfg.DryRun,
@@ -64,20 +80,57 @@ func (sm *ServicesManager) Start() {
 }
 
 func (sm *ServicesManager) Stop() {
-	sm.pool.Stop()
 	sm.stop.Do(func() {
-		for interval, scheduler := range sm.schedulers {
+		for _, scheduler := range sm.schedulers {
 			scheduler.Stop()
-			bslog.Debug("scheduler closed", slog.String("interval", interval.String()))
 		}
-
+		bslog.Debug("waiting for schedulers to stop")
 		sm.wg.Wait()
+
+		bslog.Debug("schedulers stopped - closing pool")
+		sm.pool.Stop()
+		err := sm.OnShutdown()
+		if err != nil {
+			bslog.Error("error while performing shutdown tasks", slog.String("error", err.Error()))
+		}
 		bslog.Debug("service manager closed")
 	})
 }
 
+func (sm *ServicesManager) OnShutdown() error {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+	bslog.Debug("executing manager.OnShutdown()")
+
+	for memberOf, group := range sm.serviceGroups {
+		active := group.GetActive()
+
+		for _, svc := range group.Members {
+			gslbService := svc.GSLBService()
+
+			gslbService.IsActive = (active != nil && active.GetID() == svc.GetID())
+			override, err := sm.svcRepo.HasOverride(memberOf)
+			if err != nil {
+				return fmt.Errorf("unable to check whether service group has active override: member-of: %s: %w", memberOf, err)
+			}
+			gslbService.HasOverride = override
+
+			err = sm.svcRepo.Update(gslbService)
+			if err != nil {
+				return fmt.Errorf("failed to persist service state: service: %v: %w", svc, err)
+			}
+		}
+	}
+
+	return nil
+}
+
 func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*service.Service, error) {
-	newService, err := service.NewServiceFromGSLBConfig(serviceCfg, sm.dryrun) // create the service object
+	opts := sm.BuildServiceOptions(serviceCfg)
+	newService, err := service.NewServiceFromGSLBConfig( // create the service object
+		serviceCfg,
+		opts...,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to register service: %s", err.Error())
 	}
@@ -94,9 +147,22 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
+	err = sm.svcRepo.Create(newService.GSLBService())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create new service: %w", err)
+	}
+
 	// set healthchange callback action
 	newService.SetHealthChangeCallback(func(healthy bool) {
 		bslog.Debug("received health-change", slog.Any("service", newService), slog.Bool("healthy", healthy))
+		err := sm.svcRepo.Update(newService.GSLBService())
+		if err != nil {
+			bslog.Error(
+				"failed to update service health on health-change",
+				slog.String("reason", err.Error()),
+				slog.Any("service", newService),
+			)
+		}
 		sm.serviceGroups[newService.MemberOf].OnServiceHealthChange(newService, healthy)
 	})
 
@@ -134,16 +200,22 @@ func (sm *ServicesManager) RemoveService(id string) error {
 	sm.mutex.RLock()
 	group := sm.serviceGroups[svc.MemberOf]
 	sm.mutex.RUnlock()
+
 	empty := group.RemoveService(svc.GetID()) // registered in group
 	if empty {
-		delete(sm.serviceGroups, svc.MemberOf)
+		sm.deleteGroup(svc.MemberOf)
 	}
 
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
-	sm.scheduledServices.Delete(id)
-	bslog.Debug("removed service", slog.Any("service", svc))
 
+	sm.scheduledServices.Delete(id)
+	err := sm.svcRepo.Delete(svc.MemberOf, svc.GetID())
+	if err != nil {
+		return fmt.Errorf("failed to delete service: %w", err)
+	}
+
+	bslog.Debug("removed service", slog.Any("service", svc))
 	return nil
 }
 
@@ -172,29 +244,7 @@ func (sm *ServicesManager) updateService(old, new *service.Service) {
 	sm.mutex.Unlock()
 
 	if oldMemberOf != newMemberOf {
-		sm.mutex.Lock()
-		newGroup, newOk := sm.serviceGroups[newMemberOf]
-		if !newOk {
-			newGroup = sm.newServiceGroup(newMemberOf)
-		}
-
-		oldGroup, oldOk := sm.serviceGroups[oldMemberOf]
-		sm.mutex.Unlock()
-
-		newGroup.RegisterService(old)
-		var empty bool
-		if oldOk {
-			empty = oldGroup.RemoveService(old.GetID())
-
-		}
-		if empty { // delete empty service group
-			delete(sm.serviceGroups, oldMemberOf)
-		}
-		bslog.Debug(
-			"updated service group membership",
-			slog.String("oldGroup", oldMemberOf),
-			slog.String("newGroup", newMemberOf),
-		)
+		sm.memberOfChanged(oldMemberOf, newMemberOf, old)
 	} else {
 		sm.mutex.RLock()
 		oldGroup, ok := sm.serviceGroups[oldMemberOf]
@@ -202,14 +252,21 @@ func (sm *ServicesManager) updateService(old, new *service.Service) {
 		if ok {
 			oldGroup.Update() // notify potential changes to group
 		} else { // this will probably never run, but you never know in concurrency!
-			sm.mutex.Lock()
-			delete(sm.serviceGroups, oldMemberOf)
-			sm.mutex.Unlock()
+			sm.deleteGroup(oldMemberOf)
 		}
 	}
 
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
+
+	err := sm.svcRepo.Update(old.GSLBService())
+	if err != nil {
+		bslog.Error(
+			"failed to update service config persistently",
+			slog.String("reason", err.Error()),
+			slog.Any("service", old),
+		)
+	}
 
 	// important that this checked AFTER the service groups have ran their update
 	// this is because the group may trigger a promotion event that needs to be handled first
@@ -221,6 +278,56 @@ func (sm *ServicesManager) updateService(old, new *service.Service) {
 	}
 
 	bslog.Debug("updated service", slog.Any("service", old))
+}
+
+func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc *service.Service) {
+	sm.mutex.Lock()
+
+	err := sm.svcRepo.Delete(oldMemberOf, svc.GetID())
+	if err != nil {
+		bslog.Error(
+			"failed to remove service from old service group",
+			slog.String("reason", err.Error()),
+			slog.String("oldMemberOf", oldMemberOf),
+			slog.Any("service", svc),
+		)
+		return
+	}
+
+	err = sm.svcRepo.Create(svc.GSLBService())
+	if err != nil {
+		bslog.Error(
+			"failed to add service to new group",
+			slog.String("reason", err.Error()),
+			slog.String("newMemberOf", newMemberOf),
+			slog.Any("service", svc),
+		)
+		return
+	}
+
+	newGroup, newOk := sm.serviceGroups[newMemberOf]
+	if !newOk {
+		newGroup = sm.newServiceGroup(newMemberOf)
+	}
+
+	oldGroup, oldOk := sm.serviceGroups[oldMemberOf]
+	sm.mutex.Unlock()
+
+	newGroup.RegisterService(svc)
+
+	var empty bool
+	if oldOk {
+		empty = oldGroup.RemoveService(svc.GetID())
+
+	}
+	if empty { // delete empty service group
+		sm.deleteGroup(oldMemberOf)
+	}
+	bslog.Debug(
+		"updated service group membership",
+		slog.String("oldGroup", oldMemberOf),
+		slog.String("newGroup", newMemberOf),
+	)
 }
 
 // re-schedules the relevant services in the PromotionEvent
@@ -263,6 +370,22 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	if event.OldActive != nil && event.NewActive != nil { // just swap, and do dns updates
 		demotedInterval = event.NewActive.ScheduledInterval
 
+		oldActiveGSLBService := event.OldActive.GSLBService()
+		oldActiveGSLBService.IsActive = false
+		err := sm.svcRepo.Update(oldActiveGSLBService)
+		if err != nil {
+			bslog.Error("failed to remove active flag from service", slog.Any("oldActive", event.OldActive))
+			return
+		}
+
+		newActiveGSLBService := event.NewActive.GSLBService()
+		newActiveGSLBService.IsActive = true
+		err = sm.svcRepo.Update(newActiveGSLBService)
+		if err != nil {
+			bslog.Error("failed to update active flag on service", slog.Any("newActive", event.NewActive))
+			return
+		}
+
 		bslog.Warn("demoting service",
 			slog.Any("oldActive", event.OldActive),
 			slog.Group("intervalChange",
@@ -270,6 +393,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 				slog.String("to", demotedInterval.String()),
 			))
 		sm.moveServiceToInterval(event.OldActive, demotedInterval)
+
 		sm.DNSUpdate(event.OldActive, false)
 
 		bslog.Warn("promoting service",
@@ -284,13 +408,30 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	}
 
 	if event.NewActive != nil { // first service to come up when all services are down
+		newActiveGSLBService := event.NewActive.GSLBService()
+		newActiveGSLBService.IsActive = true
+		err := sm.svcRepo.Update(newActiveGSLBService)
+		if err != nil {
+			bslog.Error("failed to update active flag on service", slog.Any("newActive", event.NewActive))
+			return
+		}
 		bslog.Info("new active service", slog.Any("service", event.NewActive))
 		sm.moveServiceToInterval(event.NewActive, baseInterval)
+		if sm.DNSUpdate == nil {
+			bslog.Fatal("DNSUpdate is nil!!!!")
+		}
 		sm.DNSUpdate(event.NewActive, true)
 		return
 	}
 
 	if event.OldActive != nil { // no service to take over
+		oldActiveGSLBService := event.OldActive.GSLBService()
+		oldActiveGSLBService.IsActive = false
+		err := sm.svcRepo.Update(oldActiveGSLBService)
+		if err != nil {
+			bslog.Error("failed to remove active flag from service", slog.Any("oldActive", event.OldActive))
+			return
+		}
 		bslog.Warn("no available sites", slog.String("serviceGroup", event.Service))
 		sm.DNSUpdate(event.OldActive, false)
 		return
@@ -298,12 +439,22 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 }
 
 func (sm *ServicesManager) newServiceGroup(memberOf string) *ServiceGroup {
-	newGroup := NewEmptyServiceGroup()
+	newGroup := NewEmptyServiceGroup(memberOf)
 	newGroup.OnPromotion = func(event *PromotionEvent) {
 		sm.handlePromotion(event)
 	}
 	sm.serviceGroups[memberOf] = newGroup
+
+	serviceGroups.Inc()
 	return newGroup
+}
+
+// only called when we know it is safe to delete a group
+func (sm *ServicesManager) deleteGroup(memberOf string) {
+	sm.mutex.Lock()
+	delete(sm.serviceGroups, memberOf)
+	sm.mutex.Unlock()
+	serviceGroups.Dec()
 }
 
 // creates a new scheduler, and starts its loop
@@ -315,8 +466,8 @@ func (sm *ServicesManager) newScheduler(interval timesutil.Duration) *scheduler.
 	scheduler := scheduler.NewScheduler(time.Duration(interval), sm.wg)
 	sm.schedulers[interval] = scheduler
 
-	scheduler.OnTick = func(s *service.Service) {
-		err := sm.pool.Put(s)
+	scheduler.OnTick = func(svc *service.Service) {
+		err := sm.pool.Put(healthcheck.NewJob(svc))
 		if errors.Is(err, pool.ErrPutOnClosedPool) {
 			bslog.Error("failed to schedule health check", slog.String("reason", err.Error()))
 		}
@@ -350,6 +501,7 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 	if newScheduler == nil {
 		newScheduler = sm.newScheduler(newInterval)
 	}
+
 	newScheduler.ScheduleService(svc)
 	bslog.Debug("sucessfully moved service to new interval",
 		slog.String("oldInterval", oldInterval.String()),
@@ -357,7 +509,7 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 		slog.Any("service", svc))
 }
 
-func (sm *ServicesManager) GetActiveForFQDN(memberOf string) *service.Service {
+func (sm *ServicesManager) GetActiveForMemberOf(memberOf string) *service.Service {
 	sm.mutex.RLock()
 	defer sm.mutex.RUnlock()
 	if group, ok := sm.serviceGroups[memberOf]; ok {
@@ -378,4 +530,31 @@ func (sm *ServicesManager) Failover(fqdn string, failover failover.Failover) err
 	}
 
 	return nil
+}
+
+func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig) []service.ServiceOption {
+	opts := make([]service.ServiceOption, 0, 5)
+	opts = append(opts, service.WithDryRunChecks(sm.dryrun))
+
+	gslbService, err := sm.svcRepo.GetMemberInGroup(config.MemberOf, config.ServiceID)
+	if err != nil {
+		if errors.Is(err, svcRepo.ErrServiceInGroupNotFound) {
+			bslog.Debug("could not find member in group",
+				slog.String("group", config.MemberOf),
+				slog.String("member", config.ServiceID),
+			)
+		}
+		// max out the failure count
+		// means a long time before service will be considered healthy
+		opts = append(opts, service.WithFailureCount(config.FailureThreshold))
+
+		return opts
+	}
+
+	opts = append(opts, service.WithFailureCount(gslbService.FailureCount))
+	if gslbService.IsHealthy {
+		opts = append(opts, service.WithHealthy())
+	}
+
+	return opts
 }

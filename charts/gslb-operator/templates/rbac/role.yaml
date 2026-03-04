@@ -1,0 +1,9 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    {{- include "gslb-operator.labels" . | nindent 4 }}
+  name: gslb-operator-role
+rules: []
+{{- end }}

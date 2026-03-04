@@ -73,16 +73,11 @@ func (c *Config) JWT() *JWT {
 // Server configuration
 type Server struct {
 	ENV         string `env:"SRV_ENV" flag:"env"`
-	DC          string `env:"SRV_DATACENTER" flag:"datacenter"`
 	LUA_SANDBOX string `env:"SRV_LUA_SANDBOX" flag:"lua-sandbox"`
 }
 
 func (s *Server) Env() string {
 	return s.ENV
-}
-
-func (s *Server) Datacenter() string {
-	return s.DC
 }
 
 func (s *Server) LuaSandbox() string {
@@ -104,6 +99,7 @@ type GSLB struct {
 	NAMESERVER   string `env:"GSLB_NAMESERVER" flag:"gslb-nameserver"`
 	POLLINTERVAL string `env:"GSLB_POLL_INTERVAL" flag:"poll-interval"`
 	UPDATERHOST  string `env:"GSLB_UPDATER_HOST" flag:"updater-host"`
+	SERVERS      string `env:"GSLB_DNSDIST_SERVERS_FILE"`
 }
 
 func (g *GSLB) Zone() string {
@@ -127,6 +123,10 @@ func (g *GSLB) UpdaterHost() string {
 	return g.UPDATERHOST
 }
 
+func (g *GSLB) Servers() string {
+	return g.SERVERS
+}
+
 type JWT struct {
 	SECRET string `env:"JWT_SECRET"`
 	USER   string `env:"JWT_USER"`
@@ -141,9 +141,18 @@ func (jwt *JWT) User() string {
 }
 
 func newConfig() (*Config, error) {
+	fileLoader, err := loaders.NewFileLoader(
+		".env",
+		"./secrets",
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
 	loader := loaders.NewChainLoader(
 		loaders.NewEnvloader(),
-		loaders.NewFileLoader(".env"),
+		fileLoader,
 		loaders.NewFlagLoader(),
 	)
 
@@ -154,7 +163,9 @@ func newConfig() (*Config, error) {
 	apiCfg := API{
 		PORT: ":8080",
 	}
-	gslbCfg := GSLB{}
+	gslbCfg := GSLB{
+		POLLINTERVAL: "1m",
+	}
 	jwtCfg := JWT{}
 
 	configs := []any{

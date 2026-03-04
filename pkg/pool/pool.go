@@ -24,6 +24,10 @@ type WorkerPool struct {
 	poolWg            *sync.WaitGroup
 	lock              sync.Mutex
 	closed            *atomic.Bool
+
+	// configurable action to take on worker-pool scale
+	OnScaleUp   func()
+	OnScaleDown func()
 }
 
 func NewWorkerPool(minRunningWorkers, nonBlockingBufferSize uint) *WorkerPool {
@@ -77,8 +81,12 @@ func (wp *WorkerPool) Put(job Job) error {
 }
 
 func (wp *WorkerPool) scale() {
+	wp.lock.Lock()
 	if wp.jobs.Blocked() {
+		wp.lock.Unlock()
 		wp.newWorker()
+	} else {
+		wp.lock.Unlock()
 	}
 }
 
@@ -102,13 +110,17 @@ func (wp *WorkerPool) ScaleTo(targetWorkers uint) {
 
 func (wp *WorkerPool) newWorker() {
 	wp.lock.Lock()
-	defer wp.lock.Unlock()
 
 	wp.numRunningWorkers++
 	id := uuid.New().ID()
 
 	wp.poolWg.Add(1)
 	go wp.worker(id)
+	wp.lock.Unlock()
+
+	if wp.OnScaleUp != nil {
+		wp.OnScaleUp()
+	}
 }
 
 func (wp *WorkerPool) worker(id uint32) {
@@ -124,7 +136,7 @@ func (wp *WorkerPool) worker(id uint32) {
 			err := job.Execute()
 			if err != nil {
 				job.OnFailure(err)
-			}else {
+			} else {
 				job.OnSuccess()
 			}
 
@@ -140,6 +152,11 @@ func (wp *WorkerPool) worker(id uint32) {
 			if wp.numRunningWorkers > wp.minRunningWorkers {
 				wp.numRunningWorkers--
 				wp.lock.Unlock()
+
+				if wp.OnScaleDown != nil {
+					wp.OnScaleDown()
+				}
+
 				return
 			}
 			wp.lock.Unlock()

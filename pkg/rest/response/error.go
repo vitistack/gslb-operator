@@ -29,7 +29,7 @@ var (
 			Title: string(ErrInternalError),
 		},
 		ErrNotFound: {
-			Code: http.StatusNotFound,
+			Code:  http.StatusNotFound,
 			Title: string(ErrNotFound),
 		},
 	}

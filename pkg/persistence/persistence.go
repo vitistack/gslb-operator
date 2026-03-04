@@ -14,4 +14,5 @@ type Store[T any] interface {
 	Load(key string) (T, error)
 	LoadAll() ([]T, error)
 	Delete(key string) error
+	Close() error
 }

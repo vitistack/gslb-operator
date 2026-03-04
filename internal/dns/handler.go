@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"codeberg.org/miekg/dns"
+	"github.com/vitistack/gslb-operator/internal/dns/update"
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
@@ -18,14 +19,14 @@ import (
 type Handler struct {
 	fetcher       *ZoneFetcher // fetch GSLB config from dns
 	svcManager    *manager.ServicesManager
-	updater       *Updater
+	updater       update.Updater
 	knownServices map[string]struct{} // service.ID: makes it easier to look up using map, but dont need a real value!
 	stop          chan struct{}
 	cancel        func() // cancels context
 	wg            sync.WaitGroup
 }
 
-func NewHandler(fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater *Updater) *Handler {
+func NewHandler(fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater update.Updater) *Handler {
 	return &Handler{
 		fetcher:       fetcher,
 		svcManager:    mgr,
@@ -78,11 +79,17 @@ func (h *Handler) Stop(ctx context.Context) {
 }
 
 func (h *Handler) onServiceDown(svc *service.Service) {
-	h.updater.ServiceDown(svc)
+	err := h.updater.OnServiceDown(svc)
+	if err != nil {
+		bslog.Warn("error while updating service on service down", slog.String("error", err.Error()))
+	}
 }
 
 func (h *Handler) onServiceUp(svc *service.Service) {
-	h.updater.ServiceUp(svc)
+	err := h.updater.OnServiceUp(svc)
+	if err != nil {
+		bslog.Warn("error while updating service state on service up", slog.String("error", err.Error()))
+	}
 }
 
 func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan error) {

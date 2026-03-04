@@ -2,7 +2,6 @@ package service
 
 import (
 	"errors"
-	"log"
 	"testing"
 	"time"
 
@@ -132,9 +131,7 @@ func TestOnSuccess(t *testing.T) {
 	for range svc0.FailureThreshold - 1 {
 		svc0.OnFailure(errors.New("test error"))
 	}
-	log.Printf("count: %v", svc0.failureCount)
 	svc0.OnSuccess()
-	log.Printf("count: %v", svc0.failureCount)
 
 	if !svc0.isHealthy {
 		t.Errorf("Expected health: %v, but got: %v. After 2x OnFailure before OnSuccess()", true, svc0.IsHealthy())
@@ -143,9 +140,7 @@ func TestOnSuccess(t *testing.T) {
 	for range svc0.FailureThreshold {
 		svc0.OnFailure(errors.New("test error"))
 	}
-	log.Printf("count: %v", svc0.failureCount)
 	svc0.OnSuccess()
-	log.Printf("count: %v", svc0.failureCount)
 
 	if svc0.isHealthy {
 		t.Fatalf("Expected health: %v, but got: %v. After 3x OnFailure before OnSuccess()", false, svc0.IsHealthy())
@@ -241,9 +236,7 @@ func TestOnFailure(t *testing.T) {
 	for range svc0.FailureThreshold - 1 {
 		svc0.OnSuccess()
 	}
-	log.Printf("count: %v", svc0.failureCount)
 	svc0.OnFailure(errors.New("test"))
-	log.Printf("count: %v", svc0.failureCount)
 
 	if svc0.isHealthy {
 		t.Errorf("Expected health: %v, but got: %v. After 2x OnSuccess() before OnFailure()", false, svc0.IsHealthy())
@@ -252,9 +245,7 @@ func TestOnFailure(t *testing.T) {
 	for range svc0.FailureThreshold {
 		svc0.OnSuccess()
 	}
-	log.Printf("count: %v", svc0.failureCount)
 	svc0.OnFailure(errors.New("test"))
-	log.Printf("count: %v", svc0.failureCount)
 
 	if !svc0.isHealthy {
 		t.Fatalf("Expected health: %v, but got: %v. After 3x OnSuccess() before OnFailure()", true, svc0.IsHealthy())
@@ -272,13 +263,14 @@ func TestService_GetBaseInterval(t *testing.T) {
 		{
 			name: "baseinterval-5-priority-1",
 			config: model.GSLBConfig{
+				ServiceID: "123",
 				Fqdn:       "test.nhn.no",
 				Ip:         "127.0.0.1",
 				Port:       "80",
 				Datacenter: "Abels1",
 				Interval:   timesutil.FromDuration(time.Second * 5),
 				Priority:   1,
-				CheckType:       "TCP-FULL",
+				CheckType:  "TCP-FULL",
 			},
 			dryRun: true,
 			want:   timesutil.FromDuration(time.Second * 5),
@@ -286,13 +278,14 @@ func TestService_GetBaseInterval(t *testing.T) {
 		{
 			name: "baseinterval-5-priority-2",
 			config: model.GSLBConfig{
+				ServiceID: "123",
 				Fqdn:       "test.nhn.no",
 				Ip:         "127.0.0.1",
 				Port:       "80",
 				Datacenter: "Abels1",
 				Interval:   timesutil.FromDuration(time.Second * 5),
 				Priority:   2,
-				CheckType:       "TCP-FULL",
+				CheckType:  "TCP-FULL",
 			},
 			dryRun: true,
 			want:   timesutil.FromDuration(time.Second * 5),
@@ -300,13 +293,14 @@ func TestService_GetBaseInterval(t *testing.T) {
 		{
 			name: "baseinterval-5-priority-3",
 			config: model.GSLBConfig{
+				ServiceID: "123",
 				Fqdn:       "test.nhn.no",
 				Ip:         "127.0.0.1",
 				Port:       "80",
 				Datacenter: "Abels1",
 				Interval:   timesutil.FromDuration(time.Second * 5),
 				Priority:   3,
-				CheckType:       "TCP-FULL",
+				CheckType:  "TCP-FULL",
 			},
 			dryRun: true,
 			want:   timesutil.FromDuration(time.Second * 5),
@@ -314,13 +308,14 @@ func TestService_GetBaseInterval(t *testing.T) {
 		{
 			name: "baseinterval-5-priority-4",
 			config: model.GSLBConfig{
+				ServiceID: "123",
 				Fqdn:       "test.nhn.no",
 				Ip:         "127.0.0.1",
 				Port:       "80",
 				Datacenter: "Abels1",
 				Interval:   timesutil.FromDuration(time.Second * 5),
 				Priority:   4,
-				CheckType:       "TCP-FULL",
+				CheckType:  "TCP-FULL",
 			},
 			dryRun: true,
 			want:   timesutil.FromDuration(time.Second * 5),
@@ -328,7 +323,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, err := NewServiceFromGSLBConfig(tt.config, tt.dryRun)
+			s, err := NewServiceFromGSLBConfig(tt.config, WithDryRunChecks(tt.dryRun))
 			if err != nil {
 				t.Fatalf("could not construct receiver type: %v", err)
 			}

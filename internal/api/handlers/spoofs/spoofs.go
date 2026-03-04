@@ -17,7 +17,7 @@ import (
 )
 
 func (ss *SpoofsService) GetSpoofs(w http.ResponseWriter, r *http.Request) {
-	data, err := ss.SpoofRepo.ReadAll()
+	data, err := ss.spoofRepo.ReadAll()
 	if err != nil {
 		response.Err(w, response.ErrInternalError, "unable to fetch spoofs from storage")
 		bslog.Error("Unable to fetch spoofs", slog.String("reason", err.Error()))
@@ -43,7 +43,7 @@ func (ss *SpoofsService) GetFQDNSpoof(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	spoof, err := ss.SpoofRepo.Read(fqdn)
+	spoof, err := ss.spoofRepo.Read(fqdn)
 	if err != nil {
 		msg := "unable to fetch spoof with id: " + fqdn + " from storage"
 		response.Err(w, response.ErrInternalError, msg)
@@ -55,7 +55,7 @@ func (ss *SpoofsService) GetFQDNSpoof(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ss *SpoofsService) GetSpoofsHash(w http.ResponseWriter, r *http.Request) {
-	data, err := ss.SpoofRepo.ReadAll()
+	data, err := ss.spoofRepo.ReadAll()
 	if err != nil {
 		response.Err(w, response.ErrInternalError, "unable to fetch spoofs from storage")
 		bslog.Error("unable to read spoofs from storage", slog.String("reason", err.Error()))

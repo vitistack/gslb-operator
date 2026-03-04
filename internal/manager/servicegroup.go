@@ -6,9 +6,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/service"
-	"github.com/vitistack/gslb-operator/internal/utils"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/failover"
 )
@@ -43,6 +41,7 @@ type PromotionEvent struct {
 }
 
 type ServiceGroup struct {
+	Name string
 	mode ServiceGroupMode
 
 	// sorted by priority.
@@ -63,15 +62,14 @@ type ServiceGroup struct {
 	mu                    sync.RWMutex
 }
 
-func NewEmptyServiceGroup() *ServiceGroup {
-	datacenter := config.GetInstance().Server().Datacenter()
+func NewEmptyServiceGroup(name string) *ServiceGroup {
 	return &ServiceGroup{
-		mode:                  ActiveActive,
-		Members:               make([]*service.Service, 0),
-		active:                nil,
-		lastActive:            nil,
-		prioritizedDatacenter: datacenter,
-		mu:                    sync.RWMutex{},
+		Name:       name,
+		mode:       ActiveActive,
+		Members:    make([]*service.Service, 0),
+		active:     nil,
+		lastActive: nil,
+		mu:         sync.RWMutex{},
 	}
 }
 
@@ -112,28 +110,30 @@ func (sg *ServiceGroup) firstHealthy() *service.Service {
 
 func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, healthy bool) {
 	sg.mu.Lock()
-	defer sg.mu.Unlock()
 	oldActive := sg.active
 	if oldActive == nil {
 		oldActive = sg.lastActive
 	}
+
 	switch sg.mode {
 	case ActivePassive:
 		if !healthy && sg.active.GetID() == changedService.GetID() { // active has gone down!
 			sg.lastActive = sg.active
+			sg.mu.Unlock()
 			sg.OnPromotion(sg.promoteNextHealthy())
 			return
 		}
 
 		if healthy && sg.triggerPromotion(changedService) {
 			event := &PromotionEvent{
-				Service:   changedService.Fqdn,
+				Service:   sg.Name,
 				OldActive: oldActive,
 				NewActive: changedService,
 			}
 
 			sg.lastActive = sg.active
 			sg.active = changedService
+			sg.mu.Unlock()
 			sg.OnPromotion(event)
 		}
 
@@ -141,8 +141,9 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 		if healthy {
 			// If prioritized DC service becomes healthy, it must become active (single DNS record).
 			if changedService.Datacenter == sg.prioritizedDatacenter && changedService != sg.active {
+				sg.mu.Unlock()
 				sg.OnPromotion(&PromotionEvent{
-					Service:   changedService.Fqdn,
+					Service:   sg.Name,
 					NewActive: changedService,
 					OldActive: sg.active,
 				})
@@ -151,8 +152,9 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 			}
 			// If there is no active or the current active is unhealthy, promote this healthy service.
 			if sg.active == nil || !sg.active.IsHealthy() {
+				sg.mu.Unlock()
 				sg.OnPromotion(&PromotionEvent{
-					Service:   changedService.Fqdn,
+					Service:   sg.Name,
 					NewActive: changedService,
 					OldActive: sg.active,
 				})
@@ -164,10 +166,11 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 
 		// unhealthy
 		if changedService.GetID() == sg.active.GetID() {
+			sg.mu.Unlock()
 			next := sg.firstHealthy()
 			if next != nil {
 				sg.OnPromotion(&PromotionEvent{
-					Service:   changedService.Fqdn,
+					Service:   sg.Name,
 					NewActive: next,
 					OldActive: sg.active,
 				})
@@ -178,12 +181,13 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 
 			// all down -> signal DNS delete (single-record)
 			sg.OnPromotion(&PromotionEvent{
-				Service:   changedService.Fqdn,
+				Service:   sg.Name,
 				NewActive: nil,
 				OldActive: sg.active,
 			})
 			sg.lastActive = sg.active
 			sg.active = nil
+			return
 		}
 	}
 }
@@ -203,19 +207,25 @@ func (sg *ServiceGroup) RegisterService(newService *service.Service) {
 	sg.mu.Unlock()
 
 	sg.Update()
+	serviceGroupMembers.WithLabelValues(newService.MemberOf).Inc()
 }
 
 func (sg *ServiceGroup) RemoveService(id string) bool {
 	sg.mu.Lock()
-	defer sg.mu.Unlock()
+	members := sg.Members
+	sg.mu.Unlock()
 
-	for idx, member := range sg.Members {
-		if member.GetID() == id {
-			sg.Members = utils.RemoveIndexFromSlice(sg.Members, idx)
-			sg.Update()
-			break
-		}
+	idx := slices.IndexFunc(members, func(s *service.Service) bool {
+		return s.GetID() == id
+	})
+	if idx != -1 {
+		sg.mu.Lock()
+		sg.Members = append(members[:idx], members[idx+1:]...)
+		sg.mu.Unlock()
+		sg.Update()
+		serviceGroupMembers.WithLabelValues(sg.Name).Dec()
 	}
+
 	return len(sg.Members) == 0
 }
 
@@ -240,7 +250,7 @@ func (sg *ServiceGroup) promoteNextHealthy() *PromotionEvent {
 	if bestIdx != -1 {
 		sg.active = sg.Members[bestIdx]
 		return &PromotionEvent{
-			Service:   oldActive.Fqdn,
+			Service:   sg.Name,
 			NewActive: sg.active,
 			OldActive: oldActive,
 		}
@@ -249,7 +259,7 @@ func (sg *ServiceGroup) promoteNextHealthy() *PromotionEvent {
 	// No healthy services: signal DNS delete (NewActive=nil)
 	sg.active = nil
 	return &PromotionEvent{
-		Service:   oldActive.Fqdn,
+		Service:   sg.Name,
 		NewActive: nil,
 		OldActive: oldActive,
 	}
@@ -301,21 +311,20 @@ func (sg *ServiceGroup) SetGroupMode() {
 	}
 	sg.mu.RUnlock()
 
+	sg.mu.Lock()
+	defer sg.mu.Unlock()
+
 	switch sg.mode {
 	case ActiveActive:
 		// If services have different priorities, switch to ActivePassive
 		if !allSamePriority {
-			sg.mu.Lock()
 			sg.mode = ActivePassive
-			sg.mu.Unlock()
 		}
 
 	case ActivePassive:
 		// If all services have same priority, can switch to ActiveActive
 		if allSamePriority {
-			sg.mu.Lock()
 			sg.mode = ActiveActive
-			sg.mu.Unlock()
 			// if none healthy, leave active nil
 		}
 
@@ -327,9 +336,7 @@ func (sg *ServiceGroup) SetGroupMode() {
 	*/
 
 	default:
-		sg.mu.Lock()
 		sg.mode = ActiveActive
-		sg.mu.Unlock()
 	}
 	bslog.Debug("servicegroup mode set", slog.Any("mode", sg.mode.String()))
 }
@@ -381,23 +388,7 @@ func (sg *ServiceGroup) Update() {
 	sg.mu.RUnlock()
 
 	sg.mu.Lock()
-	slices.SortFunc(sg.Members, func(a, b *service.Service) int {
-		aPriority := a.GetPriority()
-		bPriority := b.GetPriority()
-
-		if aPriority != bPriority {
-			return cmp.Compare(aPriority, bPriority)
-		}
-
-		// equal priority - prioritized datacenter decides (ActiveActive tie-break)
-		if a.Datacenter == sg.prioritizedDatacenter {
-			return -1
-		} else if b.Datacenter == sg.prioritizedDatacenter {
-			return 1
-		}
-
-		return 0
-	})
+	slices.SortFunc(sg.Members, sortMembersFunc)
 	sg.mu.Unlock()
 
 	sg.SetGroupMode()
@@ -410,10 +401,35 @@ func (sg *ServiceGroup) Update() {
 		sg.active = firstHealthy
 
 		event := &PromotionEvent{
-			Service:   firstHealthy.MemberOf,
+			Service:   sg.Name,
 			OldActive: sg.lastActive,
 			NewActive: sg.active,
 		}
 		sg.OnPromotion(event)
+	}
+}
+
+// func passed into slices.SortFunc for sorting the groups members
+func sortMembersFunc(a, b *service.Service) int {
+	aPriority := a.GetPriority()
+	bPriority := b.GetPriority()
+
+	if aPriority != bPriority {
+		return cmp.Compare(aPriority, bPriority)
+	}
+
+	aRoundtrip := a.GetAverageRoundtrip()
+	bRoundtrip := b.GetAverageRoundtrip()
+
+	// handle case where no roundtrip time has been recorded
+	aHasRoundtrip := aRoundtrip > 0
+	bHasRoundtrip := bRoundtrip > 0
+
+	if aHasRoundtrip && bHasRoundtrip {
+		return cmp.Compare(aRoundtrip, bRoundtrip)
+	} else if aHasRoundtrip && !bHasRoundtrip { // prioritize the one who has recorded data
+		return -1
+	} else {
+		return 1
 	}
 }
