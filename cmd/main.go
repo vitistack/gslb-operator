@@ -54,7 +54,7 @@ func main() {
 	// creating dns - handler objects
 	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
 	mgr := manager.NewManager(
-		manager.WithMinRunningWorkers(100),
+		manager.WithMinRunningWorkers(80),
 		manager.WithNonBlockingBufferSize(50),
 		manager.WithServiceRepository(svcRepo),
 		//manager.WithDryRun(true),

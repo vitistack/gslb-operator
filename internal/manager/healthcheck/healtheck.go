@@ -23,18 +23,31 @@ func (hj *HealthCheckJob) Execute() error {
 	hj.lastCheck = time.Now()
 	err := hj.Service.Execute()
 
-	bslog.Debug("check complete", slog.Float64("duration_ms", float64(time.Since(hj.lastCheck).Milliseconds())))
+	checkTimeMs := float64(time.Since(hj.lastCheck).Milliseconds())
+
+	bslog.Debug("check complete", slog.Float64("duration_ms", checkTimeMs))
+	healthCheckDuration.WithLabelValues(
+		hj.Service.MemberOf,
+		hj.Service.Fqdn,
+		hj.Service.Datacenter).
+		Observe(checkTimeMs)
 	return err
 }
 
 func (hj *HealthCheckJob) OnSuccess() {
-	healthChecksTotal.WithLabelValues(hj.Service.String(), "success").Inc()
-	healthCheckDuration.WithLabelValues(hj.Service.String()).Observe(float64(time.Since(hj.lastCheck).Milliseconds()))
+	healthChecksTotal.WithLabelValues(hj.Service.MemberOf,
+		hj.Service.Fqdn,
+		hj.Service.Datacenter,
+		"success").
+		Inc()
 	hj.Service.OnSuccess()
 }
 
 func (hj *HealthCheckJob) OnFailure(err error) {
-	healthChecksTotal.WithLabelValues(hj.Service.String(), "failure").Inc()
-	healthCheckDuration.WithLabelValues(hj.Service.String()).Observe(float64(time.Since(hj.lastCheck).Milliseconds()))
+	healthChecksTotal.WithLabelValues(hj.Service.MemberOf,
+		hj.Service.Fqdn,
+		hj.Service.Datacenter,
+		"failure").
+		Inc()
 	hj.Service.OnFailure(err)
 }
