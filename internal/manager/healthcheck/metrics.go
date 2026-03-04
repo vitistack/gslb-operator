@@ -11,15 +11,16 @@ var (
 			Name: "healthcheck_total",
 			Help: "Total health checks performed",
 		},
-		[]string{"service", "success"},
+		[]string{"memberOf",  "endpoint", "datacenter", "status"},
 	)
 
 	healthCheckDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name: "healthcheck_duration_ms",
 			Help: "Health check duration",
+			Buckets: []float64{1, 5, 25, 50, 100, 250, 500, 1000, 2500, 5000},
 		},
-		[]string{"service"},
+		[]string{"memberOf", "endpoint", "datacenter"},
 	)
 )
 

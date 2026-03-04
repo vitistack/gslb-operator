@@ -21,6 +21,6 @@ var (
 			Name: "service_group_members",
 			Help: "Number of members in each service group",
 		},
-		[]string{"group"},
+		[]string{"memberOf"},
 	)
 )
