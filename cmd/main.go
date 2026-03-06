@@ -23,6 +23,7 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/auth"
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
+	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/lua"
 	"github.com/vitistack/gslb-operator/pkg/persistence/store/file"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
@@ -164,6 +165,9 @@ func main() {
 	if err := server.Shutdown(shutdown); err != nil {
 		panic("error shutting down server: " + err.Error())
 	}
+
+	// stop event handling
+	events.Stop(shutdown)
 }
 
 //func getRandomGSLBConfig() []model.GSLBConfig {

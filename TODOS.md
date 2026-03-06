@@ -13,5 +13,3 @@
 - AUTH
 
 - Webhooks notifies on event?
-
-- worker pool stats handling from manager
