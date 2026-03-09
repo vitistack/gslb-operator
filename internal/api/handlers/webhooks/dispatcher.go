@@ -60,3 +60,7 @@ func (d *Dispatcher) Handle(e *events.Event) {
 		resp.Body.Close()
 	}
 }
+
+func (d *Dispatcher) GetID() string {
+	return d.webhook.ID
+}

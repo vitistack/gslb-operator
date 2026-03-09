@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"slices"
 	"sync"
 )
 
@@ -17,6 +18,10 @@ func On(typ EventType, handler EventHandler, filters ...EventFilter) {
 
 func Emit(events ...*Event) {
 	eventBus.Emit(events...)
+}
+
+func Remove(typ EventType, id string) {
+	eventBus.Remove(typ, id)
 }
 
 func Stop(ctx context.Context) {
@@ -55,6 +60,24 @@ func (eb *EventBus) Emit(events ...*Event) {
 				handler.Handle(event)
 			})
 		}
+	}
+}
+
+func (eb *EventBus) Remove(typ EventType, id string) {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	handlers, ok := eb.handlers[typ]
+	if !ok {
+		return
+	}
+
+	idx := slices.IndexFunc(handlers, func(e EventHandler) bool {
+		return e.GetID() == id
+	})
+
+	if idx != -1 {
+		handlers = append(handlers[:idx], handlers[idx+1:]...)
+		eb.handlers[typ] = handlers
 	}
 }
 

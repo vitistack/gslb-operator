@@ -6,6 +6,7 @@ type EventType string
 
 type EventHandler interface {
 	Handle(*Event)
+	GetID() string
 }
 
 type Event struct {

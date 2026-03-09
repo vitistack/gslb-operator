@@ -19,3 +19,7 @@ func (s *Subscription) Handle(e *Event) {
 
 	s.handler.Handle(e)
 }
+
+func (s *Subscription) GetID() string {
+	return s.handler.GetID()
+}
