@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"log/slog"
 
 	"github.com/vitistack/gslb-operator/pkg/events"
 )
@@ -12,6 +13,14 @@ type WebHook struct {
 	Secret  *string             `json:"secret,omitempty"`
 	Events  []EventSubscription `json:"subscriptions"`
 	Options WebHookOptions      `json:"options"`
+}
+type WebHookOptions struct {
+	SecretHeader string `json:"secretHeader,omitempty"` // defaults to Authorization
+}
+
+type EventSubscription struct {
+	Type    events.EventType `json:"event"`
+	Options json.RawMessage  `json:"options,omitempty"`
 }
 
 func (wh *WebHook) Apply(dispatcher events.EventHandler) error {
@@ -27,11 +36,14 @@ func (wh *WebHook) Apply(dispatcher events.EventHandler) error {
 	return nil
 }
 
-type WebHookOptions struct {
-	SecretHeader *string `json:"secretHeader,omitempty"` // defaults to Authorization
-}
-
-type EventSubscription struct {
-	Type    events.EventType `json:"event"`
-	Options json.RawMessage  `json:"options,omitempty"`
+func (wh *WebHook) LogValue() slog.Value {
+	types := make([]string, len(wh.Events))
+	for i, sub := range wh.Events {
+		types[i] = string(sub.Type)
+	}
+	return slog.GroupValue(
+		slog.String("id", wh.ID),
+		slog.String("url", wh.URL),
+		slog.Any("events", types),
+	)
 }

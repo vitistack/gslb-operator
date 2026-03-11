@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/failover"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
+	"github.com/vitistack/gslb-operator/internal/api/handlers/webhooks"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
@@ -51,6 +52,11 @@ func main() {
 		bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
 	}
 	svcRepo := service.NewServiceRepo(serviceFileStore)
+
+	webhooksFileStore, err := file.NewStore[model.WebHook]("./data/webhooks.json")
+	if err != nil {
+		bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
+	}
 
 	// creating dns - handler objects
 	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
@@ -92,13 +98,17 @@ func main() {
 
 	failoverApiService := failover.NewFailoverService(mgr)
 
+	webhooksApiService := webhooks.NewWebhookService(webhooksFileStore)
+
 	// initializing the service jwt self signer
 	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
 
+	// failover
 	api.HandleFunc(routes.POST_FAILOVER, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),
 	)(failoverApiService.FailoverService))
 
+	// spoofs
 	api.HandleFunc(routes.GET_SPOOFS, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),
 		auth.WithTokenValidation(slog.Default()),
@@ -131,6 +141,23 @@ func main() {
 	api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),
 	)(spoofsApiService.DeleteOverride))
+
+	// webhooks
+	api.HandleFunc(routes.GET_WEBHOOKS, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(webhooksApiService.GetWebhooks))
+
+	api.HandleFunc(routes.POST_WEBHOOKS, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(webhooksApiService.CreateWebHook))
+
+	api.HandleFunc(routes.PUT_WEBHOOKS, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(webhooksApiService.UpdateWebhook))
+
+	api.HandleFunc(routes.DELETE_WEBHOOKS, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(webhooksApiService.DeleteWebhook))
 
 	// metrics
 	api.Handle(routes.METRICS, promhttp.Handler())

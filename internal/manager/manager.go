@@ -10,10 +10,12 @@ import (
 	"github.com/vitistack/gslb-operator/internal/manager/healthcheck"
 	"github.com/vitistack/gslb-operator/internal/manager/scheduler"
 	"github.com/vitistack/gslb-operator/internal/model"
+	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
 	svcRepo "github.com/vitistack/gslb-operator/internal/repositories/service"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
+	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/models/failover"
 	"github.com/vitistack/gslb-operator/pkg/persistence/store/memory"
 	"github.com/vitistack/gslb-operator/pkg/pool"
@@ -163,6 +165,13 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 				slog.Any("service", newService),
 			)
 		}
+		events.Emit(&events.Event{
+			Type: domainEvents.EventTypeGSLBMemberHealthChange,
+			Payload: domainEvents.GSLBMemberHealthChangeEvent{
+				Member: *newService.GSLBService(),
+			},
+			Timestamp: time.Now(),
+		})
 		sm.serviceGroups[newService.MemberOf].OnServiceHealthChange(newService, healthy)
 	})
 
@@ -183,6 +192,15 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	serviceGroup.RegisterService(newService)
 
 	bslog.Debug("registered service", slog.Any("service", newService))
+
+	events.Emit(&events.Event{ // publish service registration event
+		Type: domainEvents.EventTypeGSLBConfigCreate,
+		Payload: domainEvents.GSLBConfigCreateEvent{
+			Config: serviceCfg,
+		},
+		Timestamp: time.Now(),
+	})
+
 	return newService, nil
 }
 
@@ -216,6 +234,14 @@ func (sm *ServicesManager) RemoveService(id string) error {
 	}
 
 	bslog.Debug("removed service", slog.Any("service", svc))
+	events.Emit(&events.Event{ // publish delete event for service
+		Type: domainEvents.EventTypeGSLBConfigDelete,
+		Payload: domainEvents.GSLBConfigDeleteEvent{
+			LastConfig: svc.GSLBConfig(),
+		},
+		Timestamp: time.Now(),
+	})
+
 	return nil
 }
 
@@ -278,6 +304,14 @@ func (sm *ServicesManager) updateService(old, new *service.Service) {
 	}
 
 	bslog.Debug("updated service", slog.Any("service", old))
+	events.Emit(&events.Event{ // publish configuration change event
+		Type: domainEvents.EventTypeGSLBConfigUpdate,
+		Payload: domainEvents.GSLBConfigUpdateEvent{
+			LastConfig:    old.GSLBConfig(),
+			CurrentConfig: new.GSLBConfig(),
+		},
+		Timestamp: time.Now(),
+	})
 }
 
 func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc *service.Service) {
@@ -404,6 +438,17 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 			))
 		sm.moveServiceToInterval(event.NewActive, baseInterval)
 		sm.DNSUpdate(event.NewActive, true)
+
+		events.Emit(&events.Event{
+			Type: domainEvents.EventTypeGSLBFailover,
+			Payload: domainEvents.GSLBFailoverEvent{
+				MemberOf:   event.Service,
+				LastActive: *event.OldActive.GSLBService(),
+				NewActive:  *event.NewActive.GSLBService(),
+			},
+			Timestamp: time.Now(),
+		})
+
 		return
 	}
 
@@ -415,12 +460,19 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 			bslog.Error("failed to update active flag on service", slog.Any("newActive", event.NewActive))
 			return
 		}
-		bslog.Info("new active service", slog.Any("service", event.NewActive))
+		bslog.Info("new gslb service status",
+			slog.Any("service", event.NewActive),
+			slog.String("status", "up"),
+		)
 		sm.moveServiceToInterval(event.NewActive, baseInterval)
-		if sm.DNSUpdate == nil {
-			bslog.Fatal("DNSUpdate is nil!!!!")
-		}
 		sm.DNSUpdate(event.NewActive, true)
+		events.Emit(&events.Event{
+			Type: domainEvents.EventTypeGSLBServiceUp,
+			Payload: domainEvents.GSLBServiceUpEvent{
+				NewActive: *event.NewActive.GSLBService(),
+			},
+			Timestamp: time.Now(),
+		})
 		return
 	}
 
@@ -432,8 +484,19 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 			bslog.Error("failed to remove active flag from service", slog.Any("oldActive", event.OldActive))
 			return
 		}
-		bslog.Warn("no available sites", slog.String("serviceGroup", event.Service))
+		bslog.Warn("new gslb service status",
+			slog.String("serviceGroup", event.Service),
+			slog.String("status", "down"),
+		)
 		sm.DNSUpdate(event.OldActive, false)
+		events.Emit(&events.Event{
+			Type: domainEvents.EventTypeGSLBServiceDown,
+			Payload: domainEvents.GSLBServiceDownEvent{
+				MemberOf: event.OldActive.MemberOf,
+			},
+			Timestamp: time.Now(),
+		})
+
 		return
 	}
 }

@@ -1,8 +1,6 @@
 package events
 
 import (
-	"slices"
-
 	"github.com/vitistack/gslb-operator/pkg/events"
 )
 
@@ -21,29 +19,6 @@ const (
 
 	EventTypeDNSDIST           events.EventType = "dnsdist"
 	EventTypeDNSDISTSpoof      events.EventType = "dnsdist:spoof"
-	EvenTypeDNSDISTSpoofCreate events.EventType = "dnsdist:spoof:create"
-	EvenTypeDNSDISTSpoofDelete events.EventType = "dnsdist:spoof:delete"
+	EventTypeDNSDISTSpoofCreate events.EventType = "dnsdist:spoof:create"
+	EventTypeDNSDISTSpoofDelete events.EventType = "dnsdist:spoof:delete"
 )
-
-func init() {
-	events.Register(EventTypeGSLBFailover, func() events.FilterOption {
-		return &GSLBFailoverOption{}
-	})
-}
-
-
-type GSLBFailoverOption struct {
-	MemberOfs []string `json:"memberOfs"`
-}
-
-func (o *GSLBFailoverOption) Filter() events.EventFilter {
-	return func(e *events.Event) bool {
-		body, ok := e.Payload.(GSLBFailoverEvent)
-		if !ok {
-			return false
-		}
-
-		// returns wether this filter applies or not to the event
-		return slices.Contains(o.MemberOfs, body.MemberOf)
-	}
-}

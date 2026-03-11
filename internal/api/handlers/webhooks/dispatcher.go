@@ -1,7 +1,6 @@
 package webhooks
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -25,7 +24,7 @@ type Dispatcher struct {
 func NewDispatcher(wh model.WebHook) *Dispatcher {
 	return &Dispatcher{
 		webhook: wh,
-		client:  &http.Client{Timeout: time.Second * 5},
+		client:  &http.Client{Timeout: time.Second * 10},
 	}
 }
 
@@ -36,16 +35,12 @@ func (d *Dispatcher) Handle(e *events.Event) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-	defer cancel()
-
 	builder := request.NewBuilder(d.webhook.URL).
 		POST().
-		Body(body).
-		CTX(ctx)
+		Body(body)
 
 	if d.webhook.Secret != nil {
-		builder.SetHeader(*d.webhook.Options.SecretHeader, *d.webhook.Secret)
+		builder.SetHeader(d.webhook.Options.SecretHeader, *d.webhook.Secret)
 	}
 
 	req, err := builder.Build()

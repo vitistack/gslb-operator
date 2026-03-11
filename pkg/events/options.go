@@ -11,7 +11,7 @@ type FilterOption interface {
 
 type FilterOptionFactory func() FilterOption
 
-var registry map[EventType]FilterOptionFactory
+var registry = make(map[EventType]FilterOptionFactory)
 
 func Register(typ EventType, factory FilterOptionFactory) {
 	registry[typ] = factory

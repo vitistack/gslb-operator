@@ -31,8 +31,8 @@ type GSLBConfigCreateEvent struct {
 
 // gslb:config:update
 type GSLBConfigUpdateEvent struct {
-	LastConfig model.GSLBConfig
-	Current    model.GSLBConfig
+	LastConfig    model.GSLBConfig
+	CurrentConfig model.GSLBConfig
 }
 
 // gslb:config:delete

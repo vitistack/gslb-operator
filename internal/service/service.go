@@ -24,6 +24,7 @@ type Service struct {
 	MemberOf             string
 	Datacenter           string
 	checkType            string
+	checkScript          string // lua script for HTTP(S) response validation
 	ScheduledInterval    timesutil.Duration
 	defaultInterval      timesutil.Duration
 	priority             int
@@ -58,6 +59,7 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, opts ...ServiceOption) (*
 		MemberOf:          config.MemberOf,
 		Datacenter:        config.Datacenter,
 		checkType:         config.CheckType,
+		checkScript:       config.Script,
 		ScheduledInterval: interval,
 		defaultInterval:   interval,
 		priority:          config.Priority,
@@ -262,7 +264,8 @@ func (s *Service) ConfigChanged(other *Service) bool {
 		s.Datacenter != other.Datacenter ||
 		s.FailureThreshold != other.FailureThreshold ||
 		s.priority != other.priority ||
-		s.checkType != other.checkType {
+		s.checkType != other.checkType ||
+		s.checkScript != other.checkScript {
 		return true
 	}
 	return false
@@ -276,6 +279,7 @@ func (s *Service) Assign(new *Service) {
 	s.MemberOf = new.MemberOf
 	s.priority = new.priority
 	s.checkType = new.checkType
+	s.checkScript = new.checkScript
 	s.Datacenter = new.Datacenter
 	s.defaultInterval = new.defaultInterval
 	s.FailureThreshold = new.FailureThreshold
@@ -309,5 +313,21 @@ func (s *Service) GSLBService() *model.GSLBService {
 		IP:           s.GetIP(),
 		IsHealthy:    s.isHealthy,
 		FailureCount: s.failureCount,
+	}
+}
+
+func (s *Service) GSLBConfig() model.GSLBConfig {
+	return model.GSLBConfig{
+		ServiceID:        s.id,
+		MemberOf:         s.MemberOf,
+		Fqdn:             s.Fqdn,
+		Ip:               s.GetIP(),
+		Port:             s.addr.AddrPort().String(),
+		Datacenter:       s.Datacenter,
+		Interval:         s.defaultInterval,
+		Priority:         s.priority,
+		FailureThreshold: s.FailureThreshold,
+		CheckType:        s.checkType,
+		Script:           s.checkScript,
 	}
 }
