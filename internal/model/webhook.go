@@ -16,6 +16,7 @@ type WebHook struct {
 }
 type WebHookOptions struct {
 	SecretHeader string `json:"secretHeader,omitempty"` // defaults to Authorization
+	Format       string `json:"format"`
 }
 
 type EventSubscription struct {

@@ -151,9 +151,11 @@ func main() {
 		middleware.WithIncomingRequestLogging(slog.Default()),
 	)(webhooksApiService.CreateWebHook))
 
-	api.HandleFunc(routes.PUT_WEBHOOKS, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(webhooksApiService.UpdateWebhook))
+	/*
+		api.HandleFunc(routes.PUT_WEBHOOKS, middleware.Chain(
+			middleware.WithIncomingRequestLogging(slog.Default()),
+		)(webhooksApiService.UpdateWebhook))
+	*/
 
 	api.HandleFunc(routes.DELETE_WEBHOOKS, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),

@@ -1,10 +1,8 @@
 package webhooks
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
@@ -17,21 +15,35 @@ type Payload struct {
 }
 
 type Dispatcher struct {
+	WebHookBodyWrapper
 	webhook model.WebHook
 	client  *http.Client
 }
 
-func NewDispatcher(wh model.WebHook) *Dispatcher {
-	return &Dispatcher{
+func Dispatch(wh model.WebHook) error {
+	dispatcher := &Dispatcher{
 		webhook: wh,
-		client:  &http.Client{Timeout: time.Second * 10},
 	}
+	err := wh.Apply(dispatcher)
+	if err != nil {
+		return err
+	}
+
+	switch wh.Options.Format {
+	default:
+		dispatcher.WebHookBodyWrapper = &SlackBodyWrapper{}
+	}
+
+	return nil
 }
 
 func (d *Dispatcher) Handle(e *events.Event) {
-	body, err := json.Marshal(e)
+	body, err := d.Wrap(e)
 	if err != nil {
-		bslog.Error("could not marshall event body", slog.String("reason", err.Error()))
+		bslog.Error("could not format event body", 
+		slog.String("reason", err.Error()),
+		slog.Any("event", e),
+	)
 		return
 	}
 

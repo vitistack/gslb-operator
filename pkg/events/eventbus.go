@@ -2,11 +2,17 @@ package events
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"log"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
+
+const DEFAULT_EVENT_RESOLUTION = time.Second * 15
 
 var eventBus *EventBus
 
@@ -20,6 +26,12 @@ func On(typ EventType, handler EventHandler, filters ...EventFilter) {
 
 func Emit(events ...*Event) {
 	eventBus.Emit(events...)
+}
+
+func ID(typ EventType, subject string) string {
+	canonical := fmt.Sprintf("%s|%s|%d", typ, subject, time.Now().Truncate(DEFAULT_EVENT_RESOLUTION).Unix())
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])
 }
 
 // returns the full tree of an event type, with a custom delimiter
@@ -45,6 +57,10 @@ func Tree(typ EventType, delimiter ...rune) []EventType {
 
 func Remove(typ EventType, id string) {
 	eventBus.Remove(typ, id)
+}
+
+func RemoveAll(id string) {
+	eventBus.RemoveAll(id)
 }
 
 func Stop(ctx context.Context) {
@@ -126,6 +142,21 @@ func (eb *EventBus) Remove(typ EventType, id string) {
 
 	if idx != -1 {
 		eb.handlers[typ] = append(handlers[:idx], handlers[idx+1:]...)
+	}
+}
+
+func (eb *EventBus) RemoveAll(id string) {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+
+	for typ, handlers := range eb.handlers {
+		idx := slices.IndexFunc(handlers, func(e EventHandler) bool {
+			return e.GetID() == id
+		})
+
+		if idx != -1 {
+			eb.handlers[typ] = append(handlers[:idx], handlers[idx+1:]...)
+		}
 	}
 }
 

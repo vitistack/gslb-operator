@@ -171,6 +171,7 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 				Member: *newService.GSLBService(),
 			},
 			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeGSLBMemberHealthChange, newService.MemberOf),
 		})
 		sm.serviceGroups[newService.MemberOf].OnServiceHealthChange(newService, healthy)
 	})
@@ -199,6 +200,7 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 			Config: serviceCfg,
 		},
 		Timestamp: time.Now(),
+		ID:        events.ID(domainEvents.EventTypeGSLBConfigCreate, serviceCfg.ServiceID),
 	})
 
 	return newService, nil
@@ -240,6 +242,7 @@ func (sm *ServicesManager) RemoveService(id string) error {
 			LastConfig: svc.GSLBConfig(),
 		},
 		Timestamp: time.Now(),
+		ID:        events.ID(domainEvents.EventTypeGSLBConfigDelete, svc.GetID()),
 	})
 
 	return nil
@@ -311,6 +314,7 @@ func (sm *ServicesManager) updateService(old, new *service.Service) {
 			CurrentConfig: new.GSLBConfig(),
 		},
 		Timestamp: time.Now(),
+		ID:        events.ID(domainEvents.EventTypeGSLBConfigUpdate, new.GetID()),
 	})
 }
 
@@ -447,6 +451,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 				NewActive:  *event.NewActive.GSLBService(),
 			},
 			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeGSLBFailover, event.Service),
 		})
 
 		return
@@ -472,6 +477,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 				NewActive: *event.NewActive.GSLBService(),
 			},
 			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceUp, event.Service),
 		})
 		return
 	}
@@ -495,6 +501,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 				MemberOf: event.OldActive.MemberOf,
 			},
 			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceDown, event.Service),
 		})
 
 		return

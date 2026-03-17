@@ -9,6 +9,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/repositories/webhooks"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/events"
+	"github.com/vitistack/gslb-operator/pkg/models/pagination"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
@@ -24,13 +25,28 @@ func NewWebhookService(store persistence.Store[model.WebHook]) *WebhooksService 
 	}
 }
 
-func (ws *WebhooksService) GetWebhooks(w http.ResponseWriter, r *http.Request) {}
+func (ws *WebhooksService) GetWebhooks(w http.ResponseWriter, r *http.Request) {
+	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
+
+	hooks, err := ws.webHooksRepo.ReadAll()
+	if err != nil {
+		response.Err(w, response.ErrInternalError, "unexpected error ocurred")
+		logger.Error("failed to read webhooks from storage", slog.String("reason", err.Error()))
+		return
+	}
+
+	params := pagination.NewPaginationParams()
+	request.UnMarshallParams(r.URL.Query(), params)
+
+	resp := pagination.NewPaginationResult(params, hooks)
+	response.JSON(w, http.StatusOK, resp)
+}
 
 func (ws *WebhooksService) CreateWebHook(w http.ResponseWriter, r *http.Request) {
 	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
 	wh := model.WebHook{
 		// default SecretHeader
-		Options: model.WebHookOptions{ 
+		Options: model.WebHookOptions{
 			SecretHeader: "Authorization",
 		},
 	}
@@ -50,8 +66,8 @@ func (ws *WebhooksService) CreateWebHook(w http.ResponseWriter, r *http.Request)
 	}
 	wh.ID = id.String()
 
-	dispatcher := NewDispatcher(wh)
-	if err := wh.Apply(dispatcher); err != nil {
+	err = Dispatch(wh)
+	if err != nil {
 		response.Err(w, response.ErrInvalidInput, "malformed request body")
 		return
 	}
@@ -69,8 +85,62 @@ func (ws *WebhooksService) CreateWebHook(w http.ResponseWriter, r *http.Request)
 			slog.Any("webhook", wh),
 		)
 		response.Err(w, response.ErrInternalError, "could not store webhook")
+		return
 	}
+
+	w.WriteHeader(http.StatusCreated)
 }
 
-func (ws *WebhooksService) UpdateWebhook(w http.ResponseWriter, r *http.Request) {}
-func (ws *WebhooksService) DeleteWebhook(w http.ResponseWriter, r *http.Request) {}
+/*
+func (ws *WebhooksService) UpdateWebhook(w http.ResponseWriter, r *http.Request) {
+	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
+	id := r.PathValue("id")
+
+	if id == "" {
+		response.Err(w, response.ErrInvalidInput, "empty id on update")
+		logger.Info("skipping webhooks update", slog.String("reason", "id was not submitted correctly"))
+		return
+	}
+
+	wh := &model.WebHook{}
+	err := request.JSONDECODE(r.Body, wh)
+	if err != nil {
+		response.Err(w, response.ErrInvalidInput, "malformed request body")
+		bslog.Error("could not decode request body", slog.String("reason", err.Error()))
+		return
+	}
+
+	err = ws.webHooksRepo.Update(wh.ID, *wh)
+	if err != nil {
+		response.Err(w, response.ErrInternalError, "unexpected error ocurred")
+		bslog.Error("failed to update webhook", slog.String("reason", err.Error()))
+		return
+	}
+
+
+
+}
+*/
+
+func (ws *WebhooksService) DeleteWebhook(w http.ResponseWriter, r *http.Request) {
+	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
+	id := r.PathValue("id")
+
+	if id == "" {
+		response.Err(w, response.ErrInvalidInput, "empty id on update")
+		logger.Info("skipping webhooks update", slog.String("reason", "id was not submitted correctly"))
+		return
+	}
+
+	err := ws.webHooksRepo.Delete(id)
+	if err != nil {
+		//TODO: handle not found
+		response.Err(w, response.ErrInternalError, "unexpected error ocurred")
+		logger.Error("could not delete webhook", slog.String("reason", err.Error()))
+		return
+	}
+
+	events.RemoveAll(id)
+
+	w.WriteHeader(http.StatusNoContent)
+}
