@@ -140,6 +140,24 @@ func (jwt *JWT) User() string {
 	return jwt.USER
 }
 
+type Slack struct {
+	APP_TOKEN      string `env:"SLACK_APP_TOKEN"`
+	BOT_TOKEN      string `env:"SLACK_BOT_TOKEN"`
+	SIGNING_SECRET string `env:"SLACK_SIGNING_SECRET"`
+}
+
+func (s *Slack) AppToken() string {
+	return s.APP_TOKEN
+}
+
+func (s *Slack) BotToken() string {
+	return s.BOT_TOKEN
+}
+
+func (s *Slack) SigningSecret() string {
+	return s.SigningSecret()
+}
+
 func newConfig() (*Config, error) {
 	fileLoader, err := loaders.NewFileLoader(
 		".env",
@@ -160,19 +178,25 @@ func newConfig() (*Config, error) {
 	serverCfg := Server{
 		ENV: "prod",
 	}
+
 	apiCfg := API{
 		PORT: ":8080",
 	}
+
 	gslbCfg := GSLB{
 		POLLINTERVAL: "1m",
 	}
+
 	jwtCfg := JWT{}
+
+	slack := Slack{}
 
 	configs := []any{
 		&serverCfg,
 		&apiCfg,
 		&gslbCfg,
 		&jwtCfg,
+		&slack,
 	}
 
 	for _, cfg := range configs {
