@@ -11,10 +11,10 @@ func init() {
 	events.Register(EventTypeGSLB, func() events.FilterOption {
 		return &GSLBEventOptions{}
 	})
-	events.Register(EventTypeGSLBMember, func() events.FilterOption {
+	events.Register(EventTypeGSLBServiceMember, func() events.FilterOption {
 		return &GSLBMemberEventOptions{}
 	})
-	events.Register(EventTypeGSLBMemberHealthChange, func() events.FilterOption {
+	events.Register(EventTypeGSLBServiceMemberHealthChange, func() events.FilterOption {
 		return &GSLBMemberHealthChangeEventOptions{}
 	})
 	events.Register(EventTypeGSLBService, func() events.FilterOption {
