@@ -11,9 +11,6 @@ func init() {
 	events.Register(EventTypeGSLB, func() events.FilterOption {
 		return &GSLBEventOptions{}
 	})
-	events.Register(EventTypeGSLBFailover, func() events.FilterOption {
-		return &GSLBFailoverEventOptions{}
-	})
 	events.Register(EventTypeGSLBMember, func() events.FilterOption {
 		return &GSLBMemberEventOptions{}
 	})
@@ -22,6 +19,9 @@ func init() {
 	})
 	events.Register(EventTypeGSLBService, func() events.FilterOption {
 		return &GSLBServiceEventOptions{}
+	})
+	events.Register(EventTypeGSLBServiceFailover, func() events.FilterOption {
+		return &GSLBServiceFailoverEventOptions{}
 	})
 	events.Register(EventTypeGSLBServiceUp, func() events.FilterOption {
 		return &GSLBServiceUpEventOptions{}
@@ -75,20 +75,6 @@ func (g *GSLBEventOptions) Filter() events.EventFilter {
 	}
 }
 
-type GSLBFailoverEventOptions struct {
-	GSLBWebhookOptions
-}
-
-func (g *GSLBFailoverEventOptions) Filter() events.EventFilter {
-	return func(e *events.Event) bool {
-		body, ok := e.Payload.(GSLBFailoverEvent)
-		if !ok {
-			return false
-		}
-		return g.matches(body.MemberOf)
-	}
-}
-
 type GSLBMemberEventOptions struct {
 	GSLBWebhookOptions
 }
@@ -132,6 +118,20 @@ func (g *GSLBServiceEventOptions) Filter() events.EventFilter {
 		}
 
 		return child.Filter()(e)
+	}
+}
+
+type GSLBServiceFailoverEventOptions struct {
+	GSLBWebhookOptions
+}
+
+func (g *GSLBServiceFailoverEventOptions) Filter() events.EventFilter {
+	return func(e *events.Event) bool {
+		body, ok := e.Payload.(GSLBFailoverEvent)
+		if !ok {
+			return false
+		}
+		return g.matches(body.MemberOf)
 	}
 }
 
