@@ -1,13 +1,24 @@
 package events
 
-import "github.com/vitistack/gslb-operator/pkg/models/spoofs"
+import (
+	"github.com/slack-go/slack"
+	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
+)
 
 // dnsdist:spoof:create
 type DNSDistSpoofCreateEvent struct {
 	Spoof spoofs.Spoof
 }
 
+func (e *DNSDistSpoofCreateEvent) SlackValue() slack.MsgOption {
+	return slack.MsgOptionBlocks()
+}
+
 // dnsdist:spoof:delete
 type DNSDistSpoofDeleteEvent struct {
 	Spoof spoofs.Spoof
+}
+
+func (e *DNSDistSpoofDeleteEvent) SlackValue() slack.MsgOption {
+	return slack.MsgOptionBlocks()
 }

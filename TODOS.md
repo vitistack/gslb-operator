@@ -27,3 +27,5 @@
 
 - CLI
     inside deployment pod for doing admin tasks
+
+- slog multi-handler for splunk logging of loglevel > INFO

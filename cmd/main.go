@@ -15,6 +15,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/webhooks"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
+	whBroker "github.com/vitistack/gslb-operator/internal/brokers/webhooks"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
 	"github.com/vitistack/gslb-operator/internal/dns/update"
@@ -64,7 +65,7 @@ func main() {
 		manager.WithMinRunningWorkers(80),
 		manager.WithNonBlockingBufferSize(50),
 		manager.WithServiceRepository(svcRepo),
-		//manager.WithDryRun(true),
+		manager.WithDryRun(true),
 	)
 
 	updater, err := update.NewDNSDISTUpdater(serviceFileStore)
@@ -80,6 +81,11 @@ func main() {
 
 	background := context.Background()
 	ctx, cancel := context.WithCancel(background)
+
+	// mq brokers
+	webhooksBroker := whBroker.New(ctx, webhooksFileStore)
+	webhooksBroker.Subscribe(ctx)
+
 	dnsHandler.Start(ctx, cancel)
 	updater.Synchronize(ctx)
 
@@ -95,9 +101,7 @@ func main() {
 
 	// routes handlers
 	spoofsApiService := spoofs.NewSpoofsService(serviceFileStore, mgr)
-
 	failoverApiService := failover.NewFailoverService(mgr)
-
 	webhooksApiService := webhooks.NewWebhookService(webhooksFileStore)
 
 	// initializing the service jwt self signer

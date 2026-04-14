@@ -166,12 +166,12 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 			)
 		}
 		events.Emit(&events.Event{
-			Type: domainEvents.EventTypeGSLBMemberHealthChange,
-			Payload: domainEvents.GSLBMemberHealthChangeEvent{
+			Type: domainEvents.EventTypeGSLBServiceMemberHealthChange,
+			Payload: domainEvents.GSLBServiceMemberHealthChangeEvent{
 				Member: *newService.GSLBService(),
 			},
 			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBMemberHealthChange, newService.MemberOf),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberHealthChange, newService.MemberOf),
 		})
 		sm.serviceGroups[newService.MemberOf].OnServiceHealthChange(newService, healthy)
 	})
@@ -444,14 +444,14 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 		sm.DNSUpdate(event.NewActive, true)
 
 		events.Emit(&events.Event{
-			Type: domainEvents.EventTypeGSLBFailover,
+			Type: domainEvents.EventTypeGSLBServiceFailover,
 			Payload: domainEvents.GSLBFailoverEvent{
 				MemberOf:   event.Service,
 				LastActive: *event.OldActive.GSLBService(),
 				NewActive:  *event.NewActive.GSLBService(),
 			},
 			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBFailover, event.Service),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceFailover, event.Service),
 		})
 
 		return

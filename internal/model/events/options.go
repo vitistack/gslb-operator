@@ -97,7 +97,7 @@ type GSLBMemberHealthChangeEventOptions struct {
 
 func (g *GSLBMemberHealthChangeEventOptions) Filter() events.EventFilter {
 	return func(e *events.Event) bool {
-		body, ok := e.Payload.(GSLBMemberHealthChangeEvent)
+		body, ok := e.Payload.(GSLBServiceMemberHealthChangeEvent)
 		if !ok {
 			return false
 		}

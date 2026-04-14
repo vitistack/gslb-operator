@@ -20,21 +20,96 @@ type Broker[T any] struct {
 	dlx         string
 	dlq         string
 	prefetch    int
+	retry       int
 	consumerTag string
 	logger      *slog.Logger
 }
 
 func New[T any](ctx context.Context, ampqURL string, opts ...brokerOption[T]) mq.MessageBroker[T] {
-
 	broker := &Broker[T]{
 		connection: newConnection(ctx, ampqURL),
+		logger:     slog.Default(),
+		retry:      3,
 	}
+
+	broker.connection.onNewConnection = broker.declareTopology
 
 	for _, opt := range opts {
 		opt(broker)
 	}
 
+	go func() {
+		err := broker.connection.connect()
+		for err != nil {
+			broker.logger.Error("mq: failed to connect", slog.String("reason", err.Error()))
+			time.Sleep(time.Second * 30)
+			err = broker.connection.connect()
+		}
+	}()
+
 	return broker
+}
+
+func (b *Broker[T]) declareTopology() error {
+	if b.exchange != "" {
+		// declare exchange with queue
+		err := b.connection.channel.ExchangeDeclare(
+			b.exchange,
+			amqp.ExchangeDirect,
+			true,
+			false,
+			false,
+			false,
+			nil,
+		)
+
+		if err != nil {
+
+		}
+
+		_, err = b.connection.channel.QueueDeclare(
+			b.queue,
+			true,
+			false,
+			false,
+			false,
+			nil,
+		)
+
+		if err != nil {
+
+		}
+
+		b.channel.QueueBind(
+			"",
+			"",
+			"",
+			false,
+			nil,
+		)
+
+	} else {
+		_, err := b.connection.channel.QueueDeclare(
+			b.queue,
+			true,
+			false,
+			false,
+			false,
+			nil,
+		)
+
+		if err != nil {
+
+		}
+	}
+
+	if b.dlx != "" {
+		// declare dead-letter exchange with queue
+	} else {
+		// only declare dead-letter queue
+	}
+
+	return nil
 }
 
 func (b *Broker[T]) Publish(ctx context.Context, msg T) error {
@@ -58,6 +133,7 @@ func (b *Broker[T]) Publish(ctx context.Context, msg T) error {
 }
 
 func (b *Broker[T]) Subscribe(ctx context.Context, handler mq.MessageHandler[T]) error {
+	b.connection.Wait(ctx)
 	// Limit in-flight unACK'd messages — backpressure against slow handlers.
 	if err := b.channel.Qos(b.prefetch, 0, false); err != nil {
 		return fmt.Errorf("rabbitmq set QoS: %w", err)
@@ -81,13 +157,13 @@ func (b *Broker[T]) Subscribe(ctx context.Context, handler mq.MessageHandler[T])
 		select {
 		case msg, ok := <-messages:
 			if !ok {
-				return errors.New("rabbitmq: channel closed unexpectedly")
+				return errors.New("mq: channel closed unexpectedly")
 			}
 
 			b.handle(ctx, msg, handler)
 
 		case <-ctx.Done():
-			return nil
+			return b.connection.Close(ctx)
 		}
 	}
 }
@@ -100,6 +176,13 @@ func (b *Broker[T]) handle(ctx context.Context, delivery amqp.Delivery, handler 
 	}
 
 	handler(ctx, msg)
+	err := delivery.Ack(true)
+	if err != nil {
+		b.logger.Error("mq: could not acknowledge delivery",
+			slog.String("reason", err.Error()),
+			slog.String("id", delivery.MessageId),
+		)
+	}
 }
 
 func (b *Broker[T]) Close(ctx context.Context) error {

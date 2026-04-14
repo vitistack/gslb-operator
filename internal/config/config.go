@@ -48,6 +48,8 @@ type Config struct {
 	api    API
 	gslb   GSLB
 	jwt    JWT
+	slack  Slack
+	mq     Mq
 }
 
 func GetInstance() *Config {
@@ -68,6 +70,14 @@ func (c *Config) GSLB() *GSLB {
 
 func (c *Config) JWT() *JWT {
 	return &c.jwt
+}
+
+func (c *Config) Slack() *Slack {
+	return &c.slack
+}
+
+func (c *Config) MQ() *Mq {
+	return &c.mq
 }
 
 // Server configuration
@@ -158,6 +168,29 @@ func (s *Slack) SigningSecret() string {
 	return s.SigningSecret()
 }
 
+type Mq struct {
+	USER     string `env:"MQ_USER"`
+	PASS     string `env:"MQ_PASS"`
+	ENDPOINT string `env:"MQ_ENDPOINT"`
+	PORT     string `env:"MQ_PORT"`
+}
+
+func (mq *Mq) User() string {
+	return mq.USER
+}
+
+func (mq *Mq) Pass() string {
+	return mq.PASS
+}
+
+func (mq *Mq) Endpoint() string {
+	return mq.ENDPOINT
+}
+
+func (mq *Mq) Port() string {
+	return mq.PORT
+}
+
 func newConfig() (*Config, error) {
 	fileLoader, err := loaders.NewFileLoader(
 		".env",
@@ -188,15 +221,16 @@ func newConfig() (*Config, error) {
 	}
 
 	jwtCfg := JWT{}
-
-	slack := Slack{}
+	slackCfg := Slack{}
+	mqCfg := Mq{}
 
 	configs := []any{
 		&serverCfg,
 		&apiCfg,
 		&gslbCfg,
 		&jwtCfg,
-		&slack,
+		&slackCfg,
+		&mqCfg,
 	}
 
 	for _, cfg := range configs {
@@ -211,5 +245,7 @@ func newConfig() (*Config, error) {
 		api:    apiCfg,
 		gslb:   gslbCfg,
 		jwt:    jwtCfg,
+		slack:  slackCfg,
+		mq:     mqCfg,
 	}, nil
 }
