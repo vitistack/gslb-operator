@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"slices"
 	"strings"
 	"sync"
@@ -121,7 +120,6 @@ func (eb *EventBus) dispatch(event *Event) {
 				defer eb.sem.Release()
 
 				handler.Handle(event)
-				log.Println(subType)
 			})
 		}
 	}

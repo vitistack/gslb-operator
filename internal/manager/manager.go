@@ -445,7 +445,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 
 		events.Emit(&events.Event{
 			Type: domainEvents.EventTypeGSLBServiceFailover,
-			Payload: domainEvents.GSLBFailoverEvent{
+			Payload: domainEvents.GSLBServiceFailoverEvent{
 				MemberOf:   event.Service,
 				LastActive: *event.OldActive.GSLBService(),
 				NewActive:  *event.NewActive.GSLBService(),
@@ -460,6 +460,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	if event.NewActive != nil { // first service to come up when all services are down
 		newActiveGSLBService := event.NewActive.GSLBService()
 		newActiveGSLBService.IsActive = true
+		
 		err := sm.svcRepo.Update(newActiveGSLBService)
 		if err != nil {
 			bslog.Error("failed to update active flag on service", slog.Any("newActive", event.NewActive))

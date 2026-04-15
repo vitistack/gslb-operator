@@ -3,10 +3,12 @@ package webhooks_broker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/webhooks"
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/mq"
 	"github.com/vitistack/gslb-operator/pkg/mq/rabbitmq"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
@@ -19,7 +21,7 @@ type WebhooksBroker struct {
 
 func New(ctx context.Context, store persistence.Store[model.WebHook]) *WebhooksBroker {
 	mqCfg := config.GetInstance().MQ()
-	return &WebhooksBroker{
+	broker := &WebhooksBroker{
 		repo: webhooks.NewWebHooksRepo(store),
 		client: rabbitmq.New(
 			ctx,
@@ -33,6 +35,18 @@ func New(ctx context.Context, store persistence.Store[model.WebHook]) *WebhooksB
 			rabbitmq.WithQueue[model.WebHook]("webhooks"),
 		),
 	}
+
+	webhooks, err := broker.repo.ReadAll()
+	if err != nil {
+		bslog.Error("failed read webhooks", slog.String("reason", err.Error()))
+		return broker
+	}
+
+	for _, hook := range webhooks {
+		Dispatch(hook)
+	}
+
+	return broker
 }
 
 func (w *WebhooksBroker) Subscribe(ctx context.Context) {
