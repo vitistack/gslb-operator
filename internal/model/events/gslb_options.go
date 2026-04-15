@@ -8,26 +8,33 @@ import (
 )
 
 func init() {
+	// registering each event type to resolve its event options on the fly when filtering events for emit
 	events.Register(EventTypeGSLB, func() events.FilterOption {
 		return &GSLBEventOptions{}
 	})
-	events.Register(EventTypeGSLBServiceMember, func() events.FilterOption {
-		return &GSLBMemberEventOptions{}
-	})
-	events.Register(EventTypeGSLBServiceMemberHealthChange, func() events.FilterOption {
-		return &GSLBMemberHealthChangeEventOptions{}
-	})
 	events.Register(EventTypeGSLBService, func() events.FilterOption {
 		return &GSLBServiceEventOptions{}
-	})
-	events.Register(EventTypeGSLBServiceFailover, func() events.FilterOption {
-		return &GSLBServiceFailoverEventOptions{}
 	})
 	events.Register(EventTypeGSLBServiceUp, func() events.FilterOption {
 		return &GSLBServiceUpEventOptions{}
 	})
 	events.Register(EventTypeGSLBServiceDown, func() events.FilterOption {
 		return &GSLBServiceDownEventOptions{}
+	})
+	events.Register(EventTypeGSLBServiceFailover, func() events.FilterOption {
+		return &GSLBServiceFailoverEventOptions{}
+	})
+	events.Register(EventTypeGSLBServiceMember, func() events.FilterOption {
+		return &GSLBServiceMemberEventOptions{}
+	})
+	events.Register(EventTypeGSLBServiceMemberHealthChange, func() events.FilterOption {
+		return &GSLBServiceMemberHealthChangeEventOptions{}
+	})
+	events.Register(EventTypeGSLBServiceMemberAdd, func() events.FilterOption {
+		return &GSLBServiceMemberAddEventOptions{}
+	})
+	events.Register(EventTypeGSLBServiceMemberRemove, func() events.FilterOption {
+		return &GSLBServiceMemberRemoveEventOptions{}
 	})
 	events.Register(EventTypeGSLBConfig, func() events.FilterOption {
 		return &GSLBConfigEventOptions{}
@@ -75,36 +82,6 @@ func (g *GSLBEventOptions) Filter() events.EventFilter {
 	}
 }
 
-type GSLBMemberEventOptions struct {
-	GSLBWebhookOptions
-}
-
-func (g *GSLBMemberEventOptions) Filter() events.EventFilter {
-	rawSelf, _ := json.Marshal(g)
-	return func(e *events.Event) bool {
-		child, err := events.ResolveOptions(e.Type, rawSelf)
-		if err != nil {
-			return true
-		}
-
-		return child.Filter()(e)
-	}
-}
-
-type GSLBMemberHealthChangeEventOptions struct {
-	GSLBWebhookOptions
-}
-
-func (g *GSLBMemberHealthChangeEventOptions) Filter() events.EventFilter {
-	return func(e *events.Event) bool {
-		body, ok := e.Payload.(GSLBServiceMemberHealthChangeEvent)
-		if !ok {
-			return false
-		}
-		return g.matches(body.Member.MemberOf)
-	}
-}
-
 type GSLBServiceEventOptions struct {
 	GSLBWebhookOptions
 }
@@ -118,20 +95,6 @@ func (g *GSLBServiceEventOptions) Filter() events.EventFilter {
 		}
 
 		return child.Filter()(e)
-	}
-}
-
-type GSLBServiceFailoverEventOptions struct {
-	GSLBWebhookOptions
-}
-
-func (g *GSLBServiceFailoverEventOptions) Filter() events.EventFilter {
-	return func(e *events.Event) bool {
-		body, ok := e.Payload.(GSLBFailoverEvent)
-		if !ok {
-			return false
-		}
-		return g.matches(body.MemberOf)
 	}
 }
 
@@ -162,6 +125,78 @@ func (g *GSLBServiceDownEventOptions) Filter() events.EventFilter {
 		}
 
 		return g.matches(body.MemberOf)
+	}
+}
+
+type GSLBServiceFailoverEventOptions struct {
+	GSLBWebhookOptions
+}
+
+func (g *GSLBServiceFailoverEventOptions) Filter() events.EventFilter {
+	return func(e *events.Event) bool {
+		body, ok := e.Payload.(GSLBServiceFailoverEvent)
+		if !ok {
+			return false
+		}
+		return g.matches(body.MemberOf)
+	}
+}
+
+type GSLBServiceMemberEventOptions struct {
+	GSLBWebhookOptions
+}
+
+func (g *GSLBServiceMemberEventOptions) Filter() events.EventFilter {
+	rawSelf, _ := json.Marshal(g)
+	return func(e *events.Event) bool {
+		child, err := events.ResolveOptions(e.Type, rawSelf)
+		if err != nil {
+			return true
+		}
+
+		return child.Filter()(e)
+	}
+}
+
+type GSLBServiceMemberHealthChangeEventOptions struct {
+	GSLBWebhookOptions
+}
+
+func (g *GSLBServiceMemberHealthChangeEventOptions) Filter() events.EventFilter {
+	return func(e *events.Event) bool {
+		body, ok := e.Payload.(GSLBServiceMemberHealthChangeEvent)
+		if !ok {
+			return false
+		}
+		return g.matches(body.Member.MemberOf)
+	}
+}
+
+type GSLBServiceMemberAddEventOptions struct {
+	GSLBWebhookOptions
+}
+
+func (g *GSLBServiceMemberAddEventOptions) Filter() events.EventFilter {
+	return func(e *events.Event) bool {
+		body, ok := e.Payload.(GSLBServiceMemberAddEvent)
+		if !ok {
+			return false
+		}
+		return g.matches(body.Service, body.NewMember.MemberOf)
+	}
+}
+
+type GSLBServiceMemberRemoveEventOptions struct {
+	GSLBWebhookOptions
+}
+
+func (g *GSLBServiceMemberRemoveEventOptions) Filter() events.EventFilter {
+	return func(e *events.Event) bool {
+		body, ok := e.Payload.(GSLBServiceMemberRemoveEvent)
+		if !ok {
+			return false
+		}
+		return g.matches(body.Service, body.Removed.MemberOf)
 	}
 }
 

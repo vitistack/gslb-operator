@@ -10,7 +10,7 @@ type DNSDistSpoofCreateEvent struct {
 	Spoof spoofs.Spoof
 }
 
-func (e *DNSDistSpoofCreateEvent) SlackValue() slack.MsgOption {
+func (e DNSDistSpoofCreateEvent) SlackValue() slack.MsgOption {
 	return slack.MsgOptionBlocks()
 }
 
@@ -19,6 +19,27 @@ type DNSDistSpoofDeleteEvent struct {
 	Spoof spoofs.Spoof
 }
 
-func (e *DNSDistSpoofDeleteEvent) SlackValue() slack.MsgOption {
+func (e DNSDistSpoofDeleteEvent) SlackValue() slack.MsgOption {
+	return slack.MsgOptionBlocks()
+}
+
+type DNSDistSynchStartedEvent struct {
+}
+
+func (e DNSDistSynchStartedEvent) SlackValue() slack.MsgOption {
+	return slack.MsgOptionBlocks()
+}
+
+type DNSDistSynchCompletedEvent struct {
+}
+
+func (e DNSDistSynchCompletedEvent) SlackValue() slack.MsgOption {
+	return slack.MsgOptionBlocks()
+}
+
+type DNSDistSynchFailedEvent struct {
+}
+
+func (e DNSDistSynchFailedEvent) SlackValue() slack.MsgOption {
 	return slack.MsgOptionBlocks()
 }
