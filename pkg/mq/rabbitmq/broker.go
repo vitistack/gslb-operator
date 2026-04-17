@@ -31,6 +31,7 @@ func New[T any](ctx context.Context, ampqURL string, opts ...brokerOption[T]) mq
 		logger:     slog.Default(),
 		retry:      3,
 	}
+	broker.retryConnectionBackoff = connectionRetryBackoff * 15
 
 	broker.connection.onNewConnection = broker.declareTopology
 
@@ -39,11 +40,14 @@ func New[T any](ctx context.Context, ampqURL string, opts ...brokerOption[T]) mq
 	}
 
 	go func() {
-		err := broker.connection.connect()
+		err := broker.connection.connect(ctx)
 		for err != nil {
-			broker.logger.Error("mq: failed to connect", slog.String("reason", err.Error()))
-			time.Sleep(time.Second * 30)
-			err = broker.connection.connect()
+			broker.logger.Error("mq: failed to connect",
+				slog.String("reason", err.Error()),
+				slog.String("retry", broker.retryConnectionBackoff.String()),
+			)
+			time.Sleep(broker.retryConnectionBackoff)
+			err = broker.connection.connect(ctx)
 		}
 	}()
 
@@ -134,6 +138,10 @@ func (b *Broker[T]) Publish(ctx context.Context, msg T) error {
 
 func (b *Broker[T]) Subscribe(ctx context.Context, handler mq.MessageHandler[T]) error {
 	b.connection.Wait(ctx)
+	if ctx.Err() != nil {
+		return fmt.Errorf("mq: failed to subscribe: %w", ctx.Err())
+	}
+
 	// Limit in-flight unACK'd messages — backpressure against slow handlers.
 	if err := b.channel.Qos(b.prefetch, 0, false); err != nil {
 		return fmt.Errorf("rabbitmq set QoS: %w", err)

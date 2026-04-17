@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"time"
 
@@ -15,16 +16,19 @@ import (
 const connectionRetryBackoff = time.Second // backoff on connection failure
 
 type connection struct {
-	conn             *amqp.Connection
-	channel          *amqp.Channel
+	conn    *amqp.Connection
+	channel *amqp.Channel
+	amqpURL string
+
 	connectionClosed chan *amqp.Error
 	channelClosed    chan *amqp.Error
 	channelCancelled chan string
 	ready            chan struct{} // wait for connection reconnect
-	logger           *slog.Logger
-	amqpURL          string
-	retry            int // amount of times to retry on connection failure
-	lock             *sync.Mutex
+
+	logger                 *slog.Logger
+	retry                  int // amount of times to retry on connection failure
+	lock                   *sync.Mutex
+	retryConnectionBackoff time.Duration
 
 	// calls function on successfull creation of new connection
 	onNewConnection func() error
@@ -32,10 +36,10 @@ type connection struct {
 
 func newConnection(ctx context.Context, amqpUrl string) *connection {
 	c := &connection{
+		amqpURL: amqpUrl,
 		ready:   make(chan struct{}),
 		logger:  slog.Default(),
 		retry:   5,
-		amqpURL: amqpUrl,
 		lock:    &sync.Mutex{},
 	}
 
@@ -45,36 +49,59 @@ func newConnection(ctx context.Context, amqpUrl string) *connection {
 }
 
 func (c *connection) Close(_ context.Context) error {
-	return errors.Join(
-		c.conn.Close(),
-		c.channel.Close(),
-	)
+	if c.conn != nil && c.channel != nil {
+		return errors.Join(
+			c.conn.Close(),
+			c.channel.Close(),
+		)
+	}
+	return nil
 }
 
-func (c *connection) reconnect() {
-	err := c.connect()
+func (c *connection) reconnect(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	err := c.connect(ctx)
 	for err != nil {
-		c.logger.Error("mq: failed to reconnect", slog.String("reason", err.Error()))
-		time.Sleep(time.Second * 30)
+		c.logger.Error("mq: failed to reconnect",
+			slog.String("reason", err.Error()),
+			slog.String("retry", c.retryConnectionBackoff.String()),
+		)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(c.retryConnectionBackoff):
+		}
 		c.logger.Info("mq: retrying reconnection")
-		err = c.connect()
+		err = c.connect(ctx)
 	}
 }
 
-func (c *connection) connect() error {
+func (c *connection) connect(ctx context.Context) error {
 	c.lock.Lock()
-	c.ready = make(chan struct{})
+	if c.ready == nil {
+		c.ready = make(chan struct{})
+	}
 	c.lock.Unlock()
+
+	var conn *amqp.Connection
+	var channel *amqp.Channel
 
 	var err error = errors.New("nil") // init to atleast try once
 	counter := 0
 
 	for err != nil && counter < c.retry {
 		err = nil
-		c.conn, err = amqp.DialConfig(c.amqpURL,
+		conn, err = amqp.DialConfig(c.amqpURL,
 			amqp.Config{
-				Heartbeat:       time.Second * 10,
+				Heartbeat:       time.Second * 5,
 				TLSClientConfig: &tls.Config{},
+
+				// do context aware dial
+				Dial: func(network, addr string) (net.Conn, error) {
+					return (&net.Dialer{}).DialContext(ctx, network, addr)
+				},
 			},
 		)
 		if err != nil {
@@ -86,9 +113,9 @@ func (c *connection) connect() error {
 			continue
 		}
 
-		c.channel, err = c.conn.Channel()
+		channel, err = conn.Channel()
 		if err != nil {
-			c.conn.Close()
+			conn.Close()
 			err = fmt.Errorf("failed to open channel: %w", err)
 
 			sleepFor := connectionRetryBackoff * time.Duration(counter+1)
@@ -102,11 +129,16 @@ func (c *connection) connect() error {
 		return err
 	}
 
+	c.conn = conn
+	c.channel = channel
+
 	// since amqp - lib closes the channels on close
 	// we need to create them again for every new connection that is made
+	c.lock.Lock()
 	c.connectionClosed = make(chan *amqp.Error, 1)
 	c.channelClosed = make(chan *amqp.Error, 1)
 	c.channelCancelled = make(chan string, 1)
+	c.lock.Unlock()
 
 	c.conn.NotifyClose(c.connectionClosed)
 	c.channel.NotifyClose(c.channelClosed)
@@ -118,16 +150,18 @@ func (c *connection) connect() error {
 	}
 
 	close(c.ready) // broadcast ready
+	c.ready = nil
 	c.logger.Info("mq: successfully established connection")
+
 	return nil
 }
 
 // handleConnection ensures that the amqp connection remains intact
 // and reconnects when notified of connection issues
 func (c *connection) handleConnection(ctx context.Context) {
-	for {
-		c.Wait(ctx)
+	c.Wait(ctx)
 
+	for {
 		c.lock.Lock()
 		connectionClosed := c.connectionClosed
 		channelClosed := c.channelClosed
@@ -138,15 +172,23 @@ func (c *connection) handleConnection(ctx context.Context) {
 		case <-ctx.Done():
 			return
 
-		case connClosed := <-connectionClosed:
+		case connClosed, ok := <-connectionClosed:
+			if !ok {
+				continue
+			}
+
 			c.logger.Warn("mq: connection closed unexpectedly",
 				slog.String("reason", connClosed.Reason),
 				slog.String("error", connClosed.Error()),
 			)
 
-			c.reconnect()
+			c.reconnect(ctx)
 
-		case chanClosed := <-channelClosed:
+		case chanClosed, ok := <-channelClosed:
+			if !ok {
+				continue
+			}
+
 			c.logger.Warn("mq: channel closed unexpectedly",
 				slog.String("reason", chanClosed.Reason),
 				slog.String("error", chanClosed.Error()),
@@ -166,9 +208,12 @@ func (c *connection) handleConnection(ctx context.Context) {
 				}
 			}
 
-			c.reconnect()
+			c.reconnect(ctx)
 
-		case reason := <-channelCancelled:
+		case reason, ok := <-channelCancelled:
+			if !ok {
+				continue
+			}
 
 			c.logger.Warn("mq: channel cancelled unexpectedly",
 				slog.String("reason", reason),
@@ -181,13 +226,22 @@ func (c *connection) handleConnection(ctx context.Context) {
 				}
 			}
 
-			c.reconnect()
+			c.reconnect(ctx)
 		}
 	}
 }
 
 // waits for connection to be ready/initialized
 func (c *connection) Wait(ctx context.Context) {
+	c.lock.Lock()
+	ready := c.ready
+	c.lock.Unlock()
+
+	// connection already established
+	if ready == nil {
+		return
+	}
+
 	select {
 	case <-ctx.Done():
 		return
