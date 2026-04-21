@@ -74,10 +74,12 @@ func (ws *WebhooksService) CreateWebHook(w http.ResponseWriter, r *http.Request)
 
 	err = ws.webHooksRepo.Create(wh)
 	if err != nil {
+		/* TODO!!!!!
 		// delete all the event handlers since we could not store it
 		for _, event := range wh.Events {
 			events.Remove(event.Type, wh.ID)
 		}
+		*/
 
 		bslog.Error(
 			"unable to store webhook",
@@ -116,9 +118,6 @@ func (ws *WebhooksService) UpdateWebhook(w http.ResponseWriter, r *http.Request)
 		bslog.Error("failed to update webhook", slog.String("reason", err.Error()))
 		return
 	}
-
-
-
 }
 */
 

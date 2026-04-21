@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
@@ -33,6 +34,7 @@ func New(ctx context.Context, store persistence.Store[model.WebHook]) *WebhooksB
 				mqCfg.Port(),
 			),
 			rabbitmq.WithQueue[model.WebHook]("webhooks"),
+			rabbitmq.WithRetryConnectionBackOff[model.WebHook](time.Second*10),
 		),
 	}
 
