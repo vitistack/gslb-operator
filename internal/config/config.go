@@ -74,6 +74,7 @@ func (c *Config) JWT() *JWT {
 type Server struct {
 	ENV         string `env:"SRV_ENV" flag:"env"`
 	LUA_SANDBOX string `env:"SRV_LUA_SANDBOX" flag:"lua-sandbox"`
+	LOG_LEVEL   string `env:"SRV_LOG_LEVEL" flag:"log-level"`
 }
 
 func (s *Server) Env() string {
@@ -82,6 +83,10 @@ func (s *Server) Env() string {
 
 func (s *Server) LuaSandbox() string {
 	return s.LUA_SANDBOX
+}
+
+func (s *Server) LogLevel() string {
+	return s.LOG_LEVEL
 }
 
 // API configuration
