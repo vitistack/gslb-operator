@@ -79,3 +79,13 @@ install-tools: ## Install development tools
 	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 	@go install golang.org/x/vuln/cmd/govulncheck@latest;
 	@echo "Development tools installed!"
+
+##@ Events
+.PHONY: events
+EVENTS_FILE := internal/model/events/types.go
+list-events: ## List all event type values defined in internal/model/events/types.go
+	@grep -oE '"[^"/]+"' $(EVENTS_FILE) | tr -d '"'
+
+.PHONY: events-json
+list-events-json: ## List all event type values as a JSON object
+	@grep -oE '"[^"/]+"' $(EVENTS_FILE) | tr -d '"' | jq -R . | jq -s '{events: .}'
