@@ -239,7 +239,10 @@ func (s *Service) GetPriority() int {
 }
 
 func (s *Service) GetIP() string {
-	return s.addr.IP.String()
+	if s.addr != nil {
+		return s.addr.IP.String()
+	}
+	return ""
 }
 
 func (s *Service) GetDefaultInterval() timesutil.Duration {
