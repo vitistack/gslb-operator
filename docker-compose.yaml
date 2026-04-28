@@ -72,6 +72,20 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+  
+  rabbitmq:
+    image: rabbitmq:3-management
+    profiles:
+      - rabbitmq
+      - all
+    environment:
+      RABBITMQ_DEFAULT_USER: devuser
+      RABBITMQ_DEFAULT_PASS: devpass
+    ports:
+      - "5672:5672" # AMQP
+      - "15672:15672" # Management UI
+    volumes:
+      - ./data/rabbitmq:/var/lib/rabbitmq
 
 volumes:
   prometheus-data:

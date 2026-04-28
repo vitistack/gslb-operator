@@ -32,7 +32,7 @@ func (ss *SpoofsService) GetSpoofs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := spoofs.NewSpoofResponse(data, params)
+	resp := pagination.NewPaginationResult(params, data)
 	response.JSON(w, http.StatusOK, resp)
 }
 

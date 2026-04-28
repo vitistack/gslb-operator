@@ -14,4 +14,18 @@
 
 - Webhooks notifies on event?
 
-- worker pool stats handling from manager
+- dnsdist ping (for grafana dashboard connectivity?)
+
+- handle script change on HTTP response validation
+
+- in an override situation
+    - dnsdist override should not happen from operator, but CLI either from operator pod, or from client
+    - operator should flag service with override in storage
+    - on override deletion, operator compares with dnsdist if the override reflects the active in service group
+        - make appropriate changes if not
+    - think of fix for the dnsdist sync job!
+
+- CLI
+    inside deployment pod for doing admin tasks
+
+- slog multi-handler for splunk logging of loglevel > INFO

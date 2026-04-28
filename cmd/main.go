@@ -13,7 +13,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/failover"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
+	"github.com/vitistack/gslb-operator/internal/api/handlers/webhooks"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
+	whBroker "github.com/vitistack/gslb-operator/internal/brokers/webhooks"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
 	"github.com/vitistack/gslb-operator/internal/dns/update"
@@ -23,6 +25,7 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/auth"
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
+	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/lua"
 	"github.com/vitistack/gslb-operator/pkg/persistence/store/file"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
@@ -51,6 +54,11 @@ func main() {
 	}
 	svcRepo := service.NewServiceRepo(serviceFileStore)
 
+	webhooksFileStore, err := file.NewStore[model.WebHook]("./data/webhooks.json")
+	if err != nil {
+		bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
+	}
+
 	// creating dns - handler objects
 	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
 	mgr := manager.NewManager(
@@ -73,6 +81,11 @@ func main() {
 
 	background := context.Background()
 	ctx, cancel := context.WithCancel(background)
+
+	// mq brokers
+	webhooksBroker := whBroker.New(ctx, webhooksFileStore)
+	webhooksBroker.Subscribe(ctx)
+
 	dnsHandler.Start(ctx, cancel)
 	updater.Synchronize(ctx)
 
@@ -88,16 +101,18 @@ func main() {
 
 	// routes handlers
 	spoofsApiService := spoofs.NewSpoofsService(serviceFileStore, mgr)
-
 	failoverApiService := failover.NewFailoverService(mgr)
+	webhooksApiService := webhooks.NewWebhookService(webhooksFileStore)
 
 	// initializing the service jwt self signer
 	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
 
+	// failover
 	api.HandleFunc(routes.POST_FAILOVER, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),
 	)(failoverApiService.FailoverService))
 
+	// spoofs
 	api.HandleFunc(routes.GET_SPOOFS, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),
 		auth.WithTokenValidation(slog.Default()),
@@ -130,6 +145,25 @@ func main() {
 	api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),
 	)(spoofsApiService.DeleteOverride))
+
+	// webhooks
+	api.HandleFunc(routes.GET_WEBHOOKS, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(webhooksApiService.GetWebhooks))
+
+	api.HandleFunc(routes.POST_WEBHOOKS, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(webhooksApiService.CreateWebHook))
+
+	/*
+		api.HandleFunc(routes.PUT_WEBHOOKS, middleware.Chain(
+			middleware.WithIncomingRequestLogging(slog.Default()),
+		)(webhooksApiService.UpdateWebhook))
+	*/
+
+	api.HandleFunc(routes.DELETE_WEBHOOKS, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(webhooksApiService.DeleteWebhook))
 
 	// metrics
 	api.Handle(routes.METRICS, promhttp.Handler())
@@ -164,6 +198,9 @@ func main() {
 	if err := server.Shutdown(shutdown); err != nil {
 		panic("error shutting down server: " + err.Error())
 	}
+
+	// stop event handling
+	events.Stop(shutdown)
 }
 
 //func getRandomGSLBConfig() []model.GSLBConfig {

@@ -5,9 +5,12 @@ import (
 	"log/slog"
 	"slices"
 	"sync"
+	"time"
 
+	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
+	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/models/failover"
 )
 
@@ -208,6 +211,15 @@ func (sg *ServiceGroup) RegisterService(newService *service.Service) {
 
 	sg.Update()
 	serviceGroupMembers.WithLabelValues(newService.MemberOf).Inc()
+	events.Emit(&events.Event{
+		Type: domainEvents.EventTypeGSLBServiceMemberAdd,
+		Payload: domainEvents.GSLBServiceMemberAddEvent{
+			Service:   newService.MemberOf,
+			NewMember: *newService.GSLBService(),
+		},
+		Timestamp: time.Now(),
+		ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, newService.MemberOf),
+	})
 }
 
 func (sg *ServiceGroup) RemoveService(id string) bool {
@@ -220,10 +232,21 @@ func (sg *ServiceGroup) RemoveService(id string) bool {
 	})
 	if idx != -1 {
 		sg.mu.Lock()
+		removed := members[idx]
 		sg.Members = append(members[:idx], members[idx+1:]...)
 		sg.mu.Unlock()
 		sg.Update()
 		serviceGroupMembers.WithLabelValues(sg.Name).Dec()
+
+		events.Emit(&events.Event{
+			Type: domainEvents.EventTypeGSLBServiceMemberRemove,
+			Payload: domainEvents.GSLBServiceMemberAddEvent{
+				Service:   removed.MemberOf,
+				NewMember: *removed.GSLBService(),
+			},
+			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, removed.MemberOf),
+		})
 	}
 
 	return len(sg.Members) == 0
