@@ -26,8 +26,8 @@ func TestTree(t *testing.T) {
 			EventType("major:minor"),
 			':',
 			[]EventType{
-				EventType("major"),
 				EventType("major:minor"),
+				EventType("major"),
 			},
 		},
 		{
@@ -35,9 +35,9 @@ func TestTree(t *testing.T) {
 			EventType("major:minor:fix"),
 			':',
 			[]EventType{
-				EventType("major"),
-				EventType("major:minor"),
 				EventType("major:minor:fix"),
+				EventType("major:minor"),
+				EventType("major"),
 			},
 		},
 	}
