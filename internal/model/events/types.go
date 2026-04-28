@@ -35,4 +35,16 @@ const (
 	EventTypeDNSDISTSynchStarted   events.EventType = "dnsdist:synch:started"
 	EventTypeDNSDISTSynchCompleted events.EventType = "dnsdist:synch:completed"
 	EventTypeDNSDISTSynchFailed    events.EventType = "dnsdist:synch:failed"
+
+	EventTypeDNSDISTServer           events.EventType = "dnsdist:server"
+	EventTypeDNSDISTServerOutOfSynch events.EventType = "dnsdist:server:out-of-synch"
+)
+
+// DNS - specific event types
+const (
+	EventTypeDNS                      events.EventType = "dns"
+	EventTypeDNSZoneTransfer          events.EventType = "dns:zonetransfer"
+	EventTypeDNSZoneTransferStarted   events.EventType = "dns:zonetransfer:started"
+	EventTypeDNSZoneTransferCompleted events.EventType = "dns:zonetransfer:completed"
+	EventTypeDNSZoneTransferFailed    events.EventType = "dns:zonetransfer:failed"
 )

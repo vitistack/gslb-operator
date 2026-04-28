@@ -38,6 +38,7 @@ func (e DNSDistSynchCompletedEvent) SlackValue() slack.MsgOption {
 }
 
 type DNSDistSynchFailedEvent struct {
+	Reason string
 }
 
 func (e DNSDistSynchFailedEvent) SlackValue() slack.MsgOption {

@@ -46,6 +46,7 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 	if err != nil {
 		return nil, fmt.Errorf("could could not load dnsdist servers configuration: %w", err)
 	}
+
 	servers := []model.DNSDISTServer{}
 	err = json.Unmarshal(file, &servers)
 	if err != nil {
@@ -189,7 +190,8 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 				return
 			}
 
-			rawHash := sha256.Sum256(marshalledSpoofs) // creating bytes representation of spoofs
+			// hash representation of all spoofs
+			rawHash := sha256.Sum256(marshalledSpoofs)
 			hash := hex.EncodeToString(rawHash[:])
 			if hash != desiredHash {
 				err := d.reconcileServer(client, data)

@@ -14,7 +14,7 @@ func NewNotifier(format string) Notifier {
 	env := config.GetInstance().Server().Env()
 
 	switch env {
-	case "dev", "development", "DEV", "DEVELOPMENT":
+	case "dev", "development", "DEV", "DEVELOPMENT", "local":
 		return &MockNotifier{}
 	default:
 		switch format {

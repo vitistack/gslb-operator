@@ -10,6 +10,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/webhooks"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
+	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/mq"
 	"github.com/vitistack/gslb-operator/pkg/mq/rabbitmq"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
@@ -57,9 +58,23 @@ func (w *WebhooksBroker) Subscribe(ctx context.Context) {
 
 // handler function for webhooks registration
 func (w *WebhooksBroker) handle(ctx context.Context, wh model.WebHook) error {
+	bslog.Debug("received webhook new webhook", slog.Any("webhook", wh))
+
 	err := Dispatch(wh)
 	if err != nil {
-		return fmt.Errorf("failed to dispatch webhook: %w", err)
+		err := fmt.Errorf("failed to dispatch webhook: %w", err)
+		bslog.Error("failed to process new webhooks registration", slog.String("reason", err.Error()))
+		return err
+	}
+
+	err = w.repo.Create(wh)
+	if err != nil {
+		err := fmt.Errorf("failed to store webhook: %w", err)
+		bslog.Error("failed to process new webhooks registration", slog.String("reason", err.Error()))
+
+		// remove all registered event handlers for the webhook
+		events.RemoveAll(wh.ID)
+		return err
 	}
 
 	return nil

@@ -14,21 +14,6 @@ type Dispatcher struct {
 	notifier notifications.Notifier
 }
 
-func Dispatch(wh model.WebHook) error {
-	dispatcher := &Dispatcher{
-		webhook: wh,
-	}
-
-	dispatcher.notifier = notifications.NewNotifier(wh.Options.Format)
-
-	err := wh.Apply(dispatcher)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func (d *Dispatcher) Handle(e *events.Event) {
 	err := d.notifier.Publish(e, d.webhook)
 	if err != nil {
@@ -41,4 +26,24 @@ func (d *Dispatcher) Handle(e *events.Event) {
 
 func (d *Dispatcher) GetID() string {
 	return d.webhook.ID
+}
+
+func Dispatch(wh model.WebHook) error {
+	// remove old references for the webhook
+	// re-registration replaces old version
+	events.RemoveAll(wh.ID)
+
+	dispatcher := &Dispatcher{
+		webhook: wh,
+		notifier: notifications.NewNotifier(wh.Options.Format),
+	}
+
+	err := wh.Apply(dispatcher)
+	if err != nil {
+		return err
+	}
+
+	bslog.Info("new webhook registered", slog.Any("webhook", wh))
+
+	return nil
 }

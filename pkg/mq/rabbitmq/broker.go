@@ -54,6 +54,7 @@ func New[T any](ctx context.Context, ampqURL string, opts ...brokerOption[T]) mq
 	return broker
 }
 
+// TODO: implement full version
 func (b *Broker[T]) declareTopology() error {
 	if b.exchange != "" {
 		// declare exchange with queue
@@ -167,7 +168,6 @@ func (b *Broker[T]) Subscribe(ctx context.Context, handler mq.MessageHandler[T])
 			if !ok {
 				return errors.New("mq: channel closed unexpectedly")
 			}
-
 			b.handle(ctx, msg, handler)
 
 		case <-ctx.Done():
@@ -183,8 +183,12 @@ func (b *Broker[T]) handle(ctx context.Context, delivery amqp.Delivery, handler 
 		return
 	}
 
-	handler(ctx, msg)
-	err := delivery.Ack(true)
+	err := handler(ctx, msg)
+	if err != nil {
+		delivery.Reject(false)
+	}
+
+	err = delivery.Ack(true)
 	if err != nil {
 		b.logger.Error("mq: could not acknowledge delivery",
 			slog.String("reason", err.Error()),

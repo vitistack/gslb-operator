@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"log/slog"
+	"strings"
 
 	"github.com/vitistack/gslb-operator/pkg/events"
 )
@@ -37,14 +38,20 @@ func (wh *WebHook) Apply(dispatcher events.EventHandler) error {
 	return nil
 }
 
-func (wh *WebHook) LogValue() slog.Value {
+func (wh WebHook) LogValue() slog.Value {
 	types := make([]string, len(wh.Subscription.Events))
 	for i, sub := range wh.Subscription.Events {
 		types[i] = string(sub)
 	}
+
+	// multi trimming the options for better printing
+	replacer := strings.NewReplacer(" ", "", "\t", "", "\n", "")
+	options := replacer.Replace(string(wh.Subscription.Options))
+
 	return slog.GroupValue(
 		slog.String("id", wh.ID),
 		slog.Any("url", wh.URL),
 		slog.Any("events", types),
+		slog.String("eventsOptions", options),
 	)
 }

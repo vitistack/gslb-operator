@@ -81,7 +81,7 @@ func NewBus() *EventBus {
 	}
 }
 
-func (eb *EventBus) On(typ EventType, handler EventHandler, filters ...EventFilter) {
+func (eb *EventBus) On(typ EventType, handler EventHandler, filters ...EventFilter) {	
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 
