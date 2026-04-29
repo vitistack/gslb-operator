@@ -2,21 +2,27 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"log/slog"
 )
 
-type SplunkHandlerOptions struct {
-	slog.HandlerOptions
-}
-
+// sending all log messages to splunk that are above a given loglevel threshold
 type SplunkHandler struct {
 	LevelThreshold slog.Level
 	secret         string
+	index          string
 	base           slog.Handler
 }
 
-func NewSplunkHandler(secret string) *SplunkHandler {
-	return &SplunkHandler{}
+func NewSplunkHandler(secret, index string, threshold slog.Level, base slog.Handler) *SplunkHandler {
+	handler := &SplunkHandler{
+		LevelThreshold: threshold,
+		secret:         secret,
+		index:          index,
+		base:           base,
+	}
+
+	return handler
 }
 
 func (h SplunkHandler) Enabled(ctx context.Context, level slog.Level) bool {
@@ -25,6 +31,7 @@ func (h SplunkHandler) Enabled(ctx context.Context, level slog.Level) bool {
 
 // sends record to splunk
 func (h SplunkHandler) Handle(ctx context.Context, record slog.Record) error {
+	log.Println("UN-IMPLEMENTED SPLUNK HANDLE")
 	return nil
 }
 

@@ -8,10 +8,6 @@ import (
 	"strings"
 )
 
-type DevModeOptions struct {
-	slog.HandlerOptions
-}
-
 type Devmode struct {
 	base slog.Handler
 }
