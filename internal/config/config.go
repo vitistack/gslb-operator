@@ -1,6 +1,7 @@
 package config
 
 import (
+	"io"
 	"log"
 	"log/slog"
 	"os"
@@ -19,25 +20,33 @@ func init() {
 		log.Fatalf("unable to load config: %s", err.Error())
 	}
 
-	var handler slog.Handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level:       slog.LevelDebug,
+	var handler slog.Handler
+	handlerOpts := &slog.HandlerOptions{
+		Level:       cfg.Server().LogLevel(),
 		ReplaceAttr: bslog.BaseReplaceAttr,
-	})
+	}
 
 	switch cfg.server.ENV {
 	case "dev", "development", "DEV", "DEVELOPMENT":
 		handler = bslog.NewHandler(
-			slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-				Level:       slog.LevelDebug,
-				ReplaceAttr: bslog.BaseReplaceAttr,
-			}),
+			os.Stdout, // log output
+			// slog handler factory
+			func(w io.Writer) slog.Handler {
+				return slog.NewTextHandler(w, handlerOpts)
+			},
+			// options
 			bslog.InDevMode(),
+			bslog.WithColor(),
 		)
+
 	case "prod", "production", "PROD", "PRODUCTION":
-		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level:       slog.LevelInfo,
-			ReplaceAttr: bslog.BaseReplaceAttr,
-		})
+		handler = bslog.NewHandler(
+			os.Stdout,
+			func(w io.Writer) slog.Handler {
+				return slog.NewJSONHandler(w, handlerOpts)
+			},
+			bslog.WithSplunkMultiHandler("<secret>", "<splunk_index>", slog.LevelInfo),
+		)
 	}
 
 	slog.SetDefault(slog.New(handler))
@@ -84,6 +93,7 @@ func (c *Config) MQ() *Mq {
 type Server struct {
 	ENV         string `env:"SRV_ENV" flag:"env"`
 	LUA_SANDBOX string `env:"SRV_LUA_SANDBOX" flag:"lua-sandbox"`
+	LOG_LEVEL   string `env:"SRV_LOG_LEVEL" flag:"log-level"`
 }
 
 func (s *Server) Env() string {
@@ -92,6 +102,23 @@ func (s *Server) Env() string {
 
 func (s *Server) LuaSandbox() string {
 	return s.LUA_SANDBOX
+}
+
+func (s *Server) LogLevel() slog.Level {
+	switch s.LOG_LEVEL {
+	case "debug", "DEBUG":
+		return slog.LevelDebug
+	case "info", "INFO":
+		return slog.LevelInfo
+	case "warn", "WARN":
+		return slog.LevelWarn
+	case "error", "ERROR":
+		return slog.LevelError
+	case "fatal", "FATAL":
+		return bslog.LevelFatal
+	default:
+		return slog.LevelDebug
+	}
 }
 
 // API configuration

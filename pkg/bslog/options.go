@@ -1,6 +1,7 @@
 package bslog
 
 import (
+	"io"
 	"log/slog"
 
 	"github.com/vitistack/gslb-operator/pkg/bslog/handlers"
@@ -11,6 +12,17 @@ var CustomLevelNames = map[slog.Level]string{
 }
 
 type ReplaceAttrFunc func(groups []string, a slog.Attr) slog.Attr
+
+type handlerFactory func(io.Writer) slog.Handler
+type handlerOption func(handlerFactory) handlerFactory
+
+func NewHandler(out io.Writer, factory handlerFactory, opts ...handlerOption) slog.Handler {
+	for _, opt := range opts {
+		factory = opt(factory)
+	}
+
+	return factory(out)
+}
 
 func BaseReplaceAttr(groups []string, a slog.Attr) slog.Attr {
 	if a.Key == slog.LevelKey {
@@ -31,10 +43,30 @@ func BaseReplaceAttr(groups []string, a slog.Attr) slog.Attr {
 	return a
 }
 
-type handlerOption func(base slog.Handler) slog.Handler
-
 func InDevMode() handlerOption {
-	return func(base slog.Handler) slog.Handler {
-		return handlers.NewDevModeHandler(base)
+	return func(factory handlerFactory) handlerFactory {
+		return func(w io.Writer) slog.Handler {
+			return handlers.NewDevModeHandler(factory(w))
+		}
+	}
+}
+
+func WithColor() handlerOption {
+	return func(factory handlerFactory) handlerFactory {
+		return func(w io.Writer) slog.Handler {
+			return handlers.NewColorHandler(w, factory)
+		}
+	}
+}
+
+func WithSplunkMultiHandler(secret, index string, threshold slog.Level) handlerOption {
+	return func(factory handlerFactory) handlerFactory {
+		return func(w io.Writer) slog.Handler {
+			base := factory(w)
+			return slog.NewMultiHandler(
+				base,
+				handlers.NewSplunkHandler(secret, index, threshold, base),
+			)
+		}
 	}
 }

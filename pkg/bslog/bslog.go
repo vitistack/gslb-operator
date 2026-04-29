@@ -6,14 +6,6 @@ import (
 	"os"
 )
 
-func NewHandler(base slog.Handler, opts ...handlerOption) slog.Handler {
-	for _, opt := range opts {
-		base = opt(base)
-	}
-
-	return base
-}
-
 func Debug(msg string, args ...any) {
 	slog.Debug(msg, args...)
 }
