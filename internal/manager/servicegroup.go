@@ -79,8 +79,14 @@ func NewEmptyServiceGroup(name string) *ServiceGroup {
 // returns the active service in ActivePassive mode,
 // or returns the first healthy service in ActiveActive if no explicit active is set.
 func (sg *ServiceGroup) GetActive() *service.Service {
+	bslog.Debug("trying to aquire Rlock")
 	sg.mu.RLock()
-	defer sg.mu.RUnlock()
+	bslog.Debug("got Rlock")
+	defer func() {
+		bslog.Debug("releasing Rlock")
+		sg.mu.RUnlock()
+	}()
+
 	switch sg.mode {
 	case ActivePassive:
 		if sg.active != nil {
@@ -101,8 +107,13 @@ func (sg *ServiceGroup) GetActive() *service.Service {
 // In other words, the service that SHOULD be active.
 // this is true because the members are sorted on priority.
 func (sg *ServiceGroup) firstHealthy() *service.Service {
+	bslog.Debug("trying to aquire Rlock")
 	sg.mu.RLock()
-	defer sg.mu.RUnlock()
+	bslog.Debug("got Rlock")
+	defer func() {
+		bslog.Debug("releasing Rlock")
+		sg.mu.RUnlock()
+	}()
 	for _, svc := range sg.Members {
 		if svc.IsHealthy() {
 			return svc
@@ -112,7 +123,9 @@ func (sg *ServiceGroup) firstHealthy() *service.Service {
 }
 
 func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, healthy bool) {
+	bslog.Debug("trying to aquire Lock")
 	sg.mu.Lock()
+	bslog.Debug("got Lock")
 	oldActive := sg.active
 	if oldActive == nil {
 		oldActive = sg.lastActive
@@ -122,6 +135,7 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 	case ActivePassive:
 		if !healthy && sg.active.GetID() == changedService.GetID() { // active has gone down!
 			sg.lastActive = sg.active
+			bslog.Debug("releasing Lock")
 			sg.mu.Unlock()
 			sg.OnPromotion(sg.promoteNextHealthy())
 			return
@@ -136,14 +150,18 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 
 			sg.lastActive = sg.active
 			sg.active = changedService
+			bslog.Debug("releasing Lock")
 			sg.mu.Unlock()
 			sg.OnPromotion(event)
+			return
 		}
+		sg.mu.Unlock()
 
 	case ActiveActive:
 		if healthy {
 			// If prioritized DC service becomes healthy, it must become active (single DNS record).
 			if changedService.Datacenter == sg.prioritizedDatacenter && changedService != sg.active {
+				bslog.Debug("releasing Lock")
 				sg.mu.Unlock()
 				sg.OnPromotion(&PromotionEvent{
 					Service:   sg.Name,
@@ -155,6 +173,7 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 			}
 			// If there is no active or the current active is unhealthy, promote this healthy service.
 			if sg.active == nil || !sg.active.IsHealthy() {
+				bslog.Debug("releasing Lock")
 				sg.mu.Unlock()
 				sg.OnPromotion(&PromotionEvent{
 					Service:   sg.Name,
@@ -169,6 +188,7 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 
 		// unhealthy
 		if changedService.GetID() == sg.active.GetID() {
+			bslog.Debug("releasing Lock")
 			sg.mu.Unlock()
 			next := sg.firstHealthy()
 			if next != nil {
@@ -205,21 +225,15 @@ func (sg *ServiceGroup) RegisterService(newService *service.Service) {
 		return
 	}
 
+	bslog.Debug("trying to aquire Lock")
 	sg.mu.Lock()
+	bslog.Debug("got Lock")
 	sg.Members = append(sg.Members, newService)
+	bslog.Debug("releasing Lock")
 	sg.mu.Unlock()
 
 	sg.Update()
 	serviceGroupMembers.WithLabelValues(newService.MemberOf).Inc()
-	events.Emit(&events.Event{
-		Type: domainEvents.EventTypeGSLBServiceMemberAdd,
-		Payload: domainEvents.GSLBServiceMemberAddEvent{
-			Service:   newService.MemberOf,
-			NewMember: *newService.GSLBService(),
-		},
-		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, newService.MemberOf),
-	})
 }
 
 func (sg *ServiceGroup) RemoveService(id string) bool {
@@ -253,8 +267,13 @@ func (sg *ServiceGroup) RemoveService(id string) bool {
 }
 
 func (sg *ServiceGroup) promoteNextHealthy() *PromotionEvent {
+	bslog.Debug("trying to aquire Lock")
 	sg.mu.Lock()
-	defer sg.mu.Unlock()
+	bslog.Debug("got Lock")
+	defer func() {
+		bslog.Debug("releasing Lock")
+		sg.mu.Unlock()
+	}()
 
 	bslog.Debug("promoting next healthy service", slog.Any("oldActive", sg.active))
 	oldActive := sg.active
@@ -303,10 +322,13 @@ func (sg *ServiceGroup) triggerPromotion(service *service.Service) bool {
 // Will configure group mode, based on the state of group members (Members).
 // If the state of the group deviates from the requirements of its mode, the mode will change
 func (sg *ServiceGroup) SetGroupMode() {
+	bslog.Debug("trying to aquire Rlock")
 	sg.mu.RLock()
+	bslog.Debug("got Rlock")
 	numServices := len(sg.Members)
 	if numServices == 0 {
 		sg.mode = ActiveActive
+		bslog.Debug("releasing Rlock")
 		sg.mu.RUnlock()
 		return
 	}
@@ -319,6 +341,7 @@ func (sg *ServiceGroup) SetGroupMode() {
 		} else {
 			sg.active = nil
 		}
+		bslog.Debug("releasing Rlock")
 		sg.mu.RUnlock()
 		return
 	}
@@ -332,10 +355,16 @@ func (sg *ServiceGroup) SetGroupMode() {
 			break
 		}
 	}
+	bslog.Debug("releasing Rlock")
 	sg.mu.RUnlock()
 
+	bslog.Debug("trying to aquire Lock")
 	sg.mu.Lock()
-	defer sg.mu.Unlock()
+	bslog.Debug("got Lock")
+		defer func() {
+		bslog.Debug("releasing Lock")
+		sg.mu.Unlock()
+	}()
 
 	switch sg.mode {
 	case ActiveActive:
@@ -365,8 +394,13 @@ func (sg *ServiceGroup) SetGroupMode() {
 }
 
 func (sg *ServiceGroup) memberExists(member *service.Service) bool {
+	bslog.Debug("trying to aquire Rlock")
 	sg.mu.RLock()
-	defer sg.mu.RUnlock()
+	bslog.Debug("got Rlock")
+	defer func(){
+		bslog.Debug("releasing Rlock")
+		sg.mu.RUnlock()
+	}() 
 	return slices.Contains(sg.Members, member)
 }
 
@@ -403,23 +437,35 @@ func (sg *ServiceGroup) Failover(fqdn string, failover failover.Failover) error 
 }
 
 func (sg *ServiceGroup) Update() {
+	bslog.Debug("trying to aquire Rlock")
 	sg.mu.RLock()
+	bslog.Debug("got Rlock")
 	if len(sg.Members) == 0 { // dont need to do anything, group should be removed!
+		bslog.Debug("releasing Rlock")
 		sg.mu.RUnlock()
 		return
 	}
+	bslog.Debug("releasing Rlock")
 	sg.mu.RUnlock()
 
+	bslog.Debug("trying to aquire Lock")
 	sg.mu.Lock()
+	bslog.Debug("got Lock")
 	slices.SortFunc(sg.Members, sortMembersFunc)
+	bslog.Debug("releasing Lock")
 	sg.mu.Unlock()
 
 	sg.SetGroupMode()
 	firstHealthy := sg.firstHealthy() // who should have the active role!
 	if firstHealthy != sg.active {
 		// trigger promotion because whoever is active should not be active anymore!
+		bslog.Debug("trying to aquire Lock")
 		sg.mu.Lock()
-		defer sg.mu.Unlock()
+		bslog.Debug("got Lock")
+		defer func(){
+			bslog.Debug("releasing Lock")
+			sg.mu.Unlock()
+		}() 
 		sg.lastActive = sg.active
 		sg.active = firstHealthy
 

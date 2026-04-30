@@ -19,16 +19,10 @@ func init() {
 	events.Register(EventTypeDNSDISTSpoofDelete, func() events.FilterOption {
 		return &DNSDistSpoofDeleteEventOptions{}
 	})
-	events.Register(EventTypeDNSDISTSynch, func() events.FilterOption {
+	events.Register(EventTypeDNSDISTSync, func() events.FilterOption {
 		return &DNSDistSynchEventOptions{}
 	})
-	events.Register(EventTypeDNSDISTSynchStarted, func() events.FilterOption {
-		return &DNSDistSynchStartedEventOptions{}
-	})
-	events.Register(EventTypeDNSDISTSynchCompleted, func() events.FilterOption {
-		return &DNSDistSynchCompletedEventOptions{}
-	})
-	events.Register(EventTypeDNSDISTSynchFailed, func() events.FilterOption {
+	events.Register(EventTypeDNSDISTSyncFailed, func() events.FilterOption {
 		return &DNSDistSynchFailedEventOptions{}
 	})
 }

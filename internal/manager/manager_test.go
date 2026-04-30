@@ -211,7 +211,7 @@ func TestServicesManager_updateService(t *testing.T) {
 			if err != nil {
 				t.Fatalf("could not create service during testing: %s", err.Error())
 			}
-			sm.updateService(old, new)
+			sm.updateService(old, tt.new)
 
 			if old.ConfigChanged(new) {
 				t.Fatal("still pending config changes after update")

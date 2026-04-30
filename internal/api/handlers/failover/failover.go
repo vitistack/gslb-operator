@@ -38,13 +38,13 @@ func (fs *FailoverService) FailoverService(w http.ResponseWriter, r *http.Reques
 		response.Err(w, response.ErrInvalidInput, "invalid request format")
 		return
 	}
-
-	err = fs.serviceManager.Failover(fqdn, failover)
-	if err != nil {
-		logger.Error("could not perform failover action", slog.String("reason", err.Error()))
-		response.Err(w, response.ErrInvalidInput, "unable to perform failover")
-		return
-	}
-
+	/*
+		err = fs.serviceManager.Failover(fqdn, failover)
+		if err != nil {
+			logger.Error("could not perform failover action", slog.String("reason", err.Error()))
+			response.Err(w, response.ErrInvalidInput, "unable to perform failover")
+			return
+		}
+	*/
 	w.WriteHeader(http.StatusCreated)
 }

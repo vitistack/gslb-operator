@@ -65,6 +65,10 @@ func GetInstance() *Config {
 	return cfg
 }
 
+func (c *Config) LogValue() slog.Value {
+	return slog.StringValue("un-implemented LogValue")
+}
+
 func (c *Config) Server() *Server {
 	return &c.server
 }
