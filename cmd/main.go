@@ -42,6 +42,7 @@ func main() {
 		slog.String("build-date", buildDate),
 	)
 	cfg := config.GetInstance()
+	bslog.Info("loaded environment", slog.Any("env", cfg))
 
 	// initialize lua execution environment
 	if err := lua.LoadSandboxConfig(cfg.Server().LuaSandbox()); err != nil {

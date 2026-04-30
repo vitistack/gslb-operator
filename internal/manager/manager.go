@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -16,7 +17,6 @@ import (
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/events"
-	"github.com/vitistack/gslb-operator/pkg/models/failover"
 	"github.com/vitistack/gslb-operator/pkg/persistence/store/memory"
 	"github.com/vitistack/gslb-operator/pkg/pool"
 )
@@ -105,9 +105,13 @@ func (sm *ServicesManager) OnShutdown() error {
 	bslog.Debug("executing manager.OnShutdown()")
 
 	for memberOf, group := range sm.serviceGroups {
+		bslog.Debug("trying to get active")
 		active := group.GetActive()
+		bslog.Debug("got active service in group")
+		
 
 		for _, svc := range group.Members {
+			bslog.Debug("building gslb service")
 			gslbService := svc.GSLBService()
 
 			gslbService.IsActive = (active != nil && active.GetID() == svc.GetID())
@@ -128,80 +132,70 @@ func (sm *ServicesManager) OnShutdown() error {
 }
 
 func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*service.Service, error) {
-	opts := sm.BuildServiceOptions(serviceCfg)
-	newService, err := service.NewServiceFromGSLBConfig( // create the service object
-		serviceCfg,
-		opts...,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("unable to register service: %s", err.Error())
-	}
-
 	sm.mutex.RLock()
-	_, _, oldSvc := sm.scheduledServices.Search(newService.GetID())
+	_, _, oldSvc := sm.scheduledServices.Search(serviceCfg.ServiceID)
 	if oldSvc != nil { // update service if already exists
 		sm.mutex.RUnlock()
-		sm.updateService(oldSvc, newService)
-		return newService, nil
+		sm.updateService(oldSvc, serviceCfg)
+		return oldSvc, nil
 	}
 	sm.mutex.RUnlock()
 
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
+	newService, err := service.NewServiceFromGSLBConfig(serviceCfg, sm.BuildServiceOptions(serviceCfg)...)
+	if err != nil {
+		return nil, fmt.Errorf("unable to register service: %s", err.Error())
+	}
+
+	members, err := sm.svcRepo.Read(serviceCfg.MemberOf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register config: %w", err)
+	}
+	exists := slices.ContainsFunc(members, func(m model.GSLBService) bool { return m.ID == serviceCfg.ServiceID })
+
+	// will update entry with new values if changed
+	// therefore no need to check if it exists at this point
 	err = sm.svcRepo.Create(newService.GSLBService())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new service: %w", err)
 	}
 
 	// set healthchange callback action
-	newService.SetHealthChangeCallback(func(healthy bool) {
-		bslog.Debug("received health-change", slog.Any("service", newService), slog.Bool("healthy", healthy))
-		err := sm.svcRepo.Update(newService.GSLBService())
-		if err != nil {
-			bslog.Error(
-				"failed to update service health on health-change",
-				slog.String("reason", err.Error()),
-				slog.Any("service", newService),
-			)
-		}
-		events.Emit(&events.Event{
-			Type: domainEvents.EventTypeGSLBServiceMemberHealthChange,
-			Payload: domainEvents.GSLBServiceMemberHealthChangeEvent{
-				Member: *newService.GSLBService(),
-			},
-			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberHealthChange, newService.MemberOf),
-		})
-		sm.serviceGroups[newService.MemberOf].OnServiceHealthChange(newService, healthy)
-	})
+	newService.SetHealthChangeCallback(func(healthy bool) { sm.ServiceHealthChangeCallback(healthy, newService) })
 
 	// create new scheduler if needed, and schedule service for health-checks
-	scheduler := sm.newScheduler(newService.ScheduledInterval)
-	scheduler.ScheduleService(newService)
+	sm.newScheduler(newService.ScheduledInterval).ScheduleService(newService)
 
 	// register the service in the datastructure
 	sm.scheduledServices.Add(newService)
 
 	// create new service group if needed, and register service in group
-	memberOf := newService.MemberOf
-	serviceGroup, ok := sm.serviceGroups[memberOf]
-	if !ok {
-		serviceGroup = sm.newServiceGroup(memberOf)
-		bslog.Debug("new service group", slog.String("group", newService.MemberOf))
-	}
-	serviceGroup.RegisterService(newService)
+	sm.newServiceGroup(newService.MemberOf).RegisterService(newService)
 
 	bslog.Debug("registered service", slog.Any("service", newService))
+	// only emit events if the config was never registered in the first place
+	if !exists {
+		events.Emit(&events.Event{ // publish service registration event
+			Type: domainEvents.EventTypeGSLBConfigCreate,
+			Payload: domainEvents.GSLBConfigCreateEvent{
+				Config: serviceCfg,
+			},
+			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeGSLBConfigCreate, serviceCfg.ServiceID),
+		})
 
-	events.Emit(&events.Event{ // publish service registration event
-		Type: domainEvents.EventTypeGSLBConfigCreate,
-		Payload: domainEvents.GSLBConfigCreateEvent{
-			Config: serviceCfg,
-		},
-		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeGSLBConfigCreate, serviceCfg.ServiceID),
-	})
+		events.Emit(&events.Event{
+			Type: domainEvents.EventTypeGSLBServiceMemberAdd,
+			Payload: domainEvents.GSLBServiceMemberAddEvent{
+				Service:   newService.MemberOf,
+				NewMember: *newService.GSLBService(),
+			},
+			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, newService.MemberOf),
+		})
+	}
 
 	return newService, nil
 }
@@ -249,13 +243,10 @@ func (sm *ServicesManager) RemoveService(id string) error {
 }
 
 // updates an existing service with new configuration
-func (sm *ServicesManager) updateService(old, new *service.Service) {
-	/*
-		- move to new scheduler if default is changed, and service is currently scheduled on that interval (easy part) (done.)
-		- move to new group if memberOf has changed (medium part)
-		- the affected servicegroups needs to be notified about a change that possibly leads to a new active service (hard part)
-	*/
-	if old == new {
+func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBConfig) {
+	new, err := service.NewServiceFromGSLBConfig(cfg, sm.BuildServiceOptions(cfg)...)
+	if err != nil {
+		bslog.Error("failed to update service with new config", slog.String("reason", err.Error()))
 		return
 	}
 
@@ -288,7 +279,7 @@ func (sm *ServicesManager) updateService(old, new *service.Service) {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
-	err := sm.svcRepo.Update(old.GSLBService())
+	err = sm.svcRepo.Update(old.GSLBService())
 	if err != nil {
 		bslog.Error(
 			"failed to update service config persistently",
@@ -343,24 +334,33 @@ func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc 
 		return
 	}
 
-	newGroup, newOk := sm.serviceGroups[newMemberOf]
-	if !newOk {
-		newGroup = sm.newServiceGroup(newMemberOf)
-	}
+	// create new service group if needed
+	newGroup := sm.newServiceGroup(newMemberOf)
 
 	oldGroup, oldOk := sm.serviceGroups[oldMemberOf]
 	sm.mutex.Unlock()
 
 	newGroup.RegisterService(svc)
+	events.Emit(&events.Event{
+		Type: domainEvents.EventTypeGSLBServiceMemberAdd,
+		Payload: domainEvents.GSLBServiceMemberAddEvent{
+			Service:   svc.MemberOf,
+			NewMember: *svc.GSLBService(),
+		},
+		Timestamp: time.Now(),
+		ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, svc.MemberOf),
+	})
 
 	var empty bool
 	if oldOk {
 		empty = oldGroup.RemoveService(svc.GetID())
 
 	}
+
 	if empty { // delete empty service group
 		sm.deleteGroup(oldMemberOf)
 	}
+
 	bslog.Debug(
 		"updated service group membership",
 		slog.String("oldGroup", oldMemberOf),
@@ -370,9 +370,6 @@ func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc 
 
 // re-schedules the relevant services in the PromotionEvent
 func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
-	sm.mutex.Lock()
-	defer sm.mutex.Unlock()
-
 	var newID, oldID string
 	if event.NewActive != nil {
 		newID = event.NewActive.GetID()
@@ -389,7 +386,6 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	}
 
 	var baseInterval timesutil.Duration
-	var demotedInterval timesutil.Duration
 
 	msg := "received promotion event for service: " + event.Service + ": "
 	// set baseInterval
@@ -405,111 +401,135 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	}
 	bslog.Debug(msg)
 
-	if event.OldActive != nil && event.NewActive != nil { // just swap, and do dns updates
-		demotedInterval = event.NewActive.ScheduledInterval
-
-		oldActiveGSLBService := event.OldActive.GSLBService()
-		oldActiveGSLBService.IsActive = false
-		err := sm.svcRepo.Update(oldActiveGSLBService)
-		if err != nil {
-			bslog.Error("failed to remove active flag from service", slog.Any("oldActive", event.OldActive))
-			return
-		}
-
-		newActiveGSLBService := event.NewActive.GSLBService()
-		newActiveGSLBService.IsActive = true
-		err = sm.svcRepo.Update(newActiveGSLBService)
-		if err != nil {
-			bslog.Error("failed to update active flag on service", slog.Any("newActive", event.NewActive))
-			return
-		}
-
-		bslog.Warn("demoting service",
-			slog.Any("oldActive", event.OldActive),
-			slog.Group("intervalChange",
-				slog.String("from", event.OldActive.ScheduledInterval.String()),
-				slog.String("to", demotedInterval.String()),
-			))
-		sm.moveServiceToInterval(event.OldActive, demotedInterval)
-
-		sm.DNSUpdate(event.OldActive, false)
-
-		bslog.Warn("promoting service",
-			slog.Any("newActive", event.NewActive),
-			slog.Group("intervalChange",
-				slog.String("from", event.NewActive.ScheduledInterval.String()),
-				slog.String("to", baseInterval.String()),
-			))
-		sm.moveServiceToInterval(event.NewActive, baseInterval)
-		sm.DNSUpdate(event.NewActive, true)
-
-		events.Emit(&events.Event{
-			Type: domainEvents.EventTypeGSLBServiceFailover,
-			Payload: domainEvents.GSLBServiceFailoverEvent{
-				MemberOf:   event.Service,
-				LastActive: *event.OldActive.GSLBService(),
-				NewActive:  *event.NewActive.GSLBService(),
-			},
-			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBServiceFailover, event.Service),
-		})
-
+	// new active member in the service group
+	if event.OldActive != nil && event.NewActive != nil {
+		sm.handleNewActiveMember(event, baseInterval)
 		return
 	}
 
 	if event.NewActive != nil { // first service to come up when all services are down
-		newActiveGSLBService := event.NewActive.GSLBService()
-		newActiveGSLBService.IsActive = true
-		
-		err := sm.svcRepo.Update(newActiveGSLBService)
-		if err != nil {
-			bslog.Error("failed to update active flag on service", slog.Any("newActive", event.NewActive))
-			return
-		}
-		bslog.Info("new gslb service status",
-			slog.Any("service", event.NewActive),
-			slog.String("status", "up"),
-		)
-		sm.moveServiceToInterval(event.NewActive, baseInterval)
-		sm.DNSUpdate(event.NewActive, true)
-		events.Emit(&events.Event{
-			Type: domainEvents.EventTypeGSLBServiceUp,
-			Payload: domainEvents.GSLBServiceUpEvent{
-				NewActive: *event.NewActive.GSLBService(),
-			},
-			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBServiceUp, event.Service),
-		})
+		sm.handleServiceUp(event, baseInterval)
 		return
 	}
 
 	if event.OldActive != nil { // no service to take over
-		oldActiveGSLBService := event.OldActive.GSLBService()
-		oldActiveGSLBService.IsActive = false
-		err := sm.svcRepo.Update(oldActiveGSLBService)
-		if err != nil {
-			bslog.Error("failed to remove active flag from service", slog.Any("oldActive", event.OldActive))
-			return
-		}
-		bslog.Warn("new gslb service status",
-			slog.String("serviceGroup", event.Service),
-			slog.String("status", "down"),
-		)
-		sm.DNSUpdate(event.OldActive, false)
-		events.Emit(&events.Event{
-			Type: domainEvents.EventTypeGSLBServiceDown,
-			Payload: domainEvents.GSLBServiceDownEvent{
-				MemberOf: event.OldActive.MemberOf,
-			},
-			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBServiceDown, event.Service),
-		})
-
+		sm.handleServiceDown(event)
 		return
 	}
 }
 
+func (sm *ServicesManager) handleNewActiveMember(event *PromotionEvent, baseInterval timesutil.Duration) {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+
+	demotedInterval := event.NewActive.ScheduledInterval
+
+	oldActiveGSLBService := event.OldActive.GSLBService()
+	oldActiveGSLBService.IsActive = false
+	err := sm.svcRepo.Update(oldActiveGSLBService)
+	if err != nil {
+		bslog.Error("failed to remove active flag from service", slog.Any("oldActive", event.OldActive))
+		return
+	}
+
+	newActiveGSLBService := event.NewActive.GSLBService()
+	newActiveGSLBService.IsActive = true
+	err = sm.svcRepo.Update(newActiveGSLBService)
+	if err != nil {
+		bslog.Error("failed to update active flag on service", slog.Any("newActive", event.NewActive))
+		return
+	}
+
+	bslog.Warn("demoting service",
+		slog.Any("oldActive", event.OldActive),
+		slog.Group("intervalChange",
+			slog.String("from", event.OldActive.ScheduledInterval.String()),
+			slog.String("to", demotedInterval.String()),
+		))
+	sm.moveServiceToInterval(event.OldActive, demotedInterval)
+
+	sm.DNSUpdate(event.OldActive, false)
+
+	bslog.Warn("promoting service",
+		slog.Any("newActive", event.NewActive),
+		slog.Group("intervalChange",
+			slog.String("from", event.NewActive.ScheduledInterval.String()),
+			slog.String("to", baseInterval.String()),
+		))
+	sm.moveServiceToInterval(event.NewActive, baseInterval)
+	sm.DNSUpdate(event.NewActive, true)
+
+	events.Emit(&events.Event{
+		Type: domainEvents.EventTypeGSLBServiceFailover,
+		Payload: domainEvents.GSLBServiceFailoverEvent{
+			MemberOf:   event.Service,
+			LastActive: *event.OldActive.GSLBService(),
+			NewActive:  *event.NewActive.GSLBService(),
+		},
+		Timestamp: time.Now(),
+		ID:        events.ID(domainEvents.EventTypeGSLBServiceFailover, event.Service),
+	})
+}
+
+func (sm *ServicesManager) handleServiceUp(event *PromotionEvent, baseInterval timesutil.Duration) {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+
+	newActiveGSLBService := event.NewActive.GSLBService()
+	newActiveGSLBService.IsActive = true
+
+	err := sm.svcRepo.Update(newActiveGSLBService)
+	if err != nil {
+		bslog.Error("failed to update active flag on service", slog.Any("newActive", event.NewActive))
+		return
+	}
+	bslog.Info("new gslb service status",
+		slog.Any("service", event.NewActive),
+		slog.String("status", "up"),
+	)
+	sm.moveServiceToInterval(event.NewActive, baseInterval)
+	sm.DNSUpdate(event.NewActive, true)
+	events.Emit(&events.Event{
+		Type: domainEvents.EventTypeGSLBServiceUp,
+		Payload: domainEvents.GSLBServiceUpEvent{
+			NewActive: *event.NewActive.GSLBService(),
+		},
+		Timestamp: time.Now(),
+		ID:        events.ID(domainEvents.EventTypeGSLBServiceUp, event.Service),
+	})
+}
+
+func (sm *ServicesManager) handleServiceDown(event *PromotionEvent) {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+
+	oldActiveGSLBService := event.OldActive.GSLBService()
+	oldActiveGSLBService.IsActive = false
+	err := sm.svcRepo.Update(oldActiveGSLBService)
+	if err != nil {
+		bslog.Error("failed to remove active flag from service", slog.Any("oldActive", event.OldActive))
+		return
+	}
+	bslog.Warn("new gslb service status",
+		slog.String("serviceGroup", event.Service),
+		slog.String("status", "down"),
+	)
+	sm.DNSUpdate(event.OldActive, false)
+	events.Emit(&events.Event{
+		Type: domainEvents.EventTypeGSLBServiceDown,
+		Payload: domainEvents.GSLBServiceDownEvent{
+			MemberOf: event.OldActive.MemberOf,
+		},
+		Timestamp: time.Now(),
+		ID:        events.ID(domainEvents.EventTypeGSLBServiceDown, event.Service),
+	})
+}
+
 func (sm *ServicesManager) newServiceGroup(memberOf string) *ServiceGroup {
+	serviceGroup, ok := sm.serviceGroups[memberOf]
+	if ok {
+		return serviceGroup
+	}
 	newGroup := NewEmptyServiceGroup(memberOf)
 	newGroup.OnPromotion = func(event *PromotionEvent) {
 		sm.handlePromotion(event)
@@ -589,20 +609,6 @@ func (sm *ServicesManager) GetActiveForMemberOf(memberOf string) *service.Servic
 	return nil
 }
 
-func (sm *ServicesManager) Failover(fqdn string, failover failover.Failover) error {
-	group, ok := sm.serviceGroups[fqdn]
-	if !ok {
-		return fmt.Errorf("no registered service group for: %s", fqdn)
-	}
-
-	err := group.Failover(fqdn, failover)
-	if err != nil {
-		return fmt.Errorf("could not failover for service group: %s: %w", fqdn, err)
-	}
-
-	return nil
-}
-
 func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig) []service.ServiceOption {
 	opts := make([]service.ServiceOption, 0, 5)
 	opts = append(opts, service.WithDryRunChecks(sm.dryrun))
@@ -618,6 +624,7 @@ func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig) []servic
 		// max out the failure count
 		// means a long time before service will be considered healthy
 		opts = append(opts, service.WithFailureCount(config.FailureThreshold))
+		
 
 		return opts
 	}
@@ -628,4 +635,25 @@ func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig) []servic
 	}
 
 	return opts
+}
+
+func (sm *ServicesManager) ServiceHealthChangeCallback(healthy bool, svc *service.Service) {
+	bslog.Debug("received health-change", slog.Any("service", svc), slog.Bool("healthy", healthy))
+	err := sm.svcRepo.Update(svc.GSLBService())
+	if err != nil {
+		bslog.Error(
+			"failed to update service health on health-change",
+			slog.String("reason", err.Error()),
+			slog.Any("service", svc),
+		)
+	}
+	events.Emit(&events.Event{
+		Type: domainEvents.EventTypeGSLBServiceMemberHealthChange,
+		Payload: domainEvents.GSLBServiceMemberHealthChangeEvent{
+			Member: *svc.GSLBService(),
+		},
+		Timestamp: time.Now(),
+		ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberHealthChange, svc.MemberOf),
+	})
+	sm.serviceGroups[svc.MemberOf].OnServiceHealthChange(svc, healthy)
 }

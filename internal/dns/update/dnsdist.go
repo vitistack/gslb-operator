@@ -141,42 +141,30 @@ func (d *DNSDISTUpdater) Synchronize(ctx context.Context) {
 }
 
 func (d *DNSDISTUpdater) synchronizeServers() error {
-	events.Emit(&events.Event{
-		Type:      domainEvents.EventTypeDNSDISTSynchStarted,
-		Payload:   domainEvents.DNSDistSynchStartedEvent{},
-		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeDNSDISTSynchStarted, ""),
-	})
-
 	desiredHash, err := d.spoofRepo.Hash()
 	if err != nil {
 		return fmt.Errorf("unable to get hash representation of spoofs: %w", err)
 	}
 
 	wg := sync.WaitGroup{}
+	syncErrors := make(chan error, len(d.servers))
 
 	for server, client := range d.servers {
-		wg.Go(func() {
-			defer func(err error) {
-				if err != nil {
-					events.Emit(&events.Event{
-						Type:      domainEvents.EventTypeDNSDISTSynchFailed,
-						Payload:   domainEvents.DNSDistSynchFailedEvent{},
-						Timestamp: time.Now(),
-						ID:        events.ID(domainEvents.EventTypeDNSDISTSynchFailed, err.Error()),
-					})
-				}
-			}(err)
+		wg.Add(1)
+		go func(server string) {
+			defer wg.Done()
 
 			rawRuleSet, err := client.ShowRules()
 			if err != nil {
 				bslog.Error("unable to fetch ruleset from dnsdist server", slog.String("reason", err.Error()))
+				syncErrors <- fmt.Errorf("synchronization of %s failed: %w", server, err)
 				return
 			}
 
 			data, err := d.ParseRuleSet(rawRuleSet)
 			if err != nil {
 				bslog.Error("could not synchronize dnsdist server", slog.String("reason", err.Error()))
+				syncErrors <- fmt.Errorf("synchronization of %s failed: %w", server, err)
 				return
 			}
 
@@ -187,6 +175,7 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 			marshalledSpoofs, err := json.Marshal(data)
 			if err != nil {
 				bslog.Error("unable to marshall spoofs", slog.String("reason", err.Error()))
+				syncErrors <- fmt.Errorf("synchronization of %s failed: %w", server, err)
 				return
 			}
 
@@ -196,20 +185,36 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 			if hash != desiredHash {
 				err := d.reconcileServer(client, data)
 				if err != nil {
-					bslog.Warn("failed to reconcile server", slog.String("server_name", server))
+					bslog.Warn("failed to reconcile server", slog.String("server_name", server), slog.String("reason", err.Error()))
+					syncErrors <- err
+					events.Emit(&events.Event{
+						Type:      domainEvents.EventTypeDNSDISTServerOutOfSync,
+						Payload:   domainEvents.DNSDistServerOutOfSyncEvent{},
+						Timestamp: time.Now(),
+						ID:        events.ID(domainEvents.EventTypeDNSDISTServerOutOfSync, server),
+					})
 					return
 				}
 			}
-		})
+		}(server)
 	}
 
 	wg.Wait()
-	events.Emit(&events.Event{
-		Type:      domainEvents.EventTypeDNSDISTSynchCompleted,
-		Payload:   domainEvents.DNSDistSynchCompletedEvent{},
-		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeDNSDISTSynchCompleted, ""),
-	})
+	close(syncErrors)
+
+	for err := range syncErrors {
+		if err != nil {
+			events.Emit(&events.Event{
+				Type: domainEvents.EventTypeDNSDISTSyncFailed,
+				Payload: domainEvents.DNSDistSyncFailedEvent{
+					Reason: err.Error(),
+				},
+				Timestamp: time.Now(), // TODO: what should the subject in the ID be?
+				ID:        events.ID(domainEvents.EventTypeDNSDISTSyncFailed, "<server>?"),
+			})
+			return err
+		}
+	}
 
 	return nil
 }

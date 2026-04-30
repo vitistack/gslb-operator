@@ -27,17 +27,16 @@ const (
 const (
 	EventTypeDNSDIST events.EventType = "dnsdist"
 
-	EventTypeDNSDISTSpoof       events.EventType = "dnsdist:spoof"
-	EventTypeDNSDISTSpoofCreate events.EventType = "dnsdist:spoof:create"
-	EventTypeDNSDISTSpoofDelete events.EventType = "dnsdist:spoof:delete"
+	EventTypeDNSDISTSpoof             events.EventType = "dnsdist:spoof"
+	EventTypeDNSDISTSpoofCreate       events.EventType = "dnsdist:spoof:create"
+	EventTypeDNSDISTSpoofCreateFailed events.EventType = "dnsdist:spoof:create:failed"
+	EventTypeDNSDISTSpoofDelete       events.EventType = "dnsdist:spoof:delete"
 
-	EventTypeDNSDISTSynch          events.EventType = "dnsdist:synch"
-	EventTypeDNSDISTSynchStarted   events.EventType = "dnsdist:synch:started"
-	EventTypeDNSDISTSynchCompleted events.EventType = "dnsdist:synch:completed"
-	EventTypeDNSDISTSynchFailed    events.EventType = "dnsdist:synch:failed"
+	EventTypeDNSDISTSync       events.EventType = "dnsdist:sync"
+	EventTypeDNSDISTSyncFailed events.EventType = "dnsdist:sync:failed"
 
-	EventTypeDNSDISTServer           events.EventType = "dnsdist:server"
-	EventTypeDNSDISTServerOutOfSynch events.EventType = "dnsdist:server:out-of-synch"
+	EventTypeDNSDISTServer          events.EventType = "dnsdist:server"
+	EventTypeDNSDISTServerOutOfSync events.EventType = "dnsdist:server:out-of-sync"
 )
 
 // DNS - specific event types

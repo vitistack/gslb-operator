@@ -8,8 +8,8 @@ services:
   opa:
     image: openpolicyagent/opa:0.60.0
     profiles:
-      - "opa"
-      - "all"
+      - opa
+      - all
     command:
       - "run"
       - "--server"
@@ -32,8 +32,8 @@ services:
   prometheus:
     image: prom/prometheus:latest
     profiles:
-     - "monitoring"
-     - "all"
+     - monitoring
+     - all
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -54,8 +54,8 @@ services:
   grafana:
     image: grafana/grafana:latest
     profiles:
-     - "monitoring"
-     - "all"
+     - monitoring
+     - all
     ports:
       - "3000:3000"
     environment:
@@ -86,6 +86,19 @@ services:
       - "15672:15672" # Management UI
     volumes:
       - ./data/rabbitmq:/var/lib/rabbitmq
+  
+  dnsdist:
+    image: powerdns/dnsdist-20:latest
+    profiles:
+      - dnsdist
+      - all
+    ports: 
+      - "5199:5199"
+      - "5353:53"
+      - "8083:8083"
+    volumes:
+      - ./data/dnsdist:/etc/dnsdist/
+      - ./data/dnsdist/logs:/var/log/dnsdist/
 
 volumes:
   prometheus-data:

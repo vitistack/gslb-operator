@@ -28,7 +28,7 @@ func (dm Devmode) Handle(ctx context.Context, record slog.Record) error {
 	record.AddAttrs(slog.String("env", "dev"))
 
 	if record.PC != 0 {
-		if pc, _, _, ok := runtime.Caller(4); ok {
+		if pc, _, _, ok := runtime.Caller(5); ok {
 			f, _ := runtime.CallersFrames([]uintptr{pc}).Next()
 			record.AddAttrs(
 				slog.Group("caller_meta_data",

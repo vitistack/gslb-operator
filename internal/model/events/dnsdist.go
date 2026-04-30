@@ -23,24 +23,17 @@ func (e DNSDistSpoofDeleteEvent) SlackValue() slack.MsgOption {
 	return slack.MsgOptionBlocks()
 }
 
-type DNSDistSynchStartedEvent struct {
-}
-
-func (e DNSDistSynchStartedEvent) SlackValue() slack.MsgOption {
-	return slack.MsgOptionBlocks()
-}
-
-type DNSDistSynchCompletedEvent struct {
-}
-
-func (e DNSDistSynchCompletedEvent) SlackValue() slack.MsgOption {
-	return slack.MsgOptionBlocks()
-}
-
-type DNSDistSynchFailedEvent struct {
+type DNSDistSyncFailedEvent struct {
 	Reason string
 }
 
-func (e DNSDistSynchFailedEvent) SlackValue() slack.MsgOption {
+func (e DNSDistSyncFailedEvent) SlackValue() slack.MsgOption {
+	return slack.MsgOptionBlocks()
+}
+
+type DNSDistServerOutOfSyncEvent struct {
+}
+
+func (e DNSDistServerOutOfSyncEvent) SlackValue() slack.MsgOption {
 	return slack.MsgOptionBlocks()
 }
