@@ -8,6 +8,7 @@ import (
 )
 
 var CustomLevelNames = map[slog.Level]string{
+	LevelHealthCheck: "HEALTHCHECK",
 	LevelFatal: "FATAL",
 }
 
