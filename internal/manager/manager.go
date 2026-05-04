@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -24,16 +25,17 @@ import (
 // Responsible for managing services, on scheduling services for health checks
 type ServicesManager struct {
 	// servicesHealthCheck maps check intervals to services that should be checked at that interval.
-	scheduledServices ScheduledServices                           // services that are scheduled on an interval
-	schedulers        map[timesutil.Duration]*scheduler.Scheduler // schedulers for health-checks
-	serviceGroups     map[string]*ServiceGroup
-	svcRepo           *svcRepo.ServiceRepo
-	mutex             sync.RWMutex
-	stop              sync.Once
-	pool              *pool.WorkerPool
-	wg                *sync.WaitGroup // schedulers use this when scheduling services asynchronously
-	DNSUpdate         func(*service.Service, bool)
-	dryrun            bool
+	scheduledServices  ScheduledServices                           // services that are scheduled on an interval
+	schedulers         map[timesutil.Duration]*scheduler.Scheduler // schedulers for health-checks
+	serviceGroups      map[string]*ServiceGroup
+	healthChangeEvents chan *service.HealthChangeEvent
+	svcRepo            *svcRepo.ServiceRepo
+	mutex              sync.RWMutex
+	stop               sync.Once
+	pool               *pool.WorkerPool
+	wg                 *sync.WaitGroup // schedulers use this when scheduling services asynchronously
+	DNSUpdate          func(*service.Service, bool)
+	dryrun             bool
 }
 
 func NewManager(opts ...serviceManagerOption) *ServicesManager {
@@ -62,23 +64,29 @@ func NewManager(opts ...serviceManagerOption) *ServicesManager {
 		workerPoolSize.Dec()
 	}
 
-	return &ServicesManager{
-		scheduledServices: make(ScheduledServices),
-		schedulers:        make(map[timesutil.Duration]*scheduler.Scheduler),
-		serviceGroups:     make(map[string]*ServiceGroup),
-		svcRepo:           cfg.repo,
-		mutex:             sync.RWMutex{},
-		pool:              pool,
-		stop:              sync.Once{},
-		wg:                &sync.WaitGroup{},
-		dryrun:            cfg.DryRun,
+	mgr := &ServicesManager{
+		scheduledServices:  make(ScheduledServices),
+		schedulers:         make(map[timesutil.Duration]*scheduler.Scheduler),
+		serviceGroups:      make(map[string]*ServiceGroup),
+		healthChangeEvents: make(chan *service.HealthChangeEvent, cfg.MinRunningWorkers),
+		svcRepo:            cfg.repo,
+		mutex:              sync.RWMutex{},
+		pool:               pool,
+		stop:               sync.Once{},
+		wg:                 &sync.WaitGroup{},
+		dryrun:             cfg.DryRun,
 	}
+
+	return mgr
 }
 
 // Start begins scheduling health checks for all services according to their configured intervals.
 // It ensures that the scheduling logic is only executed once, even if called multiple times.
-func (sm *ServicesManager) Start() {
+func (sm *ServicesManager) Start(ctx context.Context) {
 	sm.pool.Start()
+	sm.wg.Go(func() {
+		sm.handleServiceHealthChange(ctx)
+	})
 }
 
 func (sm *ServicesManager) Stop() {
@@ -105,13 +113,9 @@ func (sm *ServicesManager) OnShutdown() error {
 	bslog.Debug("executing manager.OnShutdown()")
 
 	for memberOf, group := range sm.serviceGroups {
-		bslog.Debug("trying to get active")
 		active := group.GetActive()
-		bslog.Debug("got active service in group")
-		
 
 		for _, svc := range group.Members {
-			bslog.Debug("building gslb service")
 			gslbService := svc.GSLBService()
 
 			gslbService.IsActive = (active != nil && active.GetID() == svc.GetID())
@@ -163,7 +167,10 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	}
 
 	// set healthchange callback action
-	newService.SetHealthChangeCallback(func(healthy bool) { sm.ServiceHealthChangeCallback(healthy, newService) })
+	newService.SetHealthChangeCallback(func(event *service.HealthChangeEvent) {
+		// push event to handler
+		sm.healthChangeEvents <- event
+	})
 
 	// create new scheduler if needed, and schedule service for health-checks
 	sm.newScheduler(newService.ScheduledInterval).ScheduleService(newService)
@@ -366,6 +373,23 @@ func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc 
 		slog.String("oldGroup", oldMemberOf),
 		slog.String("newGroup", newMemberOf),
 	)
+}
+
+func (sm *ServicesManager) handleServiceHealthChange(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			bslog.Debug("stopped service healthchange management")
+			return
+
+		case healthchange, ok := <-sm.healthChangeEvents:
+			if !ok {
+				bslog.Debug("healthchange events closed")
+				return
+			}
+			sm.ServiceHealthChangeCallback(healthchange)
+		}
+	}
 }
 
 // re-schedules the relevant services in the PromotionEvent
@@ -624,7 +648,6 @@ func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig) []servic
 		// max out the failure count
 		// means a long time before service will be considered healthy
 		opts = append(opts, service.WithFailureCount(config.FailureThreshold))
-		
 
 		return opts
 	}
@@ -637,23 +660,23 @@ func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig) []servic
 	return opts
 }
 
-func (sm *ServicesManager) ServiceHealthChangeCallback(healthy bool, svc *service.Service) {
-	bslog.Debug("received health-change", slog.Any("service", svc), slog.Bool("healthy", healthy))
-	err := sm.svcRepo.Update(svc.GSLBService())
+func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChangeEvent) {
+	bslog.Debug("received health-change", slog.Any("service", event.Svc), slog.Bool("healthy", event.Healthy))
+	err := sm.svcRepo.Update(event.Svc.GSLBService())
 	if err != nil {
 		bslog.Error(
 			"failed to update service health on health-change",
 			slog.String("reason", err.Error()),
-			slog.Any("service", svc),
+			slog.Any("service", event.Svc),
 		)
 	}
 	events.Emit(&events.Event{
 		Type: domainEvents.EventTypeGSLBServiceMemberHealthChange,
 		Payload: domainEvents.GSLBServiceMemberHealthChangeEvent{
-			Member: *svc.GSLBService(),
+			Member: *event.Svc.GSLBService(),
 		},
 		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberHealthChange, svc.MemberOf),
+		ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberHealthChange, event.Svc.MemberOf),
 	})
-	sm.serviceGroups[svc.MemberOf].OnServiceHealthChange(svc, healthy)
+	sm.serviceGroups[event.Svc.MemberOf].OnServiceHealthChange(event.Svc, event.Healthy)
 }

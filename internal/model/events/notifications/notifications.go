@@ -14,14 +14,14 @@ func NewNotifier(format string) Notifier {
 	env := config.GetInstance().Server().Env()
 
 	switch env {
-	case "dev", "development", "DEV", "DEVELOPMENT", "local":
-		return &MockNotifier{}
-	default:
+	case "prod", "PROD", "production", "PRODUCTION":
 		switch format {
 		case "slack":
 			return NewSlackNotifier()
+		default:
+			return &MockNotifier{}
 		}
+	default:
+		return &MockNotifier{}
 	}
-
-	return &MockNotifier{}
 }

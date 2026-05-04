@@ -6,6 +6,20 @@ import (
 	"os"
 )
 
+func New(handler slog.Handler) *Logger {
+	return &Logger{
+		Logger: *slog.New(handler),
+	}
+}
+
+func HealthCheck(msg string, args ...any) {
+	slog.Log(context.Background(), LevelHealthCheck, msg, args...)
+}
+
+func HealthCheckContext(ctx context.Context, msg string, args ...any) {
+	slog.Log(ctx, LevelHealthCheck, msg, args...)
+}
+
 func Debug(msg string, args ...any) {
 	slog.Debug(msg, args...)
 }

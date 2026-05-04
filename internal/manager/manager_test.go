@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -76,7 +77,9 @@ func TestStartAndStop(t *testing.T) {
 	)
 
 	manager.RegisterService(genericGSLBConfig)
-	manager.Start()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	manager.Start(ctx)
 
 	// Give it a moment to start
 	time.Sleep(100 * time.Millisecond)
@@ -84,7 +87,7 @@ func TestStartAndStop(t *testing.T) {
 	if manager.pool.NumWorkers() < 2 {
 		t.Errorf("expected at least 2 workers, got %d", manager.pool.NumWorkers())
 	}
-
+	cancel()
 	manager.Stop()
 
 	// Give it a moment to stop
@@ -196,8 +199,13 @@ func TestServicesManager_updateService(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sm := NewManager(WithDryRun(true))
-			sm.Start()
-			defer sm.Stop()
+			ctx, cancel := context.WithCancel(context.Background())
+			sm.Start(ctx)
+
+			defer func() {
+				cancel()
+				sm.Stop()
+			}()
 
 			sm.DNSUpdate = func(s *service.Service, b bool) {
 
@@ -233,7 +241,6 @@ func TestServicesManager_updateService(t *testing.T) {
 	}
 }
 
-
 func TestServicesManager_moveServiceToInterval(t *testing.T) {
 	tests := []struct {
 		name string // description of this test case
@@ -257,8 +264,15 @@ func TestServicesManager_moveServiceToInterval(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sm := NewManager(WithDryRun(true))
-			sm.Start()
-			defer sm.Stop()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			sm.Start(ctx)
+
+			defer func() {
+				cancel()
+				sm.Stop()
+			}()
+
 			svc, _ := sm.RegisterService(tt.config)
 
 			if tt.shouldExist {
@@ -278,4 +292,3 @@ func TestServicesManager_moveServiceToInterval(t *testing.T) {
 		})
 	}
 }
-

@@ -110,6 +110,8 @@ func (s *Server) LuaSandbox() string {
 
 func (s *Server) LogLevel() slog.Level {
 	switch s.LOG_LEVEL {
+	case "healthcheck", "HEALTHCHECK":
+		return bslog.LevelHealthCheck
 	case "debug", "DEBUG":
 		return slog.LevelDebug
 	case "info", "INFO":

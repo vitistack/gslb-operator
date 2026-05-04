@@ -43,15 +43,23 @@ func NewTCPFullChecker(addr string, timeout time.Duration) Checker {
 	}
 }
 
-func (tf *TCPFullChecker) Check() error {
+func (tf *TCPFullChecker) Check() *HealthCheckResult {
 	tf.startRecording()
 	conn, err := net.DialTimeout("tcp", tf.addr, tf.timeout)
 	tf.endRecording()
 	if err != nil {
-		return err
+		return &HealthCheckResult{
+			err:       err,
+			Success:   false,
+			CheckTime: tf.lastCheck(),
+		}
 	}
 	conn.Close()
-	return nil
+	return &HealthCheckResult{
+		err:       nil,
+		Success:   true,
+		CheckTime: tf.lastCheck(),
+	}
 }
 
 type TCPHalfChecker struct {
@@ -68,7 +76,7 @@ func NewTCPHalfChecker(addr string, timeout time.Duration) Checker {
 	}
 }
 
-func (th *TCPHalfChecker) Check() error {
+func (th *TCPHalfChecker) Check() *HealthCheckResult {
 	checker := tcpshaker.DefaultChecker()
 
 	th.startRecording()
@@ -76,9 +84,17 @@ func (th *TCPHalfChecker) Check() error {
 	th.endRecording()
 	if err != nil {
 		if errors.Is(err, tcpshaker.ErrTimeout) {
-			return err
+			return &HealthCheckResult{
+				err:       err,
+				Success:   false,
+				CheckTime: th.lastCheck(),
+			}
 		}
 	}
 
-	return nil
+	return &HealthCheckResult{
+		err:       nil,
+		Success:   true,
+		CheckTime: th.lastCheck(),
+	}
 }
