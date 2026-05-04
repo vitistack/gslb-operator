@@ -1,9 +1,12 @@
 package healthcheck
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/vitistack/gslb-operator/internal/checks"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 )
@@ -20,18 +23,20 @@ func NewJob(svc *service.Service) *HealthCheckJob {
 }
 
 func (hj *HealthCheckJob) Execute() error {
-	hj.lastCheck = time.Now()
 	err := hj.Service.Execute()
+	result, ok := errors.AsType[*checks.HealthCheckResult](err)
+	if !ok {
+		return fmt.Errorf("health-check returned wrong error type: %T", err)
+	}
 
-	checkTimeMs := float64(time.Since(hj.lastCheck).Milliseconds())
-
-	bslog.Debug("check complete", slog.Float64("duration_ms", checkTimeMs))
+	bslog.HealthCheck("check complete", slog.Float64("duration_ms", result.CheckTime))
 	healthCheckDuration.WithLabelValues(
 		hj.Service.MemberOf,
 		hj.Service.Fqdn,
 		hj.Service.Datacenter).
-		Observe(checkTimeMs)
-	return err
+		Observe(result.CheckTime)
+
+	return result.Err()
 }
 
 func (hj *HealthCheckJob) OnSuccess() {

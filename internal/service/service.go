@@ -14,8 +14,13 @@ import (
 
 const DEFAULT_FAILURE_THRESHOLD = 3
 
-type HealthChangeCallback func(healthy bool)
+type HealthChangeCallback func(*HealthChangeEvent)
 type ServiceOption func(s *Service)
+
+type HealthChangeEvent struct {
+	Svc     *Service
+	Healthy bool
+}
 
 type Service struct {
 	id                   string
@@ -192,7 +197,7 @@ OnFailure : count = 3, healthy = false -> update DNS
 
 // called when healthcheck is successful
 func (s *Service) OnSuccess() {
-	bslog.Debug("Health-Check Successfull", slog.Any("service", s))
+	bslog.HealthCheck("Health-Check Successfull", slog.Any("service", s))
 	if s.isHealthy { // already healthy
 		s.failureCount = 0
 		return
@@ -204,13 +209,16 @@ func (s *Service) OnSuccess() {
 
 	if s.failureCount == 0 {
 		s.isHealthy = true
-		s.healthChangeCallback(true)
+		s.healthChangeCallback(&HealthChangeEvent{
+			Svc:     s,
+			Healthy: true,
+		})
 	}
 }
 
 // called when healthcheck fails
 func (s *Service) OnFailure(err error) {
-	bslog.Debug("Health-Check Failed", slog.Any("service", s), slog.String("error", err.Error()))
+	bslog.HealthCheck("Health-Check Failed", slog.Any("service", s), slog.String("error", err.Error()))
 	if !s.isHealthy { // already unhealthy
 		s.failureCount = s.FailureThreshold
 		return
@@ -222,7 +230,10 @@ func (s *Service) OnFailure(err error) {
 
 	if s.failureCount == s.FailureThreshold { // threshold reached, service is considered down
 		s.isHealthy = false
-		s.healthChangeCallback(false)
+		s.healthChangeCallback(&HealthChangeEvent{
+			Svc:     s,
+			Healthy: false,
+		})
 	}
 }
 

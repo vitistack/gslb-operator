@@ -52,7 +52,7 @@ func (h *Handler) Start(ctx context.Context, cancel func()) {
 		}
 	}
 
-	h.svcManager.Start()
+	h.svcManager.Start(ctx)
 
 	zoneBatches, pollErrors := h.fetcher.StartAutoPoll(ctx)
 
@@ -79,17 +79,21 @@ func (h *Handler) Stop(ctx context.Context) {
 }
 
 func (h *Handler) onServiceDown(svc *service.Service) {
-	err := h.updater.OnServiceDown(svc)
-	if err != nil {
-		bslog.Warn("error while updating service on service down", slog.String("error", err.Error()))
-	}
+	h.wg.Go(func() {
+		err := h.updater.OnServiceDown(svc)
+		if err != nil {
+			bslog.Error("error while updating service on service down", slog.String("error", err.Error()))
+		}
+	})
 }
 
 func (h *Handler) onServiceUp(svc *service.Service) {
-	err := h.updater.OnServiceUp(svc)
-	if err != nil {
-		bslog.Warn("error while updating service state on service up", slog.String("error", err.Error()))
-	}
+	h.wg.Go(func() {
+		err := h.updater.OnServiceUp(svc)
+		if err != nil {
+			bslog.Error("error while updating service state on service up", slog.String("error", err.Error()))
+		}
+	})
 }
 
 func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan error) {
