@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/valkey-io/valkey-go"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/failover"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/webhooks"
@@ -27,7 +28,7 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/lua"
-	"github.com/vitistack/gslb-operator/pkg/persistence/store/file"
+	valkeyStore "github.com/vitistack/gslb-operator/pkg/persistence/store/valkey"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 )
 
@@ -49,27 +50,38 @@ func main() {
 		bslog.Fatal("could not load lua configuration", slog.Any("reason", err))
 	}
 
-	serviceFileStore, err := file.NewStore[model.GSLBServiceGroup]("./data/store.json")
+	valkeyClient, err := valkeyStore.NewClient(
+		valkey.ClientOption{
+			InitAddress: []string{"localhost:6379"},
+		},
+	)
 	if err != nil {
-		bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
+		bslog.Fatal("failed to establish valkey connection", slog.String("reason", err.Error()))
 	}
-	svcRepo := service.NewServiceRepo(serviceFileStore)
+	servicesStore := valkeyStore.NewStore[model.GSLBServiceGroup](valkeyClient, "gslb:service_groups", time.Second*30)
+	webhooksStore := valkeyStore.NewStore[model.WebHook](valkeyClient, "gslb:webhooks", time.Minute*30)
 
-	webhooksFileStore, err := file.NewStore[model.WebHook]("./data/webhooks.json")
-	if err != nil {
-		bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
-	}
+	//serviceFileStore, err := file.NewStore[model.GSLBServiceGroup]("./data/store.json")
+	//if err != nil {
+	//	bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
+	//}
+	svcRepo := service.NewServiceRepo(servicesStore)
+
+	//webhooksFileStore, err := file.NewStore[model.WebHook]("./data/webhooks.json")
+	//if err != nil {
+	//	bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
+	//}
 
 	// creating dns - handler objects
 	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
 	mgr := manager.NewManager(
-		manager.WithMinRunningWorkers(80),
-		manager.WithNonBlockingBufferSize(50),
+		manager.WithMinRunningWorkers(10),
+		manager.WithNonBlockingBufferSize(15),
 		manager.WithServiceRepository(svcRepo),
 		//manager.WithDryRun(true),
 	)
 
-	updater, err := update.NewDNSDISTUpdater(serviceFileStore)
+	updater, err := update.NewDNSDISTUpdater(servicesStore)
 	if err != nil {
 		bslog.Fatal("unable to create updater", slog.String("error", err.Error()))
 	}
@@ -84,7 +96,7 @@ func main() {
 	ctx, cancel := context.WithCancel(background)
 
 	// mq brokers
-	webhooksBroker := whBroker.New(ctx, webhooksFileStore)
+	webhooksBroker := whBroker.New(ctx, webhooksStore)
 	webhooksBroker.Subscribe(ctx)
 
 	dnsHandler.Start(ctx, cancel)
@@ -101,9 +113,9 @@ func main() {
 	api := http.NewServeMux()
 
 	// routes handlers
-	spoofsApiService := spoofs.NewSpoofsService(serviceFileStore, mgr)
+	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
 	failoverApiService := failover.NewFailoverService(mgr)
-	webhooksApiService := webhooks.NewWebhookService(webhooksFileStore)
+	webhooksApiService := webhooks.NewWebhookService(webhooksStore)
 
 	// initializing the service jwt self signer
 	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
