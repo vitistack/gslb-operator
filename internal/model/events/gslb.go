@@ -194,15 +194,10 @@ func serviceFields(s model.GSLBService) *slack.SectionBlock {
 	if s.IsHealthy {
 		healthy = "Yes"
 	}
-	active := "No"
-	if s.IsActive {
-		active = "Yes"
-	}
 	return slack.NewSectionBlock(nil, []*slack.TextBlockObject{
 		field("FQDN", s.Fqdn),
 		field("IP", s.IP),
 		field("Datacenter", s.Datacenter),
 		field("Healthy", healthy),
-		field("Active", active),
 	}, nil)
 }

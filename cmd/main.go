@@ -22,7 +22,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/dns/update"
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/model"
-	"github.com/vitistack/gslb-operator/internal/repositories/service"
+	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
 	"github.com/vitistack/gslb-operator/pkg/auth"
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
@@ -65,7 +65,7 @@ func main() {
 	//if err != nil {
 	//	bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
 	//}
-	svcRepo := service.NewServiceRepo(servicesStore)
+	svcGroupRepo := servicegroup.NewServiceGroupRepo(servicesStore)
 
 	//webhooksFileStore, err := file.NewStore[model.WebHook]("./data/webhooks.json")
 	//if err != nil {
@@ -77,7 +77,7 @@ func main() {
 	mgr := manager.NewManager(
 		manager.WithMinRunningWorkers(10),
 		manager.WithNonBlockingBufferSize(15),
-		manager.WithServiceRepository(svcRepo),
+		manager.WithServiceGroupRepository(svcGroupRepo),
 		//manager.WithDryRun(true),
 	)
 
@@ -141,23 +141,25 @@ func main() {
 		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetSpoofsHash))
 
-	// spoofs/override
-	// TODO: add auth!
-	api.HandleFunc(routes.GET_OVERRIDE, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.GetOverride))
+	/*
+		// spoofs/override
+		// TODO: add auth!
+		api.HandleFunc(routes.GET_OVERRIDE, middleware.Chain(
+			middleware.WithIncomingRequestLogging(slog.Default()),
+		)(spoofsApiService.GetOverride))
 
-	api.HandleFunc(routes.PUT_OVERRIDE, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.UpdateOverride))
+		api.HandleFunc(routes.PUT_OVERRIDE, middleware.Chain(
+			middleware.WithIncomingRequestLogging(slog.Default()),
+		)(spoofsApiService.UpdateOverride))
 
-	api.HandleFunc(routes.POST_OVERRIDE, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.CreateOverride))
+		api.HandleFunc(routes.POST_OVERRIDE, middleware.Chain(
+			middleware.WithIncomingRequestLogging(slog.Default()),
+		)(spoofsApiService.CreateOverride))
 
-	api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.DeleteOverride))
+		api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
+			middleware.WithIncomingRequestLogging(slog.Default()),
+		)(spoofsApiService.DeleteOverride))
+	*/
 
 	// webhooks
 	api.HandleFunc(routes.GET_WEBHOOKS, middleware.Chain(

@@ -213,6 +213,8 @@ func (s *Service) OnSuccess() {
 			Svc:     s,
 			Healthy: true,
 		})
+	} else {
+		// TODO: make failureCount update
 	}
 }
 
@@ -234,6 +236,8 @@ func (s *Service) OnFailure(err error) {
 			Svc:     s,
 			Healthy: false,
 		})
+	} else {
+		// TODO: make failureCount update
 	}
 }
 
@@ -319,7 +323,7 @@ func (s *Service) String() string {
 }
 
 func (s *Service) GSLBService() *model.GSLBService {
-	return &model.GSLBService{
+	out := &model.GSLBService{
 		ID:           s.id,
 		MemberOf:     s.MemberOf,
 		Fqdn:         s.Fqdn,
@@ -328,6 +332,8 @@ func (s *Service) GSLBService() *model.GSLBService {
 		IsHealthy:    s.isHealthy,
 		FailureCount: s.failureCount,
 	}
+
+	return out
 }
 
 func (s *Service) GSLBConfig() model.GSLBConfig {

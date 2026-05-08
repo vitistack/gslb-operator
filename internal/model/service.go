@@ -4,7 +4,11 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 )
 
-type GSLBServiceGroup []GSLBService
+type GSLBServiceGroup struct {
+	Active      string
+	HasOverride bool
+	Members     map[string]GSLBService
+}
 
 // storage representation of service
 // services that are configured with gslb config end up as a service.Service
@@ -16,8 +20,6 @@ type GSLBService struct {
 	IP           string `json:"ip"`
 	IsHealthy    bool   `json:"isHealthy"`
 	FailureCount int    `json:"failureCount"`
-	IsActive     bool   `json:"isActive"`
-	HasOverride  bool   `json:"hasOverride"`
 }
 
 func (s GSLBService) Key() string {
