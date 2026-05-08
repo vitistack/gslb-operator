@@ -1,6 +1,6 @@
 module github.com/vitistack/gslb-operator
 
-go 1.26
+go 1.26.3
 
 require (
 	codeberg.org/miekg/dns v0.6.48
