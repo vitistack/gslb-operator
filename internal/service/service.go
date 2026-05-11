@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"reflect"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/checks"
@@ -276,17 +277,19 @@ func (s *Service) GetAverageRoundtrip() time.Duration {
 	return s.checker.Roundtrip()
 }
 
-func (s *Service) ConfigChanged(other *Service) bool {
-	if s.Fqdn != other.Fqdn ||
-		s.addr.String() != other.addr.String() ||
-		s.Datacenter != other.Datacenter ||
-		s.FailureThreshold != other.FailureThreshold ||
-		s.priority != other.priority ||
-		s.checkType != other.checkType ||
-		s.checkScript != other.checkScript {
-		return true
-	}
-	return false
+func (s *Service) ConfigChanged(other model.GSLBConfig) bool {
+	configSelf := s.GSLBConfig()
+	return !reflect.DeepEqual(configSelf, other)
+	//if s.Fqdn != other.Fqdn ||
+	//	s.addr.String() != other.addr.String() ||
+	//	s.Datacenter != other.Datacenter ||
+	//	s.FailureThreshold != other.FailureThreshold ||
+	//	s.priority != other.priority ||
+	//	s.checkType != other.checkType ||
+	//	s.checkScript != other.checkScript {
+	//	return true
+	//}
+	//return false
 }
 
 // updates the configuration values of s with the values of new
@@ -342,7 +345,7 @@ func (s *Service) GSLBConfig() model.GSLBConfig {
 		MemberOf:         s.MemberOf,
 		Fqdn:             s.Fqdn,
 		Ip:               s.GetIP(),
-		Port:             s.addr.AddrPort().String(),
+		Port:             fmt.Sprintf("%d", s.addr.Port),
 		Datacenter:       s.Datacenter,
 		Interval:         s.defaultInterval,
 		Priority:         s.priority,

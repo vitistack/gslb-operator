@@ -271,7 +271,7 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 	}
 
 	sm.mutex.Lock()
-	if !old.ConfigChanged(new) { // nothing to do
+	if !old.ConfigChanged(cfg) { // nothing to do
 		bslog.Debug("skipping update due to unchanged config", slog.Any("service", old))
 		sm.mutex.Unlock()
 		return
@@ -299,14 +299,16 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
-	oldGroup := sm.serviceGroups[oldMemberOf].Group()
-	err = sm.svcGroupRepo.Update(oldMemberOf, oldGroup)
-	if err != nil {
-		bslog.Error(
-			"failed to update servicegroup config persistently",
-			slog.String("reason", err.Error()),
-			slog.Any("group", oldGroup),
-		)
+	oldGroup, ok := sm.serviceGroups[oldMemberOf]
+	if ok {
+		err = sm.svcGroupRepo.Update(oldMemberOf, oldGroup.Group())
+		if err != nil {
+			bslog.Error(
+				"failed to update servicegroup config persistently",
+				slog.String("reason", err.Error()),
+				slog.Any("group", oldGroup),
+			)
+		}
 	}
 
 	// important that this checked AFTER the service groups have ran their update
@@ -332,22 +334,15 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 
 func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc *service.Service) {
 	sm.mutex.Lock()
+	oldGroup, oldOk := sm.serviceGroups[oldMemberOf]
+	newGroup := sm.newServiceGroup(newMemberOf)
+	sm.mutex.Unlock()
 
-	err := sm.svcRepo.Delete(oldMemberOf, svc.GetID())
-	if err != nil {
+	// Register in new group and persist its state
+	newGroup.RegisterService(svc)
+	if err := sm.svcGroupRepo.Create(newMemberOf, newGroup.Group()); err != nil {
 		bslog.Error(
-			"failed to remove service from old service group",
-			slog.String("reason", err.Error()),
-			slog.String("oldMemberOf", oldMemberOf),
-			slog.Any("service", svc),
-		)
-		return
-	}
-
-	err = sm.svcRepo.Create(svc.GSLBService())
-	if err != nil {
-		bslog.Error(
-			"failed to add service to new group",
+			"failed to persist new service group membership",
 			slog.String("reason", err.Error()),
 			slog.String("newMemberOf", newMemberOf),
 			slog.Any("service", svc),
@@ -355,13 +350,6 @@ func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc 
 		return
 	}
 
-	// create new service group if needed
-	newGroup := sm.newServiceGroup(newMemberOf)
-
-	oldGroup, oldOk := sm.serviceGroups[oldMemberOf]
-	sm.mutex.Unlock()
-
-	newGroup.RegisterService(svc)
 	events.Emit(&events.Event{
 		Type: domainEvents.EventTypeGSLBServiceMemberAdd,
 		Payload: domainEvents.GSLBServiceMemberAddEvent{
@@ -372,18 +360,30 @@ func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc 
 		ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, svc.MemberOf),
 	})
 
-	var empty bool
-	if oldOk {
-		empty = oldGroup.RemoveService(svc.GetID())
-
+	// Clean up old group
+	if !oldOk {
+		bslog.Debug("updated service group membership",
+			slog.String("oldGroup", oldMemberOf),
+			slog.String("newGroup", newMemberOf),
+		)
+		return
 	}
 
-	if empty { // delete empty service group
+	empty := oldGroup.RemoveService(svc.GetID())
+	if empty {
 		sm.deleteGroup(oldMemberOf)
+	} else {
+		if err := sm.svcGroupRepo.Update(oldMemberOf, oldGroup.Group()); err != nil {
+			bslog.Error(
+				"failed to update old service group after member removal",
+				slog.String("reason", err.Error()),
+				slog.String("oldMemberOf", oldMemberOf),
+				slog.Any("service", svc),
+			)
+		}
 	}
 
-	bslog.Debug(
-		"updated service group membership",
+	bslog.Debug("updated service group membership",
 		slog.String("oldGroup", oldMemberOf),
 		slog.String("newGroup", newMemberOf),
 	)
@@ -692,13 +692,21 @@ func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig) []servic
 		return opts
 	}
 
+	// member not found in group
+	// max out failure count
+	opts = append(opts, service.WithFailureCount(config.FailureThreshold))
 
 	return opts
 }
 
 func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChangeEvent) {
 	bslog.Debug("received health-change", slog.Any("service", event.Svc), slog.Bool("healthy", event.Healthy))
-	err := sm.svcRepo.Update(event.Svc.GSLBService())
+
+	sm.mutex.Lock()
+	group := sm.serviceGroups[event.Svc.MemberOf]
+	sm.mutex.Unlock()
+
+	err := sm.svcGroupRepo.Update(group.Name, group.Group())
 	if err != nil {
 		bslog.Error(
 			"failed to update service health on health-change",

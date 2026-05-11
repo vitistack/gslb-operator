@@ -142,4 +142,4 @@ func (sr *ServiceRepo) GetMemberInGroup(memberOf, memberId string) (model.GSLBSe
 	return model.GSLBService{}, fmt.Errorf("%w: member-of: %s: member-id: %s", ErrServiceInGroupNotFound, memberOf, memberId)
 }
 
-func (sr *ServiceRepo) HasOverride(group model.GSLBServiceGroup) bool
+//func (sr *ServiceRepo) HasOverride(group model.GSLBServiceGroup) bool

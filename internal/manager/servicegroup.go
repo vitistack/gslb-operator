@@ -78,7 +78,10 @@ func NewEmptyServiceGroup(name string) *ServiceGroup {
 }
 
 func (sg *ServiceGroup) Group() *model.GSLBServiceGroup {
-	group := &model.GSLBServiceGroup{HasOverride: sg.hasOverride}
+	group := &model.GSLBServiceGroup{
+		HasOverride: sg.hasOverride,
+		Members:     make(map[string]model.GSLBService),
+	}
 	if sg.hasOverride {
 		group.Active = sg.overrideIP.String()
 	}

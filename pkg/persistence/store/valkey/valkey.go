@@ -32,12 +32,12 @@ func NewClient(opts valkey.ClientOption) (valkey.Client, error) {
 		client = c
 	})
 
-	if client == nil {
-		return nil, fmt.Errorf("valkey client already initialized")
-	}
-
 	if initErr != nil {
 		return nil, fmt.Errorf("failed to create valkey client: %w", initErr)
+	}
+
+	if client == nil {
+		return nil, fmt.Errorf("valkey client already initialized")
 	}
 
 	return client, nil
