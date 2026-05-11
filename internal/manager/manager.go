@@ -187,6 +187,17 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 		sm.healthChangeEvents <- event
 	})
 
+	newService.SetFailureCountCallback(func(svc *model.GSLBService) {
+		sm.wg.Go(func() {
+			if err := sm.svcGroupRepo.UpdateMember(svc.MemberOf, *svc); err != nil {
+				bslog.Error("failed to update service failurecount",
+					slog.String("reason", err.Error()),
+					slog.Any("service", svc),
+				)
+			}
+		})
+	})
+
 	// create new scheduler if needed, and schedule service for health-checks
 	sm.newScheduler(newService.ScheduledInterval).ScheduleService(newService)
 
@@ -280,6 +291,7 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 	oldDefaultInterval, newDefaultInterval := old.GetDefaultInterval(), new.GetDefaultInterval()
 	oldMemberOf, newMemberOf := old.MemberOf, new.MemberOf
 
+	lastConfig := old.GSLBConfig()
 	old.Assign(new) // assigning changed config variables to the registered service
 	sm.mutex.Unlock()
 
@@ -324,7 +336,7 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 	events.Emit(&events.Event{ // publish configuration change event
 		Type: domainEvents.EventTypeGSLBConfigUpdate,
 		Payload: domainEvents.GSLBConfigUpdateEvent{
-			LastConfig:    old.GSLBConfig(),
+			LastConfig:    lastConfig,
 			CurrentConfig: new.GSLBConfig(),
 		},
 		Timestamp: time.Now(),

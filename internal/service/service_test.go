@@ -47,7 +47,7 @@ func TestCalculateInterval(t *testing.T) {
 func TestOnSuccess(t *testing.T) {
 	svc0 := Service{
 		failureCount: 0,
-		healthChangeCallback: func(event *HealthChangeEvent) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
 		FailureThreshold: 3,
@@ -55,7 +55,7 @@ func TestOnSuccess(t *testing.T) {
 	}
 	svc1 := Service{
 		failureCount: 1,
-		healthChangeCallback: func(event *HealthChangeEvent) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
 		FailureThreshold: 3,
@@ -63,7 +63,7 @@ func TestOnSuccess(t *testing.T) {
 	}
 	svc2 := Service{
 		failureCount: 2,
-		healthChangeCallback: func(event *HealthChangeEvent) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
 		FailureThreshold: 3,
@@ -71,7 +71,7 @@ func TestOnSuccess(t *testing.T) {
 	}
 	svc3 := Service{
 		failureCount: 3,
-		healthChangeCallback: func(event *HealthChangeEvent) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
 		FailureThreshold: 3,
@@ -79,7 +79,7 @@ func TestOnSuccess(t *testing.T) {
 	}
 	svc4 := Service{
 		failureCount: 0,
-		healthChangeCallback: func(event *HealthChangeEvent) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
 		FailureThreshold: 3,
@@ -150,7 +150,7 @@ func TestOnSuccess(t *testing.T) {
 func TestOnFailure(t *testing.T) {
 	svc0 := Service{
 		failureCount: 0,
-		healthChangeCallback: func(event *HealthChangeEvent) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
 		FailureThreshold: 3,
@@ -158,7 +158,7 @@ func TestOnFailure(t *testing.T) {
 	}
 	svc1 := Service{
 		failureCount: 1,
-		healthChangeCallback: func(event *HealthChangeEvent) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
 		FailureThreshold: 3,
@@ -166,7 +166,7 @@ func TestOnFailure(t *testing.T) {
 	}
 	svc2 := Service{
 		failureCount: 2,
-		healthChangeCallback: func(event *HealthChangeEvent) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
 		FailureThreshold: 3,
@@ -174,7 +174,7 @@ func TestOnFailure(t *testing.T) {
 	}
 	svc3 := Service{
 		failureCount: 3,
-		healthChangeCallback: func(event *HealthChangeEvent) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
 		FailureThreshold: 3,
@@ -182,7 +182,7 @@ func TestOnFailure(t *testing.T) {
 	}
 	svc4 := Service{
 		failureCount: 0,
-		healthChangeCallback: func(event *HealthChangeEvent) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
 		FailureThreshold: 3,

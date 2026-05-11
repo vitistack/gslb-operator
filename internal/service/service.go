@@ -16,6 +16,7 @@ import (
 const DEFAULT_FAILURE_THRESHOLD = 3
 
 type HealthChangeCallback func(*HealthChangeEvent)
+type FailureCountCallback func(*model.GSLBService)
 type ServiceOption func(s *Service)
 
 type HealthChangeEvent struct {
@@ -37,7 +38,8 @@ type Service struct {
 	FailureThreshold     int
 	failureCount         int
 	checker              checks.Checker
-	healthChangeCallback HealthChangeCallback
+	onHealthChange       HealthChangeCallback
+	onFailureCountUpdate FailureCountCallback
 	isHealthy            bool
 	dryRun               bool
 }
@@ -210,12 +212,12 @@ func (s *Service) OnSuccess() {
 
 	if s.failureCount == 0 {
 		s.isHealthy = true
-		s.healthChangeCallback(&HealthChangeEvent{
+		s.onHealthChange(&HealthChangeEvent{
 			Svc:     s,
 			Healthy: true,
 		})
 	} else {
-		// TODO: make failureCount update
+		s.onFailureCountUpdate(s.GSLBService())
 	}
 }
 
@@ -233,17 +235,21 @@ func (s *Service) OnFailure(err error) {
 
 	if s.failureCount == s.FailureThreshold { // threshold reached, service is considered down
 		s.isHealthy = false
-		s.healthChangeCallback(&HealthChangeEvent{
+		s.onHealthChange(&HealthChangeEvent{
 			Svc:     s,
 			Healthy: false,
 		})
 	} else {
-		// TODO: make failureCount update
+		s.onFailureCountUpdate(s.GSLBService())
 	}
 }
 
 func (s *Service) SetHealthChangeCallback(callback HealthChangeCallback) {
-	s.healthChangeCallback = callback
+	s.onHealthChange = callback
+}
+
+func (s *Service) SetFailureCountCallback(callback FailureCountCallback) {
+	s.onFailureCountUpdate = callback
 }
 
 func (s *Service) IsHealthy() bool {
@@ -279,6 +285,7 @@ func (s *Service) GetAverageRoundtrip() time.Duration {
 
 func (s *Service) ConfigChanged(other model.GSLBConfig) bool {
 	configSelf := s.GSLBConfig()
+	other.Interval = CalculateInterval(other.Priority, other.Interval)
 	return !reflect.DeepEqual(configSelf, other)
 	//if s.Fqdn != other.Fqdn ||
 	//	s.addr.String() != other.addr.String() ||
