@@ -142,7 +142,7 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 		return nil
 	}
 
-	rawData := txt.Txt[0]
+	rawData := strings.Join(txt.Txt, "")
 	data := strings.ReplaceAll(rawData, "\\", "")
 	svcConfig := model.GSLBConfig{
 		MemberOf:         txt.Hdr.Name,

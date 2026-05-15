@@ -31,7 +31,7 @@ type Service struct {
 	MemberOf             string
 	Datacenter           string
 	checkType            string
-	checkScript          string // lua script for HTTP(S) response validation
+	checkScript          *model.LuaScript // lua script for HTTP(S) response validation
 	ScheduledInterval    timesutil.Duration
 	defaultInterval      timesutil.Duration
 	priority             int

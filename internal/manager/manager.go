@@ -170,13 +170,16 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 		return nil, fmt.Errorf("failed to register config: %w", err)
 	}
 	_, exists := svcGroup.Members[serviceCfg.ServiceID]
+	if svcGroup.Members == nil {
+		svcGroup.Members = make(map[string]model.GSLBService)
+	}
+	svcGroup.Members[serviceCfg.ServiceID] = *newService.GSLBService()
 
 	// create new service group if needed, and register service in group
 	sm.newServiceGroup(newService.MemberOf).RegisterService(newService)
 
-	// will update entry with new values if changed
-	// therefore no need to check if it exists at this point
-	err = sm.svcGroupRepo.Create(serviceCfg.MemberOf, sm.serviceGroups[serviceCfg.MemberOf].Group())
+	// create/update service group
+	err = sm.svcGroupRepo.Create(serviceCfg.MemberOf, &svcGroup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new service: %w", err)
 	}
@@ -207,24 +210,25 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	bslog.Debug("registered service", slog.Any("service", newService))
 	// only emit events if the config was never registered in the first place
 	if !exists {
-		events.Emit(&events.Event{ // publish service registration event
-			Type: domainEvents.EventTypeGSLBConfigCreate,
-			Payload: domainEvents.GSLBConfigCreateEvent{
-				Config: serviceCfg,
+		events.Emit(
+			&events.Event{ // publish service registration event
+				Type: domainEvents.EventTypeGSLBConfigCreate,
+				Payload: domainEvents.GSLBConfigCreateEvent{
+					Config: serviceCfg,
+				},
+				Timestamp: time.Now(),
+				ID:        events.ID(domainEvents.EventTypeGSLBConfigCreate, serviceCfg.ServiceID),
 			},
-			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBConfigCreate, serviceCfg.ServiceID),
-		})
-
-		events.Emit(&events.Event{
-			Type: domainEvents.EventTypeGSLBServiceMemberAdd,
-			Payload: domainEvents.GSLBServiceMemberAddEvent{
-				Service:   newService.MemberOf,
-				NewMember: *newService.GSLBService(),
+			&events.Event{
+				Type: domainEvents.EventTypeGSLBServiceMemberAdd,
+				Payload: domainEvents.GSLBServiceMemberAddEvent{
+					Service:   newService.MemberOf,
+					NewMember: *newService.GSLBService(),
+				},
+				Timestamp: time.Now(),
+				ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, newService.MemberOf),
 			},
-			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, newService.MemberOf),
-		})
+		)
 	}
 
 	return newService, nil
