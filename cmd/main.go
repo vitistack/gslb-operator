@@ -50,7 +50,7 @@ func main() {
 
 	valkeyClient, err := valkeyStore.NewClient(
 		valkey.ClientOption{
-			InitAddress: []string{"localhost:6379"},
+			InitAddress: []string{cfg.Valkey().Address()},
 		},
 	)
 	if err != nil {

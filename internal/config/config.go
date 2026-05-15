@@ -47,6 +47,17 @@ func init() {
 			},
 			bslog.WithSplunkMultiHandler("<secret>", "<splunk_index>", slog.LevelInfo),
 		)
+	default:
+		handler = bslog.NewHandler(
+			os.Stdout, // log output
+			// slog handler factory
+			func(w io.Writer) slog.Handler {
+				return slog.NewTextHandler(w, handlerOpts)
+			},
+			// options
+			bslog.InDevMode(),
+			bslog.WithColor(),
+		)
 	}
 
 	slog.SetDefault(slog.New(handler))
@@ -59,6 +70,7 @@ type Config struct {
 	jwt    JWT
 	slack  Slack
 	mq     Mq
+	valkey Valkey
 }
 
 func GetInstance() *Config {
@@ -91,6 +103,10 @@ func (c *Config) Slack() *Slack {
 
 func (c *Config) MQ() *Mq {
 	return &c.mq
+}
+
+func (c *Config) Valkey() *Valkey {
+	return &c.valkey
 }
 
 // Server configuration
@@ -198,7 +214,7 @@ func (s *Slack) BotToken() string {
 }
 
 func (s *Slack) SigningSecret() string {
-	return s.SigningSecret()
+	return s.SIGNING_SECRET
 }
 
 type Mq struct {
@@ -222,6 +238,26 @@ func (mq *Mq) Endpoint() string {
 
 func (mq *Mq) Port() string {
 	return mq.PORT
+}
+
+type Valkey struct {
+	Addr string
+}
+
+func (v *Valkey) Address() string {
+	return v.Addr
+}
+
+func (v *Valkey) Port() string {
+	return ""
+}
+
+func (v *Valkey) User() string {
+	return ""
+}
+
+func (v *Valkey) Password() string {
+	return ""
 }
 
 func newConfig() (*Config, error) {
@@ -257,6 +293,8 @@ func newConfig() (*Config, error) {
 	slackCfg := Slack{}
 	mqCfg := Mq{}
 
+	valkeyCfg := Valkey{Addr: "localhost:6379"}
+
 	configs := []any{
 		&serverCfg,
 		&apiCfg,
@@ -264,6 +302,7 @@ func newConfig() (*Config, error) {
 		&jwtCfg,
 		&slackCfg,
 		&mqCfg,
+		&valkeyCfg,
 	}
 
 	for _, cfg := range configs {
@@ -280,5 +319,6 @@ func newConfig() (*Config, error) {
 		jwt:    jwtCfg,
 		slack:  slackCfg,
 		mq:     mqCfg,
+		valkey: valkeyCfg,
 	}, nil
 }
