@@ -12,7 +12,6 @@ import (
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/events"
-	"github.com/vitistack/gslb-operator/pkg/models/failover"
 )
 
 type ServiceGroupMode int
@@ -237,9 +236,9 @@ func (sg *ServiceGroup) RemoveService(id string) bool {
 
 		events.Emit(&events.Event{
 			Type: domainEvents.EventTypeGSLBServiceMemberRemove,
-			Payload: domainEvents.GSLBServiceMemberAddEvent{
-				Service:   removed.MemberOf,
-				NewMember: *removed.GSLBService(),
+			Payload: domainEvents.GSLBServiceMemberRemoveEvent{
+				Service: removed.MemberOf,
+				Removed: *removed.GSLBService(),
 			},
 			Timestamp: time.Now(),
 			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, removed.MemberOf),
@@ -353,38 +352,6 @@ func (sg *ServiceGroup) SetGroupMode() {
 
 func (sg *ServiceGroup) memberExists(member *service.Service) bool {
 	return slices.Contains(sg.Members, member)
-}
-
-func (sg *ServiceGroup) Failover(fqdn string, failover failover.Failover) error {
-	bslog.Warn("un-implemented servicegroup.Failover(...) method")
-	/*
-		var failoverSvc *service.Service
-		for _, svc := range sg.Members {
-			if svc.Datacenter == failover.Datacenter {
-				failoverSvc = svc
-				break
-			}
-		}
-
-		if failoverSvc == nil {
-			return fmt.Errorf("no service in service group registered with datacenter: %s", failover.Datacenter)
-		}
-
-		if !failoverSvc.IsHealthy() {
-			return fmt.Errorf("%w: service not considered healthy: %v", ErrCannotPromoteUnHealthyService, failoverSvc)
-		}
-
-		sg.lastActive = sg.active
-		sg.active = failoverSvc
-		//TODO: is this enough?
-		sg.OnPromotion(&PromotionEvent{
-			Service:   fqdn,
-			NewActive: failoverSvc,
-			OldActive: sg.lastActive,
-		})
-
-	*/
-	return nil
 }
 
 func (sg *ServiceGroup) Update() {

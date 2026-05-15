@@ -243,6 +243,7 @@ func (sm *ServicesManager) RemoveService(id string) error {
 		return ErrServiceNotFound
 	}
 
+	sm.scheduledServices.Delete(id)
 	sm.schedulers[interval].RemoveService(svc) // remove the service from its scheduler
 
 	sm.mutex.RLock()
@@ -253,12 +254,21 @@ func (sm *ServicesManager) RemoveService(id string) error {
 	if empty {
 		sm.deleteGroup(svc.MemberOf)
 
+		bslog.Debug("removed service", slog.Any("service", svc))
+		events.Emit(&events.Event{ // publish delete event for service
+			Type: domainEvents.EventTypeGSLBConfigDelete,
+			Payload: domainEvents.GSLBConfigDeleteEvent{
+				LastConfig: svc.GSLBConfig(),
+			},
+			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeGSLBConfigDelete, svc.GetID()),
+		})
+		return nil
 	}
 
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
-	sm.scheduledServices.Delete(id)
 	err := sm.svcGroupRepo.Update(svc.MemberOf, group.Group())
 	if err != nil {
 		return fmt.Errorf("failed to delete service: %w", err)
@@ -591,7 +601,9 @@ func (sm *ServicesManager) newServiceGroup(memberOf string) *ServiceGroup {
 	}
 	newGroup := NewEmptyServiceGroup(memberOf)
 	newGroup.OnPromotion = func(event *PromotionEvent) {
-		sm.handlePromotion(event)
+		sm.wg.Go(func() {
+			sm.handlePromotion(event)
+		})
 	}
 	sm.serviceGroups[memberOf] = newGroup
 
