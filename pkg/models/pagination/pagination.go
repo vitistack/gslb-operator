@@ -8,7 +8,6 @@ type Pagination[T any] struct {
 	Next       *int `json:"next,omitempty"`
 	Previous   *int `json:"prev,omitempty"`
 	Items      []T  `json:"items"`
-	//Query	string TODO: Maybe this would be cool???? or have a custom query object???
 }
 
 type PaginationParams struct {
@@ -25,8 +24,15 @@ func NewPaginationParams() *PaginationParams {
 }
 
 func NewPaginationResult[T any](params *PaginationParams, items []T) Pagination[T] {
+	if params.PageSize < 1 {
+		params.PageSize = 50
+	}
+	if params.Page < 1 {
+		params.Page = 1
+	}
+
 	numItems := len(items)
-	numPages := numItems/params.PageSize + 1
+	numPages := (numItems + params.PageSize - 1) / params.PageSize
 
 	page := Pagination[T]{
 		TotalItems: numItems,
@@ -49,6 +55,7 @@ func NewPaginationResult[T any](params *PaginationParams, items []T) Pagination[
 		start = numItems
 	}
 	page.Items = items[start:end]
+	page.NumItems = len(page.Items)
 
 	return page
 }
