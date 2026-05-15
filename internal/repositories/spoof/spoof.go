@@ -35,11 +35,20 @@ func (r *SpoofRepo) Read(memberOf string) (spoofs.Spoof, error) {
 		return spoofs.Spoof{}, fmt.Errorf("failed to read from storage: %w", err)
 	}
 
-	if group.Active != "" {
-		return group.Members[group.Active].Spoof(), nil
+	if group.HasOverride {
+		return spoofs.Spoof{
+			FQDN: memberOf,
+			IP:   group.Active,
+			DC:   "OVERRIDE",
+		}, nil
 	}
 
-	return spoofs.Spoof{}, nil
+	active, ok := group.Members[group.Active]
+	if ok {
+		return active.Spoof(), nil
+	}
+
+	return spoofs.Spoof{}, fmt.Errorf("no active spoof for %s", memberOf)
 }
 
 func (r *SpoofRepo) ReadAll() ([]spoofs.Spoof, error) {

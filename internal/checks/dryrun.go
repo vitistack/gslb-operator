@@ -17,13 +17,13 @@ func (dr *DryRun) Check() *HealthCheckResult {
 		return &HealthCheckResult{
 			err:       errors.New("dry-run fail"),
 			Success:   false,
-			CheckTime: float64(sleepDuration),
+			CheckTime: float64(sleepDuration) / float64(time.Millisecond),
 		}
 	}
 	return &HealthCheckResult{
 		err:       nil,
 		Success:   true,
-		CheckTime: float64(sleepDuration),
+		CheckTime: float64(sleepDuration) / float64(time.Millisecond),
 	}
 }
 

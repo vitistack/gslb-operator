@@ -46,14 +46,47 @@ func New(ctx context.Context, store persistence.Store[model.WebHook]) *WebhooksB
 	}
 
 	for _, hook := range webhooks {
-		Dispatch(hook)
+		err := Dispatch(hook)
+		if err != nil {
+			bslog.Error(
+				"failed to dispatch stored webhook",
+				slog.String("webhook_id", hook.ID),
+				slog.String("reason", err.Error()),
+			)
+		}
 	}
 
 	return broker
 }
 
 func (w *WebhooksBroker) Subscribe(ctx context.Context) {
-	go w.client.Subscribe(ctx, w.handle)
+	go func() {
+		const retryDelay = time.Second * 5
+
+		for {
+			err := w.client.Subscribe(ctx, w.handle)
+			if err == nil {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					bslog.Error("webhooks subscription stopped unexpectedly")
+				}
+			} else {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					bslog.Error("webhooks subscription failed", slog.String("reason", err.Error()))
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(retryDelay):
+			}
+		}
+	}()
 }
 
 // handler function for webhooks registration

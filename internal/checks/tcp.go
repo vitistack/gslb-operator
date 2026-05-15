@@ -1,7 +1,6 @@
 package checks
 
 import (
-	"errors"
 	"net"
 	"time"
 
@@ -83,12 +82,10 @@ func (th *TCPHalfChecker) Check() *HealthCheckResult {
 	err := checker.CheckAddr(th.addr, th.timeout)
 	th.endRecording()
 	if err != nil {
-		if errors.Is(err, tcpshaker.ErrTimeout) {
-			return &HealthCheckResult{
-				err:       err,
-				Success:   false,
-				CheckTime: th.lastCheck(),
-			}
+		return &HealthCheckResult{
+			err:       err,
+			Success:   false,
+			CheckTime: th.lastCheck(),
 		}
 	}
 

@@ -25,6 +25,15 @@ func init() {
 	events.Register(EventTypeDNSDISTSyncFailed, func() events.FilterOption {
 		return &DNSDistSynchFailedEventOptions{}
 	})
+	events.Register(EventTypeDNSDISTSpoofCreateFailed, func() events.FilterOption {
+		return &DNSDistSpoofCreateFailedEventOptions{}
+	})
+	events.Register(EventTypeDNSDISTServer, func() events.FilterOption {
+		return &DNSDistServerEventOptions{}
+	})
+	events.Register(EventTypeDNSDISTServerOutOfSync, func() events.FilterOption {
+		return &DNSDistServerOutOfSyncEventOptions{}
+	})
 }
 
 type DNSDistWebHookOptions struct {
@@ -102,31 +111,46 @@ func (d *DNSDistSynchEventOptions) Filter() events.EventFilter {
 	}
 }
 
-type DNSDistSynchStartedEventOptions struct {
-	DNSDistWebHookOptions
-}
-
-func (d *DNSDistSynchStartedEventOptions) Filter() events.EventFilter {
-	return func(e *events.Event) bool {
-		return d.matches()
-	}
-}
-
-type DNSDistSynchCompletedEventOptions struct {
-	DNSDistWebHookOptions
-}
-
-func (d *DNSDistSynchCompletedEventOptions) Filter() events.EventFilter {
-	return func(e *events.Event) bool {
-		return d.matches()
-	}
-}
-
 type DNSDistSynchFailedEventOptions struct {
 	DNSDistWebHookOptions
 }
 
 func (d *DNSDistSynchFailedEventOptions) Filter() events.EventFilter {
+	return func(e *events.Event) bool {
+		return d.matches()
+	}
+}
+
+type DNSDistSpoofCreateFailedEventOptions struct {
+	DNSDistWebHookOptions
+}
+
+func (d *DNSDistSpoofCreateFailedEventOptions) Filter() events.EventFilter {
+	return func(e *events.Event) bool {
+		return d.matches()
+	}
+}
+
+type DNSDistServerEventOptions struct {
+	DNSDistWebHookOptions
+}
+
+func (d *DNSDistServerEventOptions) Filter() events.EventFilter {
+	rawSelf, _ := json.Marshal(d)
+	return func(e *events.Event) bool {
+		child, err := events.ResolveOptions(e.Type, rawSelf)
+		if err != nil {
+			return true
+		}
+		return child.Filter()(e)
+	}
+}
+
+type DNSDistServerOutOfSyncEventOptions struct {
+	DNSDistWebHookOptions
+}
+
+func (d *DNSDistServerOutOfSyncEventOptions) Filter() events.EventFilter {
 	return func(e *events.Event) bool {
 		return d.matches()
 	}

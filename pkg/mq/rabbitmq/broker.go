@@ -54,11 +54,26 @@ func New[T any](ctx context.Context, ampqURL string, opts ...brokerOption[T]) mq
 	return broker
 }
 
-// TODO: implement full version
 func (b *Broker[T]) declareTopology() error {
+	// Build dead-letter arguments for the main queue if DL is configured.
+	var mainQueueArgs amqp.Table
+	if b.dlx != "" {
+		mainQueueArgs = amqp.Table{
+			"x-dead-letter-exchange": b.dlx,
+		}
+		if b.dlq != "" {
+			mainQueueArgs["x-dead-letter-routing-key"] = b.dlq
+		}
+	} else if b.dlq != "" {
+		// No DLX: use default exchange and route directly to the named DLQ.
+		mainQueueArgs = amqp.Table{
+			"x-dead-letter-exchange":    "",
+			"x-dead-letter-routing-key": b.dlq,
+		}
+	}
+
 	if b.exchange != "" {
-		// declare exchange with queue
-		err := b.connection.channel.ExchangeDeclare(
+		if err := b.connection.channel.ExchangeDeclare(
 			b.exchange,
 			amqp.ExchangeDirect,
 			true,
@@ -66,58 +81,101 @@ func (b *Broker[T]) declareTopology() error {
 			false,
 			false,
 			nil,
-		)
-
-		if err != nil {
-
+		); err != nil {
+			return fmt.Errorf("mq: failed to declare exchange %q: %w", b.exchange, err)
 		}
 
-		_, err = b.connection.channel.QueueDeclare(
+		if _, err := b.connection.channel.QueueDeclare(
 			b.queue,
 			true,
 			false,
 			false,
 			false,
-			nil,
-		)
-
-		if err != nil {
-
+			mainQueueArgs,
+		); err != nil {
+			return fmt.Errorf("mq: failed to declare queue %q: %w", b.queue, err)
 		}
 
-		b.channel.QueueBind(
-			"",
-			"",
-			"",
+		if err := b.channel.QueueBind(
+			b.queue,
+			b.queue, // routing key equals queue name for a direct exchange
+			b.exchange,
 			false,
 			nil,
-		)
-
+		); err != nil {
+			return fmt.Errorf("mq: failed to bind queue %q to exchange %q: %w", b.queue, b.exchange, err)
+		}
 	} else {
-		_, err := b.connection.channel.QueueDeclare(
+		if _, err := b.connection.channel.QueueDeclare(
 			b.queue,
 			true,
 			false,
 			false,
 			false,
-			nil,
-		)
-
-		if err != nil {
-
+			mainQueueArgs,
+		); err != nil {
+			return fmt.Errorf("mq: failed to declare queue %q: %w", b.queue, err)
 		}
 	}
 
 	if b.dlx != "" {
-		// declare dead-letter exchange with queue
-	} else {
-		// only declare dead-letter queue
+		if err := b.connection.channel.ExchangeDeclare(
+			b.dlx,
+			amqp.ExchangeDirect,
+			true,
+			false,
+			false,
+			false,
+			nil,
+		); err != nil {
+			return fmt.Errorf("mq: failed to declare dead-letter exchange %q: %w", b.dlx, err)
+		}
+
+		// Derive DLQ name: use configured name or fall back to main queue + ".dlq".
+		dlq := b.dlq
+		if dlq == "" {
+			dlq = b.queue + ".dlq"
+		}
+
+		if _, err := b.connection.channel.QueueDeclare(
+			dlq,
+			true,
+			false,
+			false,
+			false,
+			nil,
+		); err != nil {
+			return fmt.Errorf("mq: failed to declare dead-letter queue %q: %w", dlq, err)
+		}
+
+		if err := b.connection.channel.QueueBind(
+			dlq,
+			dlq, // routing key matches x-dead-letter-routing-key on the main queue
+			b.dlx,
+			false,
+			nil,
+		); err != nil {
+			return fmt.Errorf("mq: failed to bind dead-letter queue %q to exchange %q: %w", dlq, b.dlx, err)
+		}
+	} else if b.dlq != "" {
+		// No DLX: just ensure the dead-letter queue exists on the default exchange.
+		if _, err := b.connection.channel.QueueDeclare(
+			b.dlq,
+			true,
+			false,
+			false,
+			false,
+			nil,
+		); err != nil {
+			return fmt.Errorf("mq: failed to declare dead-letter queue %q: %w", b.dlq, err)
+		}
 	}
 
 	return nil
 }
 
 func (b *Broker[T]) Publish(ctx context.Context, msg T) error {
+	b.connection.Wait(ctx)
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("could not marshall message body: %w", err)
@@ -186,6 +244,7 @@ func (b *Broker[T]) handle(ctx context.Context, delivery amqp.Delivery, handler 
 	err := handler(ctx, msg)
 	if err != nil {
 		delivery.Reject(false)
+		return
 	}
 
 	err = delivery.Ack(true)

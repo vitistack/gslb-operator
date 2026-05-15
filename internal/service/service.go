@@ -200,7 +200,7 @@ OnFailure : count = 3, healthy = false -> update DNS
 
 // called when healthcheck is successful
 func (s *Service) OnSuccess() {
-	bslog.HealthCheck("Health-Check Successfull", slog.Any("service", s))
+	bslog.HealthCheck("Health-Check Successful", slog.Any("service", s))
 	if s.isHealthy { // already healthy
 		s.failureCount = 0
 		return

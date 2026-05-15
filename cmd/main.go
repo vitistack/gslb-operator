@@ -12,9 +12,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/valkey-io/valkey-go"
-	"github.com/vitistack/gslb-operator/internal/api/handlers/failover"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
-	"github.com/vitistack/gslb-operator/internal/api/handlers/webhooks"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
 	whBroker "github.com/vitistack/gslb-operator/internal/brokers/webhooks"
 	"github.com/vitistack/gslb-operator/internal/config"
@@ -52,7 +50,7 @@ func main() {
 
 	valkeyClient, err := valkeyStore.NewClient(
 		valkey.ClientOption{
-			InitAddress: []string{"localhost:6379"},
+			InitAddress: []string{cfg.Valkey().Address()},
 		},
 	)
 	if err != nil {
@@ -114,16 +112,10 @@ func main() {
 
 	// routes handlers
 	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
-	failoverApiService := failover.NewFailoverService(mgr)
-	webhooksApiService := webhooks.NewWebhookService(webhooksStore)
+	//webhooksApiService := webhooks.NewWebhookService(webhooksStore)
 
 	// initializing the service jwt self signer
 	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
-
-	// failover
-	api.HandleFunc(routes.POST_FAILOVER, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(failoverApiService.FailoverService))
 
 	// spoofs
 	api.HandleFunc(routes.GET_SPOOFS, middleware.Chain(
@@ -160,25 +152,6 @@ func main() {
 			middleware.WithIncomingRequestLogging(slog.Default()),
 		)(spoofsApiService.DeleteOverride))
 	*/
-
-	// webhooks
-	api.HandleFunc(routes.GET_WEBHOOKS, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(webhooksApiService.GetWebhooks))
-
-	api.HandleFunc(routes.POST_WEBHOOKS, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(webhooksApiService.CreateWebHook))
-
-	/*
-		api.HandleFunc(routes.PUT_WEBHOOKS, middleware.Chain(
-			middleware.WithIncomingRequestLogging(slog.Default()),
-		)(webhooksApiService.UpdateWebhook))
-	*/
-
-	api.HandleFunc(routes.DELETE_WEBHOOKS, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(webhooksApiService.DeleteWebhook))
 
 	// metrics
 	api.Handle(routes.METRICS, promhttp.Handler())

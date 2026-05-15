@@ -81,7 +81,7 @@ func NewBus() *EventBus {
 	}
 }
 
-func (eb *EventBus) On(typ EventType, handler EventHandler, filters ...EventFilter) {	
+func (eb *EventBus) On(typ EventType, handler EventHandler, filters ...EventFilter) {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 
@@ -162,7 +162,7 @@ func (eb *EventBus) Stop(ctx context.Context) {
 	done := make(chan struct{})
 	go func() {
 		eb.wg.Wait()
-		done <- struct{}{}
+		close(done)
 	}()
 
 	select {
