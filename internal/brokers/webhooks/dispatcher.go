@@ -1,6 +1,7 @@
 package webhooks_broker
 
 import (
+	"fmt"
 	"log/slog"
 
 	"github.com/vitistack/gslb-operator/internal/model"
@@ -32,13 +33,16 @@ func Dispatch(wh model.WebHook) error {
 	// remove old references for the webhook
 	// re-registration replaces old version
 	events.RemoveAll(wh.ID)
-
+	notifier, err := notifications.NewNotifier(wh.Options.Format)
+	if err != nil {
+		return fmt.Errorf("could not create webhooks notifier: %w", err)
+	}
 	dispatcher := &Dispatcher{
-		webhook: wh,
-		notifier: notifications.NewNotifier(wh.Options.Format),
+		webhook:  wh,
+		notifier: notifier,
 	}
 
-	err := wh.Apply(dispatcher)
+	err = wh.Apply(dispatcher)
 	if err != nil {
 		return err
 	}

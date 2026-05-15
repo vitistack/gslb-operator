@@ -245,7 +245,7 @@ func (c *connection) Wait(ctx context.Context) {
 	select {
 	case <-ctx.Done():
 		return
-	case <-c.ready:
+	case <-ready:
 		return
 	}
 }
