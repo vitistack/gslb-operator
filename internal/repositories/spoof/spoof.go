@@ -29,34 +29,17 @@ func NewSpoofRepo(storage persistence.Store[model.GSLBServiceGroup]) *SpoofRepo 
 	}
 }
 
-func (r *SpoofRepo) Read(id string) (spoofs.Spoof, error) {
-	group, err := r.store.Load(id)
-	if err != nil {
-		return spoofs.Spoof{}, fmt.Errorf("failed to read from storage: %w", err)
-	}
-
-	for _, svc := range group {
-		if svc.IsActive {
-			return svc.Spoof(), nil
-		}
-	}
-
-	return spoofs.Spoof{}, nil
-}
-
-func (r *SpoofRepo) ReadMemberOf(memberOf string) (spoofs.Spoof, error) {
+func (r *SpoofRepo) Read(memberOf string) (spoofs.Spoof, error) {
 	group, err := r.store.Load(memberOf)
 	if err != nil {
 		return spoofs.Spoof{}, fmt.Errorf("failed to read from storage: %w", err)
 	}
 
-	for _, svc := range group {
-		if svc.IsActive {
-			return svc.Spoof(), nil
-		}
+	if group.Active != "" {
+		return group.Members[group.Active].Spoof(), nil
 	}
 
-	return spoofs.Spoof{}, fmt.Errorf("%w: fqdn: %s", ErrSpoofInServiceGroupNotFound, memberOf)
+	return spoofs.Spoof{}, nil
 }
 
 func (r *SpoofRepo) ReadAll() ([]spoofs.Spoof, error) {
@@ -67,10 +50,8 @@ func (r *SpoofRepo) ReadAll() ([]spoofs.Spoof, error) {
 
 	spoofs := make([]spoofs.Spoof, 0)
 	for _, group := range groups {
-		for _, svc := range group {
-			if svc.IsActive {
-				spoofs = append(spoofs, svc.Spoof())
-			}
+		if group.Active != "" {
+			spoofs = append(spoofs, group.Members[group.Active].Spoof())
 		}
 	}
 

@@ -5,7 +5,7 @@ package spoofs
 * this is meant to only be used in an emergency. and is generally considered a disruptive action, due to it being no checking.
 * be cautious when using this.
 * for a more gracefull approach, see failover.
- */
+ 
 
 import (
 	"errors"
@@ -197,3 +197,4 @@ func (ss *SpoofsService) restoreActive(override spoofs.Override) *model.GSLBServ
 
 	return svc.GSLBService()
 }
+*/

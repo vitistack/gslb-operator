@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/vitistack/gslb-operator/internal/model"
 )
 
 type HTTPChecker struct {
@@ -14,14 +16,14 @@ type HTTPChecker struct {
 	validator *LuaValidator
 }
 
-func NewHTTPChecker(url string, timeout time.Duration, validationScripts ...string) Checker {
+func NewHTTPChecker(url string, timeout time.Duration, validationScripts ...*model.LuaScript) Checker {
 	transport := http.DefaultTransport.(*http.Transport)
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
 	var validator *LuaValidator
 	for _, script := range validationScripts {
-		if script != "" {
-			validator = &LuaValidator{script: script}
+		if script != nil && string(*script) != "" {
+			validator = &LuaValidator{script: string(*script)}
 		}
 	}
 
@@ -40,7 +42,12 @@ func (c *HTTPChecker) Check() *HealthCheckResult {
 	c.startRecording()
 	resp, err := c.client.Get(c.url)
 	c.endRecording()
-	defer resp.Body.Close()
+
+	defer func() {
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+	}()
 
 	if err != nil {
 		return &HealthCheckResult{

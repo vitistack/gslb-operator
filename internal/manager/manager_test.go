@@ -221,7 +221,7 @@ func TestServicesManager_updateService(t *testing.T) {
 			}
 			sm.updateService(old, tt.new)
 
-			if old.ConfigChanged(new) {
+			if old.ConfigChanged(tt.new) {
 				t.Fatal("still pending config changes after update")
 			}
 

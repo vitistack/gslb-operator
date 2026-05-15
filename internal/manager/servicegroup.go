@@ -3,9 +3,11 @@ package manager
 import (
 	"cmp"
 	"log/slog"
+	"net"
 	"slices"
 	"time"
 
+	"github.com/vitistack/gslb-operator/internal/model"
 	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
@@ -61,6 +63,8 @@ type ServiceGroup struct {
 	// should never receive a nil promotion event
 	OnPromotion           func(*PromotionEvent)
 	prioritizedDatacenter string
+	hasOverride           bool
+	overrideIP            net.IP
 }
 
 func NewEmptyServiceGroup(name string) *ServiceGroup {
@@ -71,6 +75,26 @@ func NewEmptyServiceGroup(name string) *ServiceGroup {
 		active:     nil,
 		lastActive: nil,
 	}
+}
+
+func (sg *ServiceGroup) Group() *model.GSLBServiceGroup {
+	group := &model.GSLBServiceGroup{
+		HasOverride: sg.hasOverride,
+		Members:     make(map[string]model.GSLBService),
+	}
+	if sg.hasOverride {
+		group.Active = sg.overrideIP.String()
+	}
+
+	if sg.active != nil {
+		group.Active = sg.active.GetID()
+	}
+
+	for _, member := range sg.Members {
+		group.Members[member.GetID()] = *member.GSLBService()
+	}
+
+	return group
 }
 
 // returns the active service in ActivePassive mode,

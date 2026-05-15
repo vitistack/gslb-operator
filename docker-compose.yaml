@@ -99,6 +99,18 @@ services:
     volumes:
       - ./data/dnsdist:/etc/dnsdist/
       - ./data/dnsdist/logs:/var/log/dnsdist/
+  
+  valkey:
+    image: valkey/valkey:9.0.3-alpine
+    profiles:
+      - valkey
+      - all
+    command: ["valkey-server", "/usr/local/etc/valkey/valkey.conf"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/valkey/:/usr/local/etc/valkey:ro
+      - ./data/valkey/data/:/data
 
 volumes:
   prometheus-data:
