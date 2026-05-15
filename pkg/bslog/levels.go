@@ -3,5 +3,6 @@ package bslog
 import "log/slog"
 
 const (
-	LevelFatal slog.Level = slog.LevelError + 4
+	LevelHealthCheck slog.Level = slog.LevelDebug - 4
+	LevelFatal       slog.Level = slog.LevelError + 4
 )

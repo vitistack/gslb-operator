@@ -1,12 +1,14 @@
 package manager
 
-import "github.com/vitistack/gslb-operator/internal/repositories/service"
+import (
+	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
+)
 
 type managerConfig struct {
 	MinRunningWorkers     uint
 	NonBlockingBufferSize uint
 	DryRun                bool
-	repo                  *service.ServiceRepo
+	repo                  *servicegroup.ServiceGroupRepo
 }
 
 type serviceManagerOption func(cfg *managerConfig)
@@ -29,7 +31,7 @@ func WithDryRun(enabled bool) serviceManagerOption {
 	}
 }
 
-func WithServiceRepository(repo *service.ServiceRepo) serviceManagerOption {
+func WithServiceGroupRepository(repo *servicegroup.ServiceGroupRepo) serviceManagerOption {
 	return func(cfg *managerConfig) {
 		cfg.repo = repo
 	}

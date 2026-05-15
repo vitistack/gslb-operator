@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"reflect"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/checks"
@@ -14,8 +15,14 @@ import (
 
 const DEFAULT_FAILURE_THRESHOLD = 3
 
-type HealthChangeCallback func(healthy bool)
+type HealthChangeCallback func(*HealthChangeEvent)
+type FailureCountCallback func(*model.GSLBService)
 type ServiceOption func(s *Service)
+
+type HealthChangeEvent struct {
+	Svc     *Service
+	Healthy bool
+}
 
 type Service struct {
 	id                   string
@@ -24,13 +31,15 @@ type Service struct {
 	MemberOf             string
 	Datacenter           string
 	checkType            string
+	checkScript          *model.LuaScript // lua script for HTTP(S) response validation
 	ScheduledInterval    timesutil.Duration
 	defaultInterval      timesutil.Duration
 	priority             int
 	FailureThreshold     int
 	failureCount         int
 	checker              checks.Checker
-	healthChangeCallback HealthChangeCallback
+	onHealthChange       HealthChangeCallback
+	onFailureCountUpdate FailureCountCallback
 	isHealthy            bool
 	dryRun               bool
 }
@@ -58,6 +67,7 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, opts ...ServiceOption) (*
 		MemberOf:          config.MemberOf,
 		Datacenter:        config.Datacenter,
 		checkType:         config.CheckType,
+		checkScript:       config.Script,
 		ScheduledInterval: interval,
 		defaultInterval:   interval,
 		priority:          config.Priority,
@@ -190,7 +200,7 @@ OnFailure : count = 3, healthy = false -> update DNS
 
 // called when healthcheck is successful
 func (s *Service) OnSuccess() {
-	bslog.Debug("Health-Check Successfull", slog.Any("service", s))
+	bslog.HealthCheck("Health-Check Successful", slog.Any("service", s))
 	if s.isHealthy { // already healthy
 		s.failureCount = 0
 		return
@@ -202,13 +212,18 @@ func (s *Service) OnSuccess() {
 
 	if s.failureCount == 0 {
 		s.isHealthy = true
-		s.healthChangeCallback(true)
+		s.onHealthChange(&HealthChangeEvent{
+			Svc:     s,
+			Healthy: true,
+		})
+	} else {
+		s.onFailureCountUpdate(s.GSLBService())
 	}
 }
 
 // called when healthcheck fails
 func (s *Service) OnFailure(err error) {
-	bslog.Debug("Health-Check Failed", slog.Any("service", s), slog.String("error", err.Error()))
+	bslog.HealthCheck("Health-Check Failed", slog.Any("service", s), slog.String("error", err.Error()))
 	if !s.isHealthy { // already unhealthy
 		s.failureCount = s.FailureThreshold
 		return
@@ -220,12 +235,21 @@ func (s *Service) OnFailure(err error) {
 
 	if s.failureCount == s.FailureThreshold { // threshold reached, service is considered down
 		s.isHealthy = false
-		s.healthChangeCallback(false)
+		s.onHealthChange(&HealthChangeEvent{
+			Svc:     s,
+			Healthy: false,
+		})
+	} else {
+		s.onFailureCountUpdate(s.GSLBService())
 	}
 }
 
 func (s *Service) SetHealthChangeCallback(callback HealthChangeCallback) {
-	s.healthChangeCallback = callback
+	s.onHealthChange = callback
+}
+
+func (s *Service) SetFailureCountCallback(callback FailureCountCallback) {
+	s.onFailureCountUpdate = callback
 }
 
 func (s *Service) IsHealthy() bool {
@@ -237,7 +261,10 @@ func (s *Service) GetPriority() int {
 }
 
 func (s *Service) GetIP() string {
-	return s.addr.IP.String()
+	if s.addr != nil {
+		return s.addr.IP.String()
+	}
+	return ""
 }
 
 func (s *Service) GetDefaultInterval() timesutil.Duration {
@@ -256,16 +283,20 @@ func (s *Service) GetAverageRoundtrip() time.Duration {
 	return s.checker.Roundtrip()
 }
 
-func (s *Service) ConfigChanged(other *Service) bool {
-	if s.Fqdn != other.Fqdn ||
-		s.addr.String() != other.addr.String() ||
-		s.Datacenter != other.Datacenter ||
-		s.FailureThreshold != other.FailureThreshold ||
-		s.priority != other.priority ||
-		s.checkType != other.checkType {
-		return true
-	}
-	return false
+func (s *Service) ConfigChanged(other model.GSLBConfig) bool {
+	configSelf := s.GSLBConfig()
+	other.Interval = CalculateInterval(other.Priority, other.Interval)
+	return !reflect.DeepEqual(configSelf, other)
+	//if s.Fqdn != other.Fqdn ||
+	//	s.addr.String() != other.addr.String() ||
+	//	s.Datacenter != other.Datacenter ||
+	//	s.FailureThreshold != other.FailureThreshold ||
+	//	s.priority != other.priority ||
+	//	s.checkType != other.checkType ||
+	//	s.checkScript != other.checkScript {
+	//	return true
+	//}
+	//return false
 }
 
 // updates the configuration values of s with the values of new
@@ -276,6 +307,7 @@ func (s *Service) Assign(new *Service) {
 	s.MemberOf = new.MemberOf
 	s.priority = new.priority
 	s.checkType = new.checkType
+	s.checkScript = new.checkScript
 	s.Datacenter = new.Datacenter
 	s.defaultInterval = new.defaultInterval
 	s.FailureThreshold = new.FailureThreshold
@@ -301,7 +333,7 @@ func (s *Service) String() string {
 }
 
 func (s *Service) GSLBService() *model.GSLBService {
-	return &model.GSLBService{
+	out := &model.GSLBService{
 		ID:           s.id,
 		MemberOf:     s.MemberOf,
 		Fqdn:         s.Fqdn,
@@ -309,5 +341,23 @@ func (s *Service) GSLBService() *model.GSLBService {
 		IP:           s.GetIP(),
 		IsHealthy:    s.isHealthy,
 		FailureCount: s.failureCount,
+	}
+
+	return out
+}
+
+func (s *Service) GSLBConfig() model.GSLBConfig {
+	return model.GSLBConfig{
+		ServiceID:        s.id,
+		MemberOf:         s.MemberOf,
+		Fqdn:             s.Fqdn,
+		Ip:               s.GetIP(),
+		Port:             fmt.Sprintf("%d", s.addr.Port),
+		Datacenter:       s.Datacenter,
+		Interval:         s.defaultInterval,
+		Priority:         s.priority,
+		FailureThreshold: s.FailureThreshold,
+		CheckType:        s.checkType,
+		Script:           s.checkScript,
 	}
 }

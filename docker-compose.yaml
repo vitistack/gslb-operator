@@ -8,8 +8,8 @@ services:
   opa:
     image: openpolicyagent/opa:0.60.0
     profiles:
-      - "opa"
-      - "all"
+      - opa
+      - all
     command:
       - "run"
       - "--server"
@@ -32,8 +32,8 @@ services:
   prometheus:
     image: prom/prometheus:latest
     profiles:
-     - "monitoring"
-     - "all"
+     - monitoring
+     - all
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -54,8 +54,8 @@ services:
   grafana:
     image: grafana/grafana:latest
     profiles:
-     - "monitoring"
-     - "all"
+     - monitoring
+     - all
     ports:
       - "3000:3000"
     environment:
@@ -72,6 +72,45 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+  
+  rabbitmq:
+    image: rabbitmq:3-management
+    profiles:
+      - rabbitmq
+      - all
+    environment:
+      RABBITMQ_DEFAULT_USER: devuser
+      RABBITMQ_DEFAULT_PASS: devpass
+    ports:
+      - "5672:5672" # AMQP
+      - "15672:15672" # Management UI
+    volumes:
+      - ./data/rabbitmq:/var/lib/rabbitmq
+  
+  dnsdist:
+    image: powerdns/dnsdist-20:latest
+    profiles:
+      - dnsdist
+      - all
+    ports: 
+      - "5199:5199"
+      - "5353:53"
+      - "8083:8083"
+    volumes:
+      - ./data/dnsdist:/etc/dnsdist/
+      - ./data/dnsdist/logs:/var/log/dnsdist/
+  
+  valkey:
+    image: valkey/valkey:9.0.3-alpine
+    profiles:
+      - valkey
+      - all
+    command: ["valkey-server", "/usr/local/etc/valkey/valkey.conf"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/valkey/:/usr/local/etc/valkey:ro
+      - ./data/valkey/data/:/data
 
 volumes:
   prometheus-data:

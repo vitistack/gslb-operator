@@ -9,6 +9,7 @@ type RoundTripper struct {
 	mu                sync.RWMutex
 	currentTripStart  time.Time
 	roundtrips        []time.Duration
+	latestRoundtrip   int
 	roundtripIdx      int // current index to populate
 	count             int
 	roundtripCapacity int
@@ -18,6 +19,7 @@ func NewRoundtripper() *RoundTripper {
 	return &RoundTripper{
 		mu:                sync.RWMutex{},
 		roundtrips:        make([]time.Duration, 20),
+		latestRoundtrip:   0,
 		roundtripIdx:      0,
 		count:             0,
 		roundtripCapacity: 20,
@@ -34,7 +36,13 @@ func (rt *RoundTripper) endRecording() {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
+	// udpate latest roundtrip index
+	rt.latestRoundtrip = rt.roundtripIdx
+
+	// record checktime
 	rt.roundtrips[rt.roundtripIdx] = time.Since(rt.currentTripStart)
+
+	// wrap next roundtrip index
 	rt.roundtripIdx = (rt.roundtripIdx + 1) % rt.roundtripCapacity
 
 	if rt.count < rt.roundtripCapacity {
@@ -57,4 +65,8 @@ func (rt *RoundTripper) AverageRoundtripTime() time.Duration {
 	}
 
 	return sum / time.Duration(rt.count)
+}
+
+func (rt *RoundTripper) lastCheck() float64 {
+	return float64(rt.roundtrips[rt.latestRoundtrip].Milliseconds())
 }

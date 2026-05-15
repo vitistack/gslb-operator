@@ -30,6 +30,12 @@ const (
 
 	METRICS     = ROOT + "metrics"
 	GET_METRICS = http.MethodGet + " " + METRICS
+
+	WEBHOOKS        = ROOT + "webhooks"
+	GET_WEBHOOKS    = http.MethodGet + " " + WEBHOOKS
+	POST_WEBHOOKS   = http.MethodPost + " " + WEBHOOKS
+	PUT_WEBHOOKS    = http.MethodPut + " " + WEBHOOKS + "/{id}"
+	DELETE_WEBHOOKS = http.MethodDelete + " " + WEBHOOKS + "/{id}"
 )
 
 const (

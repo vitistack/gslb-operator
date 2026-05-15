@@ -47,43 +47,48 @@ func TestCalculateInterval(t *testing.T) {
 func TestOnSuccess(t *testing.T) {
 	svc0 := Service{
 		failureCount: 0,
-		healthChangeCallback: func(health bool) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
-		FailureThreshold: 3,
-		isHealthy:        false,
+		onFailureCountUpdate: func(g *model.GSLBService) {},
+		FailureThreshold:     3,
+		isHealthy:            false,
 	}
 	svc1 := Service{
 		failureCount: 1,
-		healthChangeCallback: func(health bool) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
-		FailureThreshold: 3,
-		isHealthy:        false,
+		onFailureCountUpdate: func(g *model.GSLBService) {},
+		FailureThreshold:     3,
+		isHealthy:            false,
 	}
 	svc2 := Service{
 		failureCount: 2,
-		healthChangeCallback: func(health bool) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
-		FailureThreshold: 3,
-		isHealthy:        false,
+		onFailureCountUpdate: func(g *model.GSLBService) {},
+		FailureThreshold:     3,
+		isHealthy:            false,
 	}
 	svc3 := Service{
 		failureCount: 3,
-		healthChangeCallback: func(health bool) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
-		FailureThreshold: 3,
-		isHealthy:        false,
+		onFailureCountUpdate: func(g *model.GSLBService) {},
+		FailureThreshold:     3,
+		isHealthy:            false,
 	}
 	svc4 := Service{
 		failureCount: 0,
-		healthChangeCallback: func(health bool) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
-		FailureThreshold: 3,
-		isHealthy:        true,
+		onFailureCountUpdate: func(g *model.GSLBService) {},
+		FailureThreshold:     3,
+		isHealthy:            true,
 	}
 
 	tests := []Test{
@@ -150,43 +155,48 @@ func TestOnSuccess(t *testing.T) {
 func TestOnFailure(t *testing.T) {
 	svc0 := Service{
 		failureCount: 0,
-		healthChangeCallback: func(health bool) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
-		FailureThreshold: 3,
-		isHealthy:        true,
+		onFailureCountUpdate: func(g *model.GSLBService) {},
+		FailureThreshold:     3,
+		isHealthy:            true,
 	}
 	svc1 := Service{
 		failureCount: 1,
-		healthChangeCallback: func(health bool) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
-		FailureThreshold: 3,
-		isHealthy:        true,
+		onFailureCountUpdate: func(g *model.GSLBService) {},
+		FailureThreshold:     3,
+		isHealthy:            true,
 	}
 	svc2 := Service{
 		failureCount: 2,
-		healthChangeCallback: func(health bool) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
-		FailureThreshold: 3,
-		isHealthy:        true,
+		onFailureCountUpdate: func(g *model.GSLBService) {},
+		FailureThreshold:     3,
+		isHealthy:            true,
 	}
 	svc3 := Service{
 		failureCount: 3,
-		healthChangeCallback: func(health bool) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
-		FailureThreshold: 3,
-		isHealthy:        true,
+		onFailureCountUpdate: func(g *model.GSLBService) {},
+		FailureThreshold:     3,
+		isHealthy:            true,
 	}
 	svc4 := Service{
 		failureCount: 0,
-		healthChangeCallback: func(health bool) {
+		onHealthChange: func(event *HealthChangeEvent) {
 
 		},
-		FailureThreshold: 3,
-		isHealthy:        false,
+		onFailureCountUpdate: func(g *model.GSLBService) {},
+		FailureThreshold:     3,
+		isHealthy:            false,
 	}
 
 	tests := []Test{
@@ -263,7 +273,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 		{
 			name: "baseinterval-5-priority-1",
 			config: model.GSLBConfig{
-				ServiceID: "123",
+				ServiceID:  "123",
 				Fqdn:       "test.nhn.no",
 				Ip:         "127.0.0.1",
 				Port:       "80",
@@ -278,7 +288,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 		{
 			name: "baseinterval-5-priority-2",
 			config: model.GSLBConfig{
-				ServiceID: "123",
+				ServiceID:  "123",
 				Fqdn:       "test.nhn.no",
 				Ip:         "127.0.0.1",
 				Port:       "80",
@@ -293,7 +303,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 		{
 			name: "baseinterval-5-priority-3",
 			config: model.GSLBConfig{
-				ServiceID: "123",
+				ServiceID:  "123",
 				Fqdn:       "test.nhn.no",
 				Ip:         "127.0.0.1",
 				Port:       "80",
@@ -308,7 +318,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 		{
 			name: "baseinterval-5-priority-4",
 			config: model.GSLBConfig{
-				ServiceID: "123",
+				ServiceID:  "123",
 				Fqdn:       "test.nhn.no",
 				Ip:         "127.0.0.1",
 				Port:       "80",

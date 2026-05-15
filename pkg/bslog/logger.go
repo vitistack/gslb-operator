@@ -10,6 +10,14 @@ type Logger struct {
 	slog.Logger
 }
 
+func (l *Logger) HealthCheck(msg string, args ...any) {
+	l.Log(context.Background(), LevelHealthCheck, msg, args...)
+}
+
+func (l *Logger) HealthCheckContext(ctx context.Context, msg string, args ...any) {
+	l.Log(ctx, LevelHealthCheck, msg, args...)
+}
+
 func (l *Logger) Fatal(msg string, args ...any) {
 	l.Log(context.Background(), LevelFatal, msg, args...)
 	os.Exit(1)

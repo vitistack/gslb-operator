@@ -18,10 +18,12 @@ import (
 
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
+	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
 	repo "github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/dnsdist"
+	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
 )
@@ -44,6 +46,7 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 	if err != nil {
 		return nil, fmt.Errorf("could could not load dnsdist servers configuration: %w", err)
 	}
+
 	servers := []model.DNSDISTServer{}
 	err = json.Unmarshal(file, &servers)
 	if err != nil {
@@ -75,13 +78,21 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 }
 
 func (d *DNSDISTUpdater) OnServiceUp(svc *service.Service) error {
-
 	for _, client := range d.servers {
 		err := client.AddDomainSpoof(svc.MemberOf+":"+svc.Datacenter, svc.MemberOf, svc.GetIP())
 		if err != nil {
 			return fmt.Errorf("could not create dnsdist-spoof: %w", err)
 		}
 	}
+
+	events.Emit(&events.Event{
+		Type: domainEvents.EventTypeDNSDISTSpoofCreate,
+		Payload: domainEvents.DNSDistSpoofCreateEvent{
+			Spoof: svc.GSLBService().Spoof(),
+		},
+		Timestamp: time.Now(),
+		ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofCreate, svc.MemberOf),
+	})
 
 	return nil
 }
@@ -93,6 +104,16 @@ func (d *DNSDISTUpdater) OnServiceDown(svc *service.Service) error {
 			return fmt.Errorf("could not remove dnsdist-spoof: %w", err)
 		}
 	}
+
+	events.Emit(&events.Event{
+		Type: domainEvents.EventTypeDNSDISTSpoofDelete,
+		Payload: domainEvents.DNSDistSpoofDeleteEvent{
+			Spoof: svc.GSLBService().Spoof(),
+		},
+		Timestamp: time.Now(),
+		ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofDelete, svc.MemberOf),
+	})
+
 	return nil
 }
 
@@ -126,18 +147,25 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 	}
 
 	wg := sync.WaitGroup{}
+	syncErrors := make(chan error, len(d.servers))
 
 	for server, client := range d.servers {
-		wg.Go(func() {
+		wg.Add(1)
+		go func(server string) {
+			defer wg.Done()
+
 			rawRuleSet, err := client.ShowRules()
 			if err != nil {
 				bslog.Error("unable to fetch ruleset from dnsdist server", slog.String("reason", err.Error()))
+				syncErrors <- fmt.Errorf("synchronization of %s failed: %w", server, err)
 				return
 			}
 
 			data, err := d.ParseRuleSet(rawRuleSet)
 			if err != nil {
 				bslog.Error("could not synchronize dnsdist server", slog.String("reason", err.Error()))
+				syncErrors <- fmt.Errorf("synchronization of %s failed: %w", server, err)
+				return
 			}
 
 			slices.SortFunc(data, func(a, b spoofs.Spoof) int {
@@ -147,21 +175,46 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 			marshalledSpoofs, err := json.Marshal(data)
 			if err != nil {
 				bslog.Error("unable to marshall spoofs", slog.String("reason", err.Error()))
+				syncErrors <- fmt.Errorf("synchronization of %s failed: %w", server, err)
 				return
 			}
 
-			rawHash := sha256.Sum256(marshalledSpoofs) // creating bytes representation of spoofs
+			// hash representation of all spoofs
+			rawHash := sha256.Sum256(marshalledSpoofs)
 			hash := hex.EncodeToString(rawHash[:])
 			if hash != desiredHash {
 				err := d.reconcileServer(client, data)
 				if err != nil {
-					bslog.Warn("failed to reconcile server", slog.String("server_name", server))
+					bslog.Warn("failed to reconcile server", slog.String("server_name", server), slog.String("reason", err.Error()))
+					syncErrors <- err
+					events.Emit(&events.Event{
+						Type:      domainEvents.EventTypeDNSDISTServerOutOfSync,
+						Payload:   domainEvents.DNSDistServerOutOfSyncEvent{},
+						Timestamp: time.Now(),
+						ID:        events.ID(domainEvents.EventTypeDNSDISTServerOutOfSync, server),
+					})
+					return
 				}
 			}
-		})
+		}(server)
 	}
 
 	wg.Wait()
+	close(syncErrors)
+
+	for err := range syncErrors {
+		if err != nil {
+			events.Emit(&events.Event{
+				Type: domainEvents.EventTypeDNSDISTSyncFailed,
+				Payload: domainEvents.DNSDistSyncFailedEvent{
+					Reason: err.Error(),
+				},
+				Timestamp: time.Now(), // TODO: what should the subject in the ID be?
+				ID:        events.ID(domainEvents.EventTypeDNSDISTSyncFailed, "<server>?"),
+			})
+			return err
+		}
+	}
 
 	return nil
 }

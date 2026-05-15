@@ -3,12 +3,15 @@ package manager
 import (
 	"cmp"
 	"log/slog"
+	"net"
 	"slices"
-	"sync"
+	"time"
 
+	"github.com/vitistack/gslb-operator/internal/model"
+	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
-	"github.com/vitistack/gslb-operator/pkg/models/failover"
+	"github.com/vitistack/gslb-operator/pkg/events"
 )
 
 type ServiceGroupMode int
@@ -59,7 +62,8 @@ type ServiceGroup struct {
 	// should never receive a nil promotion event
 	OnPromotion           func(*PromotionEvent)
 	prioritizedDatacenter string
-	mu                    sync.RWMutex
+	hasOverride           bool
+	overrideIP            net.IP
 }
 
 func NewEmptyServiceGroup(name string) *ServiceGroup {
@@ -69,15 +73,32 @@ func NewEmptyServiceGroup(name string) *ServiceGroup {
 		Members:    make([]*service.Service, 0),
 		active:     nil,
 		lastActive: nil,
-		mu:         sync.RWMutex{},
 	}
+}
+
+func (sg *ServiceGroup) Group() *model.GSLBServiceGroup {
+	group := &model.GSLBServiceGroup{
+		HasOverride: sg.hasOverride,
+		Members:     make(map[string]model.GSLBService),
+	}
+	if sg.hasOverride {
+		group.Active = sg.overrideIP.String()
+	}
+
+	if sg.active != nil {
+		group.Active = sg.active.GetID()
+	}
+
+	for _, member := range sg.Members {
+		group.Members[member.GetID()] = *member.GSLBService()
+	}
+
+	return group
 }
 
 // returns the active service in ActivePassive mode,
 // or returns the first healthy service in ActiveActive if no explicit active is set.
 func (sg *ServiceGroup) GetActive() *service.Service {
-	sg.mu.RLock()
-	defer sg.mu.RUnlock()
 	switch sg.mode {
 	case ActivePassive:
 		if sg.active != nil {
@@ -98,8 +119,6 @@ func (sg *ServiceGroup) GetActive() *service.Service {
 // In other words, the service that SHOULD be active.
 // this is true because the members are sorted on priority.
 func (sg *ServiceGroup) firstHealthy() *service.Service {
-	sg.mu.RLock()
-	defer sg.mu.RUnlock()
 	for _, svc := range sg.Members {
 		if svc.IsHealthy() {
 			return svc
@@ -109,7 +128,6 @@ func (sg *ServiceGroup) firstHealthy() *service.Service {
 }
 
 func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, healthy bool) {
-	sg.mu.Lock()
 	oldActive := sg.active
 	if oldActive == nil {
 		oldActive = sg.lastActive
@@ -119,7 +137,6 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 	case ActivePassive:
 		if !healthy && sg.active.GetID() == changedService.GetID() { // active has gone down!
 			sg.lastActive = sg.active
-			sg.mu.Unlock()
 			sg.OnPromotion(sg.promoteNextHealthy())
 			return
 		}
@@ -133,15 +150,14 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 
 			sg.lastActive = sg.active
 			sg.active = changedService
-			sg.mu.Unlock()
 			sg.OnPromotion(event)
+			return
 		}
 
 	case ActiveActive:
 		if healthy {
 			// If prioritized DC service becomes healthy, it must become active (single DNS record).
 			if changedService.Datacenter == sg.prioritizedDatacenter && changedService != sg.active {
-				sg.mu.Unlock()
 				sg.OnPromotion(&PromotionEvent{
 					Service:   sg.Name,
 					NewActive: changedService,
@@ -152,7 +168,6 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 			}
 			// If there is no active or the current active is unhealthy, promote this healthy service.
 			if sg.active == nil || !sg.active.IsHealthy() {
-				sg.mu.Unlock()
 				sg.OnPromotion(&PromotionEvent{
 					Service:   sg.Name,
 					NewActive: changedService,
@@ -166,7 +181,6 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 
 		// unhealthy
 		if changedService.GetID() == sg.active.GetID() {
-			sg.mu.Unlock()
 			next := sg.firstHealthy()
 			if next != nil {
 				sg.OnPromotion(&PromotionEvent{
@@ -202,37 +216,39 @@ func (sg *ServiceGroup) RegisterService(newService *service.Service) {
 		return
 	}
 
-	sg.mu.Lock()
 	sg.Members = append(sg.Members, newService)
-	sg.mu.Unlock()
 
 	sg.Update()
 	serviceGroupMembers.WithLabelValues(newService.MemberOf).Inc()
 }
 
 func (sg *ServiceGroup) RemoveService(id string) bool {
-	sg.mu.Lock()
 	members := sg.Members
-	sg.mu.Unlock()
 
 	idx := slices.IndexFunc(members, func(s *service.Service) bool {
 		return s.GetID() == id
 	})
 	if idx != -1 {
-		sg.mu.Lock()
+		removed := members[idx]
 		sg.Members = append(members[:idx], members[idx+1:]...)
-		sg.mu.Unlock()
 		sg.Update()
 		serviceGroupMembers.WithLabelValues(sg.Name).Dec()
+
+		events.Emit(&events.Event{
+			Type: domainEvents.EventTypeGSLBServiceMemberRemove,
+			Payload: domainEvents.GSLBServiceMemberRemoveEvent{
+				Service: removed.MemberOf,
+				Removed: *removed.GSLBService(),
+			},
+			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, removed.MemberOf),
+		})
 	}
 
 	return len(sg.Members) == 0
 }
 
 func (sg *ServiceGroup) promoteNextHealthy() *PromotionEvent {
-	sg.mu.Lock()
-	defer sg.mu.Unlock()
-
 	bslog.Debug("promoting next healthy service", slog.Any("oldActive", sg.active))
 	oldActive := sg.active
 
@@ -280,11 +296,9 @@ func (sg *ServiceGroup) triggerPromotion(service *service.Service) bool {
 // Will configure group mode, based on the state of group members (Members).
 // If the state of the group deviates from the requirements of its mode, the mode will change
 func (sg *ServiceGroup) SetGroupMode() {
-	sg.mu.RLock()
 	numServices := len(sg.Members)
 	if numServices == 0 {
 		sg.mode = ActiveActive
-		sg.mu.RUnlock()
 		return
 	}
 
@@ -296,7 +310,6 @@ func (sg *ServiceGroup) SetGroupMode() {
 		} else {
 			sg.active = nil
 		}
-		sg.mu.RUnlock()
 		return
 	}
 
@@ -309,10 +322,6 @@ func (sg *ServiceGroup) SetGroupMode() {
 			break
 		}
 	}
-	sg.mu.RUnlock()
-
-	sg.mu.Lock()
-	defer sg.mu.Unlock()
 
 	switch sg.mode {
 	case ActiveActive:
@@ -342,61 +351,20 @@ func (sg *ServiceGroup) SetGroupMode() {
 }
 
 func (sg *ServiceGroup) memberExists(member *service.Service) bool {
-	sg.mu.RLock()
-	defer sg.mu.RUnlock()
 	return slices.Contains(sg.Members, member)
 }
 
-func (sg *ServiceGroup) Failover(fqdn string, failover failover.Failover) error {
-	bslog.Warn("un-implemented servicegroup.Failover(...) method")
-	/*
-		var failoverSvc *service.Service
-		for _, svc := range sg.Members {
-			if svc.Datacenter == failover.Datacenter {
-				failoverSvc = svc
-				break
-			}
-		}
-
-		if failoverSvc == nil {
-			return fmt.Errorf("no service in service group registered with datacenter: %s", failover.Datacenter)
-		}
-
-		if !failoverSvc.IsHealthy() {
-			return fmt.Errorf("%w: service not considered healthy: %v", ErrCannotPromoteUnHealthyService, failoverSvc)
-		}
-
-		sg.lastActive = sg.active
-		sg.active = failoverSvc
-		//TODO: is this enough?
-		sg.OnPromotion(&PromotionEvent{
-			Service:   fqdn,
-			NewActive: failoverSvc,
-			OldActive: sg.lastActive,
-		})
-
-	*/
-	return nil
-}
-
 func (sg *ServiceGroup) Update() {
-	sg.mu.RLock()
 	if len(sg.Members) == 0 { // dont need to do anything, group should be removed!
-		sg.mu.RUnlock()
 		return
 	}
-	sg.mu.RUnlock()
 
-	sg.mu.Lock()
 	slices.SortFunc(sg.Members, sortMembersFunc)
-	sg.mu.Unlock()
 
 	sg.SetGroupMode()
 	firstHealthy := sg.firstHealthy() // who should have the active role!
 	if firstHealthy != sg.active {
 		// trigger promotion because whoever is active should not be active anymore!
-		sg.mu.Lock()
-		defer sg.mu.Unlock()
 		sg.lastActive = sg.active
 		sg.active = firstHealthy
 

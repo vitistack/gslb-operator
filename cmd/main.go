@@ -11,20 +11,22 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/vitistack/gslb-operator/internal/api/handlers/failover"
+	"github.com/valkey-io/valkey-go"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
+	whBroker "github.com/vitistack/gslb-operator/internal/brokers/webhooks"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
 	"github.com/vitistack/gslb-operator/internal/dns/update"
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/model"
-	"github.com/vitistack/gslb-operator/internal/repositories/service"
+	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
 	"github.com/vitistack/gslb-operator/pkg/auth"
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
+	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/lua"
-	"github.com/vitistack/gslb-operator/pkg/persistence/store/file"
+	valkeyStore "github.com/vitistack/gslb-operator/pkg/persistence/store/valkey"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 )
 
@@ -39,28 +41,45 @@ func main() {
 		slog.String("build-date", buildDate),
 	)
 	cfg := config.GetInstance()
+	bslog.Info("loaded environment", slog.Any("env", cfg))
 
 	// initialize lua execution environment
 	if err := lua.LoadSandboxConfig(cfg.Server().LuaSandbox()); err != nil {
 		bslog.Fatal("could not load lua configuration", slog.Any("reason", err))
 	}
 
-	serviceFileStore, err := file.NewStore[model.GSLBServiceGroup]("./data/store.json")
+	valkeyClient, err := valkeyStore.NewClient(
+		valkey.ClientOption{
+			InitAddress: []string{cfg.Valkey().Address()},
+		},
+	)
 	if err != nil {
-		bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
+		bslog.Fatal("failed to establish valkey connection", slog.String("reason", err.Error()))
 	}
-	svcRepo := service.NewServiceRepo(serviceFileStore)
+	servicesStore := valkeyStore.NewStore[model.GSLBServiceGroup](valkeyClient, "gslb:service_groups", time.Second*30)
+	webhooksStore := valkeyStore.NewStore[model.WebHook](valkeyClient, "gslb:webhooks", time.Minute*30)
+
+	//serviceFileStore, err := file.NewStore[model.GSLBServiceGroup]("./data/store.json")
+	//if err != nil {
+	//	bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
+	//}
+	svcGroupRepo := servicegroup.NewServiceGroupRepo(servicesStore)
+
+	//webhooksFileStore, err := file.NewStore[model.WebHook]("./data/webhooks.json")
+	//if err != nil {
+	//	bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
+	//}
 
 	// creating dns - handler objects
 	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
 	mgr := manager.NewManager(
-		manager.WithMinRunningWorkers(80),
-		manager.WithNonBlockingBufferSize(50),
-		manager.WithServiceRepository(svcRepo),
+		manager.WithMinRunningWorkers(10),
+		manager.WithNonBlockingBufferSize(15),
+		manager.WithServiceGroupRepository(svcGroupRepo),
 		//manager.WithDryRun(true),
 	)
 
-	updater, err := update.NewDNSDISTUpdater(serviceFileStore)
+	updater, err := update.NewDNSDISTUpdater(servicesStore)
 	if err != nil {
 		bslog.Fatal("unable to create updater", slog.String("error", err.Error()))
 	}
@@ -73,6 +92,11 @@ func main() {
 
 	background := context.Background()
 	ctx, cancel := context.WithCancel(background)
+
+	// mq brokers
+	webhooksBroker := whBroker.New(ctx, webhooksStore)
+	webhooksBroker.Subscribe(ctx)
+
 	dnsHandler.Start(ctx, cancel)
 	updater.Synchronize(ctx)
 
@@ -87,17 +111,13 @@ func main() {
 	api := http.NewServeMux()
 
 	// routes handlers
-	spoofsApiService := spoofs.NewSpoofsService(serviceFileStore, mgr)
-
-	failoverApiService := failover.NewFailoverService(mgr)
+	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
+	//webhooksApiService := webhooks.NewWebhookService(webhooksStore)
 
 	// initializing the service jwt self signer
 	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
 
-	api.HandleFunc(routes.POST_FAILOVER, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(failoverApiService.FailoverService))
-
+	// spoofs
 	api.HandleFunc(routes.GET_SPOOFS, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),
 		auth.WithTokenValidation(slog.Default()),
@@ -113,23 +133,25 @@ func main() {
 		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetSpoofsHash))
 
-	// spoofs/override
-	// TODO: add auth!
-	api.HandleFunc(routes.GET_OVERRIDE, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.GetOverride))
+	/*
+		// spoofs/override
+		// TODO: add auth!
+		api.HandleFunc(routes.GET_OVERRIDE, middleware.Chain(
+			middleware.WithIncomingRequestLogging(slog.Default()),
+		)(spoofsApiService.GetOverride))
 
-	api.HandleFunc(routes.PUT_OVERRIDE, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.UpdateOverride))
+		api.HandleFunc(routes.PUT_OVERRIDE, middleware.Chain(
+			middleware.WithIncomingRequestLogging(slog.Default()),
+		)(spoofsApiService.UpdateOverride))
 
-	api.HandleFunc(routes.POST_OVERRIDE, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.CreateOverride))
+		api.HandleFunc(routes.POST_OVERRIDE, middleware.Chain(
+			middleware.WithIncomingRequestLogging(slog.Default()),
+		)(spoofsApiService.CreateOverride))
 
-	api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.DeleteOverride))
+		api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
+			middleware.WithIncomingRequestLogging(slog.Default()),
+		)(spoofsApiService.DeleteOverride))
+	*/
 
 	// metrics
 	api.Handle(routes.METRICS, promhttp.Handler())
@@ -164,6 +186,9 @@ func main() {
 	if err := server.Shutdown(shutdown); err != nil {
 		panic("error shutting down server: " + err.Error())
 	}
+
+	// stop event handling
+	events.Stop(shutdown)
 }
 
 //func getRandomGSLBConfig() []model.GSLBConfig {

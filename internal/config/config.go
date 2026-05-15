@@ -1,6 +1,7 @@
 package config
 
 import (
+	"io"
 	"log"
 	"log/slog"
 	"os"
@@ -19,25 +20,44 @@ func init() {
 		log.Fatalf("unable to load config: %s", err.Error())
 	}
 
-	var handler slog.Handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level:       slog.LevelDebug,
+	var handler slog.Handler
+	handlerOpts := &slog.HandlerOptions{
+		Level:       cfg.Server().LogLevel(),
 		ReplaceAttr: bslog.BaseReplaceAttr,
-	})
+	}
 
 	switch cfg.server.ENV {
 	case "dev", "development", "DEV", "DEVELOPMENT":
 		handler = bslog.NewHandler(
-			slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-				Level:       slog.LevelDebug,
-				ReplaceAttr: bslog.BaseReplaceAttr,
-			}),
+			os.Stdout, // log output
+			// slog handler factory
+			func(w io.Writer) slog.Handler {
+				return slog.NewTextHandler(w, handlerOpts)
+			},
+			// options
 			bslog.InDevMode(),
+			bslog.WithColor(),
 		)
+
 	case "prod", "production", "PROD", "PRODUCTION":
-		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level:       slog.LevelInfo,
-			ReplaceAttr: bslog.BaseReplaceAttr,
-		})
+		handler = bslog.NewHandler(
+			os.Stdout,
+			func(w io.Writer) slog.Handler {
+				return slog.NewJSONHandler(w, handlerOpts)
+			},
+			bslog.WithSplunkMultiHandler("<secret>", "<splunk_index>", slog.LevelInfo),
+		)
+	default:
+		handler = bslog.NewHandler(
+			os.Stdout, // log output
+			// slog handler factory
+			func(w io.Writer) slog.Handler {
+				return slog.NewTextHandler(w, handlerOpts)
+			},
+			// options
+			bslog.InDevMode(),
+			bslog.WithColor(),
+		)
 	}
 
 	slog.SetDefault(slog.New(handler))
@@ -48,10 +68,17 @@ type Config struct {
 	api    API
 	gslb   GSLB
 	jwt    JWT
+	slack  Slack
+	mq     Mq
+	valkey Valkey
 }
 
 func GetInstance() *Config {
 	return cfg
+}
+
+func (c *Config) LogValue() slog.Value {
+	return slog.StringValue("un-implemented LogValue")
 }
 
 func (c *Config) Server() *Server {
@@ -70,10 +97,23 @@ func (c *Config) JWT() *JWT {
 	return &c.jwt
 }
 
+func (c *Config) Slack() *Slack {
+	return &c.slack
+}
+
+func (c *Config) MQ() *Mq {
+	return &c.mq
+}
+
+func (c *Config) Valkey() *Valkey {
+	return &c.valkey
+}
+
 // Server configuration
 type Server struct {
 	ENV         string `env:"SRV_ENV" flag:"env"`
 	LUA_SANDBOX string `env:"SRV_LUA_SANDBOX" flag:"lua-sandbox"`
+	LOG_LEVEL   string `env:"SRV_LOG_LEVEL" flag:"log-level"`
 }
 
 func (s *Server) Env() string {
@@ -82,6 +122,25 @@ func (s *Server) Env() string {
 
 func (s *Server) LuaSandbox() string {
 	return s.LUA_SANDBOX
+}
+
+func (s *Server) LogLevel() slog.Level {
+	switch s.LOG_LEVEL {
+	case "healthcheck", "HEALTHCHECK":
+		return bslog.LevelHealthCheck
+	case "debug", "DEBUG":
+		return slog.LevelDebug
+	case "info", "INFO":
+		return slog.LevelInfo
+	case "warn", "WARN":
+		return slog.LevelWarn
+	case "error", "ERROR":
+		return slog.LevelError
+	case "fatal", "FATAL":
+		return bslog.LevelFatal
+	default:
+		return slog.LevelDebug
+	}
 }
 
 // API configuration
@@ -140,6 +199,67 @@ func (jwt *JWT) User() string {
 	return jwt.USER
 }
 
+type Slack struct {
+	APP_TOKEN      string `env:"SLACK_APP_TOKEN"`
+	BOT_TOKEN      string `env:"SLACK_BOT_TOKEN"`
+	SIGNING_SECRET string `env:"SLACK_SIGNING_SECRET"`
+}
+
+func (s *Slack) AppToken() string {
+	return s.APP_TOKEN
+}
+
+func (s *Slack) BotToken() string {
+	return s.BOT_TOKEN
+}
+
+func (s *Slack) SigningSecret() string {
+	return s.SIGNING_SECRET
+}
+
+type Mq struct {
+	USER     string `env:"MQ_USER"`
+	PASS     string `env:"MQ_PASS"`
+	ENDPOINT string `env:"MQ_ENDPOINT"`
+	PORT     string `env:"MQ_PORT"`
+}
+
+func (mq *Mq) User() string {
+	return mq.USER
+}
+
+func (mq *Mq) Pass() string {
+	return mq.PASS
+}
+
+func (mq *Mq) Endpoint() string {
+	return mq.ENDPOINT
+}
+
+func (mq *Mq) Port() string {
+	return mq.PORT
+}
+
+type Valkey struct {
+	Addr string
+}
+
+func (v *Valkey) Address() string {
+	return v.Addr
+}
+
+func (v *Valkey) Port() string {
+	return ""
+}
+
+func (v *Valkey) User() string {
+	return ""
+}
+
+func (v *Valkey) Password() string {
+	return ""
+}
+
 func newConfig() (*Config, error) {
 	fileLoader, err := loaders.NewFileLoader(
 		".env",
@@ -160,19 +280,29 @@ func newConfig() (*Config, error) {
 	serverCfg := Server{
 		ENV: "prod",
 	}
+
 	apiCfg := API{
 		PORT: ":8080",
 	}
+
 	gslbCfg := GSLB{
 		POLLINTERVAL: "1m",
 	}
+
 	jwtCfg := JWT{}
+	slackCfg := Slack{}
+	mqCfg := Mq{}
+
+	valkeyCfg := Valkey{Addr: "localhost:6379"}
 
 	configs := []any{
 		&serverCfg,
 		&apiCfg,
 		&gslbCfg,
 		&jwtCfg,
+		&slackCfg,
+		&mqCfg,
+		&valkeyCfg,
 	}
 
 	for _, cfg := range configs {
@@ -187,5 +317,8 @@ func newConfig() (*Config, error) {
 		api:    apiCfg,
 		gslb:   gslbCfg,
 		jwt:    jwtCfg,
+		slack:  slackCfg,
+		mq:     mqCfg,
+		valkey: valkeyCfg,
 	}, nil
 }

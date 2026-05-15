@@ -16,7 +16,7 @@ type Test struct {
 }
 
 var activeConfig = model.GSLBConfig{
-	ServiceID: "123",
+	ServiceID:  "123",
 	Fqdn:       "test.example.com",
 	Ip:         "192.168.1.1",
 	Port:       "80",
@@ -27,7 +27,7 @@ var activeConfig = model.GSLBConfig{
 }
 
 var passiveConfig = model.GSLBConfig{
-	ServiceID: "456",
+	ServiceID:  "456",
 	Fqdn:       "test.example.com",
 	Ip:         "192.168.1.1",
 	Port:       "80",
@@ -84,15 +84,15 @@ func TestServiceGroup_OnServiceHealthChange(t *testing.T) {
 			t.Error("promotion event received when active service in ActiveActive is Healthy/UnHealthy")
 		}
 	}
-	active.SetHealthChangeCallback(func(healthy bool) {
-		group.OnServiceHealthChange(active, healthy)
+	active.SetHealthChangeCallback(func(e *service.HealthChangeEvent) {
+		group.OnServiceHealthChange(e.Svc, e.Healthy)
 	})
 
 	makeServiceHealthy(active)
 	makeServiceUnHealthy(active)
 
-	passive.SetHealthChangeCallback(func(healthy bool) {
-		group.OnServiceHealthChange(passive, healthy)
+	passive.SetHealthChangeCallback(func(e *service.HealthChangeEvent) {
+		group.OnServiceHealthChange(e.Svc, e.Healthy)
 	})
 	group.RegisterService(passive)
 
