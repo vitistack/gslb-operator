@@ -5,7 +5,7 @@ import (
 )
 
 type GSLBServiceGroup struct {
-	Active      string
+	Active      string // when active override this is the overridden IP
 	HasOverride bool
 	Members     map[string]GSLBService
 }
