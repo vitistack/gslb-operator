@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/valkey-io/valkey-go"
 )
+
+var sharedClient valkey.Client // shared valkey client
 
 type ValkeyStore[T any] struct {
 	client   valkey.Client
@@ -17,30 +18,18 @@ type ValkeyStore[T any] struct {
 	cacheTTL time.Duration
 }
 
-var once sync.Once
-
 func NewClient(opts valkey.ClientOption) (valkey.Client, error) {
-	var client valkey.Client
-	var initErr error
-
-	once.Do(func() {
-		c, err := valkey.NewClient(opts)
-		if err != nil {
-			initErr = err
-			return
-		}
-		client = c
-	})
-
-	if initErr != nil {
-		return nil, fmt.Errorf("failed to create valkey client: %w", initErr)
+	if sharedClient != nil {
+		return sharedClient, nil
 	}
 
-	if client == nil {
-		return nil, fmt.Errorf("valkey client already initialized")
+	client, err := valkey.NewClient(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create valkey client: %w", err)
 	}
+	sharedClient = client
 
-	return client, nil
+	return sharedClient, nil
 }
 
 func NewStore[T any](c valkey.Client, base string, ttl time.Duration) *ValkeyStore[T] {
