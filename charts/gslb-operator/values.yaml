@@ -54,6 +54,7 @@ securityContext:
   readOnlyRootFilesystem: false
   runAsNonRoot: true
   runAsUser: 1000
+  runAsGroup: 1000
   seccompProfile:
     type: RuntimeDefault
 
@@ -164,9 +165,30 @@ settings:
   poll_interval: 1m
   log_level: DEBUG
   vk_addr: gslb-valkey-service.gslb-operator.svc.cluster.local
+  dnsdist_servers: ./secrets/GSLB_DNSDIST_SERVERS
 
 vault:
   enable: true
+  secretMappings:
+    - secretKey: JWT_SECRET
+      property: jwt-secret
+    - secretKey: JWT_USER
+      property: jwt-user
+    - secretKey: GSLB_ZONE
+      property: gslb-zone
+    - secretKey: GSLB_NAMESERVER
+      property: gslb-nameserver
+    - secretKey: GSLB_DNSDIST_SERVERS
+      property: dnsdist-servers
+    - secretKey: VK_USER
+      property: valkey-user
+    - secretKey: VK_PASS
+      property: valkey-pass
+  mqSecretMappings:
+    - secretKey: MQ_PASS
+      property: mq-pass
+    - secretKey: MQ_USER
+      property: mq-user
 
 webhooks:
   enable: false
