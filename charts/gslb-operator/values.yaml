@@ -52,8 +52,8 @@ securityContext:
     drop:
       - ALL
   readOnlyRootFilesystem: false
-  #runAsNonRoot: true
-  #runAsUser: 1000
+  runAsNonRoot: true
+  runAsUser: 1000
   seccompProfile:
     type: RuntimeDefault
 
@@ -158,11 +158,15 @@ tolerations: []
 affinity: {}
 
 settings:
-  env: prod
+  env: dev
   sandbox: sandbox.lua
   port: :3000
   poll_interval: 1m
-  gslb_updater: 127.0.0.1:9000
+  log_level: DEBUG
+  vk_addr: gslb-valkey-service.gslb-operator.svc.cluster.local
 
 vault:
   enable: true
+
+webhooks:
+  enable: false
