@@ -164,7 +164,7 @@ settings:
   port: :3000
   poll_interval: 1m
   log_level: DEBUG
-  vk_addr: gslb-valkey-service.gslb-operator.svc.cluster.local
+  vk_addr: gslb-valkey-service.gslb-operator.svc.cluster.local:6379
   dnsdist_servers: ./secrets/GSLB_DNSDIST_SERVERS
 
 vault:
