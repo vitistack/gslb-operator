@@ -102,15 +102,14 @@ services:
   
   valkey:
     image: valkey/valkey:9.0.3-alpine
-    profiles:
-      - valkey
-      - all
-    command: ["valkey-server", "/usr/local/etc/valkey/valkey.conf"]
+    command: >
+      valkey-server /etc/valkey/valkey.conf --aclfile /etc/valkey/users.acl
     ports:
       - "6379:6379"
     volumes:
-      - ./data/valkey/:/usr/local/etc/valkey:ro
-      - ./data/valkey/data/:/data
+      - ./data/valkey/data:/data:rw
+      - ./data/valkey/valkey.conf:/etc/valkey/valkey.conf:ro
+      - ./data/valkey/users.acl:/etc/valkey/users.acl:ro
 
 volumes:
   prometheus-data:

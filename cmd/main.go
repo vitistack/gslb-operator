@@ -51,6 +51,8 @@ func main() {
 	valkeyClient, err := valkeyStore.NewClient(
 		valkey.ClientOption{
 			InitAddress: []string{cfg.Valkey().Address()},
+			Username:    cfg.Valkey().User(),
+			Password:    cfg.Valkey().Password(),
 		},
 	)
 	if err != nil {
@@ -81,7 +83,7 @@ func main() {
 
 	updater, err := update.NewDNSDISTUpdater(servicesStore)
 	if err != nil {
-		bslog.Fatal("unable to create updater", slog.String("error", err.Error()))
+		bslog.Error("unable to create updater", slog.String("error", err.Error()))
 	}
 
 	dnsHandler := dns.NewHandler(
@@ -94,8 +96,7 @@ func main() {
 	ctx, cancel := context.WithCancel(background)
 
 	// mq brokers
-	webhooksBroker := whBroker.New(ctx, webhooksStore)
-	webhooksBroker.Subscribe(ctx)
+	whBroker.Init(ctx, webhooksStore)
 
 	dnsHandler.Start(ctx, cancel)
 	updater.Synchronize(ctx)
