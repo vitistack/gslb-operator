@@ -222,6 +222,7 @@ type Mq struct {
 	PASS     string `env:"MQ_PASS"`
 	ENDPOINT string `env:"MQ_ENDPOINT"`
 	PORT     string `env:"MQ_PORT"`
+	ENABLED  bool   `env:"MQ_ENABLED"`
 }
 
 func (mq *Mq) User() string {
@@ -240,24 +241,26 @@ func (mq *Mq) Port() string {
 	return mq.PORT
 }
 
+func (mq *Mq) Enabled() bool {
+	return mq.ENABLED
+}
+
 type Valkey struct {
-	Addr string
+	Addr string `env:"VK_ADDR"`
+	USER string `env:"VK_USER"`
+	PASS string `env:"VK_PASS"`
 }
 
 func (v *Valkey) Address() string {
 	return v.Addr
 }
 
-func (v *Valkey) Port() string {
-	return ""
-}
-
 func (v *Valkey) User() string {
-	return ""
+	return v.USER
 }
 
 func (v *Valkey) Password() string {
-	return ""
+	return v.PASS
 }
 
 func newConfig() (*Config, error) {

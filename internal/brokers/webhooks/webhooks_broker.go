@@ -21,6 +21,12 @@ type WebhooksBroker struct {
 	repo   *webhooks.WebHooksRepo
 }
 
+func Init(ctx context.Context, store persistence.Store[model.WebHook]) {
+	if config.GetInstance().MQ().Enabled() {
+		New(ctx, store).Subscribe(ctx)
+	}
+}
+
 func New(ctx context.Context, store persistence.Store[model.WebHook]) *WebhooksBroker {
 	mqCfg := config.GetInstance().MQ()
 	broker := &WebhooksBroker{
