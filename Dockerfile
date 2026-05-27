@@ -18,7 +18,8 @@ FROM alpine:3.23
 
 WORKDIR /app
 
-RUN addgroup -S gslb-group && adduser -u 1000 -S gslb-operator -G gslb-group
+# create group and user that will own the application workspace
+RUN addgroup -g 1000 -S gslb-group && adduser -u 1000 -S gslb-operator -G gslb-group
 
 COPY --from=build /app/gslb-operator /app/gslb-operator
 COPY sandbox.lua /app

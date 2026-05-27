@@ -9,9 +9,10 @@ data:
   SRV_LOG_LEVEL: {{ .Values.settings.log_level }}
   API_PORT: {{ .Values.settings.port }}
   GSLB_POLL_INTERVAL: {{ .Values.settings.poll_interval }}
+  GSLB_DNSDIST_SERVERS_FILE: {{ .Values.settings.dnsdist_servers }}
   {{- if .Values.webhooks.enable }}
   MQ_ENABLED: true
   MQ_ENDPOINT: {{ .Values.settings.mq_endpoint }}
   MQ_PORT: {{ .Values.settings.mq_port }}
   {{- end}}
-  VK_ADDR: {{ .Values.settings.vk_addr}}
+  VK_ADDR: {{ .Values.settings.vk_addr }}
