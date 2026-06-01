@@ -19,7 +19,7 @@ func AllRule() Rule { return allRule{} }
 type qnameRule struct{ name string }
 
 // QNameRule matches queries for the exact DNS name.
-func (r qnameRule) luaRule() string  { return fmt.Sprintf("QNameRule(%q)", r.name) }
+func (r qnameRule) luaRule() string  { return fmt.Sprintf("QNameRule('%s')", r.name) }
 func QNameRule(name string) Rule { return qnameRule{name} }
 
 type qnameSuffixRule struct{ names []string }
@@ -29,7 +29,7 @@ func QNameSuffixRule(names ...string) Rule { return qnameSuffixRule{names} }
 func (r qnameSuffixRule) luaRule() string {
 	quoted := make([]string, len(r.names))
 	for i, n := range r.names {
-		quoted[i] = fmt.Sprintf("%q", n)
+		quoted[i] = fmt.Sprintf("'%s'", n)
 	}
 	return fmt.Sprintf("QNameSuffixRule({%s})", strings.Join(quoted, ", "))
 }
@@ -46,7 +46,7 @@ func NetmaskGroupRule(netmasks ...string) Rule { return netmaskGroupRule{netmask
 func (r netmaskGroupRule) luaRule() string {
 	quoted := make([]string, len(r.netmasks))
 	for i, n := range r.netmasks {
-		quoted[i] = fmt.Sprintf("%q", n)
+		quoted[i] = fmt.Sprintf("'%s'", n)
 	}
 	return fmt.Sprintf("NetmaskGroupRule(newNMG({%s}))", strings.Join(quoted, ", "))
 }

@@ -137,6 +137,7 @@ func (d *DNSDISTUpdater) Synchronize(ctx context.Context) {
 
 				return
 			case <-time.After(DEFAULT_SYNCHRONIZE_JOB):
+				bslog.Debug("starting dnsdist server synchronization")
 				err := d.synchronizeServers()
 				if err != nil {
 					bslog.Error("unable to synchronize dnsdist - servers", slog.String("reason", err.Error()))

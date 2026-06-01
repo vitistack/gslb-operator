@@ -35,11 +35,11 @@ func SpoofAction(ips []string, opts ...SpoofActionOptions) Action {
 func (a spoofAction) luaAction() string {
 	var ipArg string
 	if len(a.ips) == 1 {
-		ipArg = fmt.Sprintf("%q", a.ips[0])
+		ipArg = fmt.Sprintf("'%s'", a.ips[0])
 	} else {
 		quoted := make([]string, len(a.ips))
 		for i, ip := range a.ips {
-			quoted[i] = fmt.Sprintf("%q", ip)
+			quoted[i] = fmt.Sprintf("'%s'", ip)
 		}
 		ipArg = "{" + strings.Join(quoted, ", ") + "}"
 	}
