@@ -59,7 +59,7 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 		transport, err := tcp.NewTCPTransport(
 			server.Key,
 			tcp.WithHost(server.Host.String()),
-			tcp.WithPort(5199),
+			tcp.WithPort(server.Port),
 			tcp.WithTimeout(time.Second*5),
 			tcp.WithNumRetriesOnCommandFailure(3),
 		)
