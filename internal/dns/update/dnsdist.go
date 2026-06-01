@@ -22,7 +22,9 @@ import (
 	repo "github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
-	"github.com/vitistack/gslb-operator/pkg/dnsdist"
+	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist"
+	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/rules"
+	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/transport/tcp"
 	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
@@ -32,13 +34,13 @@ const DEFAULT_SYNCHRONIZE_JOB = time.Minute
 
 // contacts dnsdist servers to make update directly
 type DNSDISTUpdater struct {
-	servers   map[string]*dnsdist.Client
+	servers   map[string]dnsdist.Client
 	spoofRepo repo.SpoofRepo
 }
 
 func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDISTUpdater, error) {
 	updater := &DNSDISTUpdater{
-		servers:   make(map[string]*dnsdist.Client),
+		servers:   make(map[string]dnsdist.Client),
 		spoofRepo: *repo.NewSpoofRepo(store),
 	}
 
@@ -54,19 +56,19 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 	}
 
 	for _, server := range servers {
-		client, err := dnsdist.NewClient(
+		transport, err := tcp.NewTCPTransport(
 			server.Key,
-			dnsdist.WithHost(server.Host.String()),
-			dnsdist.WithPort(server.Port),
-			dnsdist.WithTimeout(time.Second*5),
-			dnsdist.WithNumRetriesOnCommandFailure(3),
+			tcp.WithHost(server.Host.String()),
+			tcp.WithPort(server.Port),
+			tcp.WithTimeout(time.Second*5),
+			tcp.WithNumRetriesOnCommandFailure(3),
 		)
 
 		if err != nil {
 			return nil, fmt.Errorf("unable to create dnsdist client: %w", err)
 		}
 
-		updater.servers[server.Name] = client
+		updater.servers[server.Name] = dnsdist.NewClient(transport)
 	}
 
 	err = updater.synchronizeServers()
@@ -79,7 +81,11 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 
 func (d *DNSDISTUpdater) OnServiceUp(svc *service.Service) error {
 	for _, client := range d.servers {
-		err := client.AddDomainSpoof(svc.MemberOf+":"+svc.Datacenter, svc.MemberOf, svc.GetIP())
+		err := client.Rules().Add(
+			svc.MemberOf+":"+svc.Datacenter,
+			rules.QNameRule(svc.MemberOf),
+			rules.SpoofAction([]string{svc.GetIP()}, rules.SpoofActionOptions{TTL: new(30)}),
+		)
 		if err != nil {
 			return fmt.Errorf("could not create dnsdist-spoof: %w", err)
 		}
@@ -99,7 +105,7 @@ func (d *DNSDISTUpdater) OnServiceUp(svc *service.Service) error {
 
 func (d *DNSDISTUpdater) OnServiceDown(svc *service.Service) error {
 	for _, client := range d.servers {
-		err := client.RmRuleWithName(svc.MemberOf + ":" + svc.Datacenter)
+		err := client.Rules().Remove(svc.MemberOf + ":" + svc.Datacenter)
 		if err != nil {
 			return fmt.Errorf("could not remove dnsdist-spoof: %w", err)
 		}
@@ -126,11 +132,12 @@ func (d *DNSDISTUpdater) Synchronize(ctx context.Context) {
 
 				// close controll socket connections
 				for _, client := range d.servers {
-					client.Disconnect()
+					client.Close()
 				}
 
 				return
 			case <-time.After(DEFAULT_SYNCHRONIZE_JOB):
+				bslog.Debug("starting dnsdist server synchronization")
 				err := d.synchronizeServers()
 				if err != nil {
 					bslog.Error("unable to synchronize dnsdist - servers", slog.String("reason", err.Error()))
@@ -154,7 +161,7 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 		go func(server string) {
 			defer wg.Done()
 
-			rawRuleSet, err := client.ShowRules()
+			rawRuleSet, err := client.Rules().List()
 			if err != nil {
 				bslog.Error("unable to fetch ruleset from dnsdist server", slog.String("reason", err.Error()))
 				syncErrors <- fmt.Errorf("synchronization of %s failed: %w", server, err)
@@ -235,7 +242,7 @@ func (d *DNSDISTUpdater) ParseRuleSet(ruleSet string) ([]spoofs.Spoof, error) {
 		if len(matches) < 3 {
 			continue
 		}
-		rule := dnsdist.Rule{
+		rule := rules.RuleLine{
 			Name:   matches[0],
 			Action: matches[1],
 		}
@@ -255,7 +262,7 @@ func (d *DNSDISTUpdater) ParseRuleSet(ruleSet string) ([]spoofs.Spoof, error) {
 	return spoofRules, nil
 }
 
-func (d *DNSDISTUpdater) reconcileServer(client *dnsdist.Client, configuredSpoofs []spoofs.Spoof) error {
+func (d *DNSDISTUpdater) reconcileServer(client dnsdist.Client, configuredSpoofs []spoofs.Spoof) error {
 	gslbspoofs, err := d.spoofRepo.ReadAll()
 	if err != nil {
 		return fmt.Errorf("could not fetch spoofs: %w", err)
@@ -265,7 +272,7 @@ func (d *DNSDISTUpdater) reconcileServer(client *dnsdist.Client, configuredSpoof
 		if !slices.ContainsFunc(gslbspoofs, func(s spoofs.Spoof) bool {
 			return s.FQDN+":"+s.DC == spoof.FQDN+":"+spoof.DC
 		}) {
-			err := client.RmRuleWithName(spoof.FQDN + ":" + spoof.DC)
+			err := client.Rules().Remove(spoof.FQDN + ":" + spoof.DC)
 			if err != nil {
 				return fmt.Errorf("could not remove spoof: %w", err)
 			}
@@ -276,7 +283,11 @@ func (d *DNSDISTUpdater) reconcileServer(client *dnsdist.Client, configuredSpoof
 		if !slices.ContainsFunc(configuredSpoofs, func(s spoofs.Spoof) bool {
 			return s.FQDN+":"+s.DC == spoof.FQDN+":"+spoof.DC
 		}) {
-			err := client.AddDomainSpoof(spoof.FQDN+":"+spoof.DC, spoof.FQDN, spoof.IP)
+			err := client.Rules().Add(
+				spoof.FQDN+":"+spoof.DC,
+				rules.QNameRule(spoof.FQDN),
+				rules.SpoofAction([]string{spoof.IP}, rules.SpoofActionOptions{TTL: new(30)}),
+			)
 			if err != nil {
 				return fmt.Errorf("could not remove spoof: %w", err)
 			}

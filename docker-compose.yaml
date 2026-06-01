@@ -102,6 +102,9 @@ services:
   
   valkey:
     image: valkey/valkey:9.0.3-alpine
+    profiles:
+      - store
+      - all
     command: >
       valkey-server /etc/valkey/valkey.conf --aclfile /etc/valkey/users.acl
     ports:

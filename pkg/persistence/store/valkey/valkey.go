@@ -59,8 +59,8 @@ func (s *ValkeyStore[T]) Load(key string) (T, error) {
 	key = s.baseKey + ":" + key
 
 	// fetch record
-	cmd := s.client.B().Get().Key(key).Cache()
-	result, err := s.client.DoCache(context.Background(), cmd, s.cacheTTL).ToString()
+	cmd := s.client.B().Get().Key(key).Build()
+	result, err := s.client.Do(context.Background(), cmd).ToString()
 
 	if err == valkey.Nil { // not found
 		return zero, nil
