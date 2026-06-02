@@ -5,6 +5,6 @@ import "net"
 type DNSDISTServer struct {
 	Name string `json:"name"`
 	Host net.IP `json:"host"`
-	Port string `json:"port"`
+	Port uint16 `json:"port"`
 	Key  string `json:"key"`
 }
