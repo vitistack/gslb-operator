@@ -1,6 +1,9 @@
 package dnsdist
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/pools"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/rules"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/servers"
@@ -13,6 +16,7 @@ type Client interface {
 	Rules() rules.Client
 	Servers() servers.Client
 	Stats() stats.Client
+	Ping() error
 	Close() error
 }
 
@@ -45,6 +49,19 @@ func (c *dnsDistClient) Servers() servers.Client {
 
 func (c *dnsDistClient) Stats() stats.Client {
 	return c.stats
+}
+
+func (c *dnsDistClient) Ping() error {
+	resp, err := c.transport.Execute("")
+	if err != nil {
+		return fmt.Errorf("dnsdist ping failed: %w", err)
+	}
+
+	if strings.Contains(resp, "Error") {
+		return fmt.Errorf("ping failed: got response: %s", resp)
+	}
+
+	return nil
 }
 
 func (c *dnsDistClient) Close() error {
