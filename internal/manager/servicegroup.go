@@ -96,6 +96,16 @@ func (sg *ServiceGroup) Group() *model.GSLBServiceGroup {
 	return group
 }
 
+func (sg *ServiceGroup) SetOnPromotion(fn func(*PromotionEvent)) {
+	sg.OnPromotion = func(pe *PromotionEvent) {
+		// no promotion event if override
+		if sg.hasOverride {
+			return
+		}
+		fn(pe)
+	}
+}
+
 // returns the active service in ActivePassive mode,
 // or returns the first healthy service in ActiveActive if no explicit active is set.
 func (sg *ServiceGroup) GetActive() *service.Service {

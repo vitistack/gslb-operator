@@ -600,11 +600,14 @@ func (sm *ServicesManager) newServiceGroup(memberOf string) *ServiceGroup {
 		return serviceGroup
 	}
 	newGroup := NewEmptyServiceGroup(memberOf)
-	newGroup.OnPromotion = func(event *PromotionEvent) {
-		sm.wg.Go(func() {
-			sm.handlePromotion(event)
-		})
-	}
+	newGroup.SetOnPromotion(
+		func(event *PromotionEvent) {
+			sm.wg.Go(func() {
+				sm.handlePromotion(event)
+			})
+		},
+	)
+
 	sm.serviceGroups[memberOf] = newGroup
 
 	serviceGroups.Inc()
