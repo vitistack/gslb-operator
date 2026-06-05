@@ -56,6 +56,9 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 	}
 
 	for _, server := range servers {
+		// initialize server connection to down
+		serverUpMetric.WithLabelValues(server.Name).Set(0)
+
 		transport, err := tcp.NewTCPTransport(
 			server.Key,
 			tcp.WithHost(server.Host.String()),
@@ -63,7 +66,6 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 			tcp.WithTimeout(time.Second*5),
 			tcp.WithNumRetriesOnCommandFailure(3),
 		)
-
 		if err != nil {
 			return nil, fmt.Errorf("unable to create dnsdist client: %w", err)
 		}
@@ -71,23 +73,41 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 		updater.servers[server.Name] = dnsdist.NewClient(transport)
 	}
 
-	err = updater.synchronizeServers()
-	if err != nil {
-		return updater, fmt.Errorf("failed synchronization on updater init: %w", err)
-	}
-
 	return updater, nil
 }
 
+// wrapper function to handle the serverUpMetric with the different dnsdist client calls
+func (d *DNSDISTUpdater) do(name string, fn func() error) error {
+	if err := fn(); err != nil {
+		// dnsdist server connection considered down
+		serverUpMetric.WithLabelValues(name).Set(0)
+		return err
+	}
+	// continue to present connection as up
+	serverUpMetric.WithLabelValues(name).Set(1)
+	return nil
+}
+
 func (d *DNSDISTUpdater) OnServiceUp(svc *service.Service) error {
-	for _, client := range d.servers {
-		err := client.Rules().Add(
-			svc.MemberOf+":"+svc.Datacenter,
-			rules.QNameRule(svc.MemberOf),
-			rules.SpoofAction([]string{svc.GetIP()}, rules.SpoofActionOptions{TTL: new(30)}),
+	for name, client := range d.servers {
+		err := d.do(
+			name,
+			func() error {
+				err := client.Rules().Add(
+					svc.MemberOf+":"+svc.Datacenter,
+					rules.QNameRule(svc.MemberOf),
+					rules.SpoofAction([]string{svc.GetIP()}, rules.SpoofActionOptions{TTL: new(30)}),
+				)
+				if err != nil {
+					return fmt.Errorf("could not create dnsdist-spoof: %w", err)
+				}
+
+				return nil
+			},
 		)
+
 		if err != nil {
-			return fmt.Errorf("could not create dnsdist-spoof: %w", err)
+			return err
 		}
 	}
 
@@ -104,10 +124,20 @@ func (d *DNSDISTUpdater) OnServiceUp(svc *service.Service) error {
 }
 
 func (d *DNSDISTUpdater) OnServiceDown(svc *service.Service) error {
-	for _, client := range d.servers {
-		err := client.Rules().Remove(svc.MemberOf + ":" + svc.Datacenter)
+	for name, client := range d.servers {
+		err := d.do(
+			name,
+			func() error {
+				err := client.Rules().Remove(svc.MemberOf + ":" + svc.Datacenter)
+				if err != nil {
+					return fmt.Errorf("could not remove dnsdist-spoof: %w", err)
+				}
+				return nil
+			},
+		)
+
 		if err != nil {
-			return fmt.Errorf("could not remove dnsdist-spoof: %w", err)
+			return err
 		}
 	}
 
@@ -125,6 +155,11 @@ func (d *DNSDISTUpdater) OnServiceDown(svc *service.Service) error {
 
 func (d *DNSDISTUpdater) Synchronize(ctx context.Context) {
 	go func() {
+		err := d.synchronizeServers()
+		if err != nil {
+			bslog.Error("failed to synchronize servers", slog.String("reason", err.Error()))
+		}
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -132,7 +167,9 @@ func (d *DNSDISTUpdater) Synchronize(ctx context.Context) {
 
 				// close controll socket connections
 				for _, client := range d.servers {
-					client.Close()
+					if client != nil {
+						client.Close()
+					}
 				}
 
 				return
@@ -161,7 +198,13 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 		go func(server string) {
 			defer wg.Done()
 
-			rawRuleSet, err := client.Rules().List()
+			var rawRuleSet string
+			err := d.do(server, func() error {
+				var err error
+				rawRuleSet, err = client.Rules().List()
+				return err
+			})
+
 			if err != nil {
 				bslog.Error("unable to fetch ruleset from dnsdist server", slog.String("reason", err.Error()))
 				syncErrors <- fmt.Errorf("synchronization of %s failed: %w", server, err)
