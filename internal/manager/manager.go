@@ -5,9 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/netip"
 	"sync"
 	"time"
 
+	"codeberg.org/miekg/dns"
+	"codeberg.org/miekg/dns/rdata"
+	"github.com/vitistack/gslb-operator/internal/dns/update"
 	"github.com/vitistack/gslb-operator/internal/manager/healthcheck"
 	"github.com/vitistack/gslb-operator/internal/manager/scheduler"
 	"github.com/vitistack/gslb-operator/internal/model"
@@ -30,12 +35,17 @@ type ServicesManager struct {
 	healthChangeEvents chan *service.HealthChangeEvent
 	//svcRepo            *svcRepo.ServiceRepo
 	svcGroupRepo *servicegroup.ServiceGroupRepo
-	mutex        sync.RWMutex
-	stop         sync.Once
-	pool         *pool.WorkerPool
-	wg           *sync.WaitGroup // schedulers use this when scheduling services asynchronously
-	DNSUpdate    func(*service.Service, bool)
-	dryrun       bool
+
+	mutex sync.RWMutex
+	stop  sync.Once
+	pool  *pool.WorkerPool
+	wg    *sync.WaitGroup // schedulers use this when scheduling services asynchronously
+
+	DNSCreate func(update.Record) error
+	DNSDelete func(string) error
+	DNSUpdate func(*service.Service, bool)
+
+	dryrun bool
 }
 
 func NewManager(opts ...serviceManagerOption) *ServicesManager {
@@ -745,6 +755,7 @@ func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChan
 			slog.Any("service", event.Svc),
 		)
 	}
+
 	events.Emit(&events.Event{
 		Type: domainEvents.EventTypeGSLBServiceMemberHealthChange,
 		Payload: domainEvents.GSLBServiceMemberHealthChangeEvent{
@@ -753,5 +764,97 @@ func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChan
 		Timestamp: time.Now(),
 		ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberHealthChange, event.Svc.MemberOf),
 	})
+
 	sm.serviceGroups[event.Svc.MemberOf].OnServiceHealthChange(event.Svc, event.Healthy)
+}
+
+func (sm *ServicesManager) CreateOverride(memberOf string, ip net.IP) error {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+	group, ok := sm.serviceGroups[memberOf]
+
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrServiceGroupNotFound, memberOf)
+	}
+
+	if group.hasOverride {
+		return fmt.Errorf("group %s already has an active override", memberOf)
+	}
+
+	group.hasOverride = true
+	group.overrideIP = ip
+
+	err := sm.svcGroupRepo.Update(memberOf, group.Group())
+	if err != nil {
+		group.hasOverride = false
+		group.overrideIP = nil
+		return fmt.Errorf("failed to update service group: %w", err)
+	}
+
+	addr, err := netip.ParseAddr(ip.String())
+	if err != nil {
+		return fmt.Errorf("could not parse ip address: %w", err)
+	}
+
+	if err := sm.DNSCreate(update.Record{
+		RR: &dns.A{
+			Hdr: dns.Header{Name: memberOf},
+			A:   rdata.A{Addr: addr},
+		},
+		ID:         memberOf + ":OVERRIDE",
+		Datacenter: "OVERRIDE",
+	}); err != nil {
+		return fmt.Errorf("failed to create DNS spoof: %w", err)
+	}
+
+	return nil
+}
+
+func (sm *ServicesManager) RemoveOverride(memberOf string) error {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+	group, ok := sm.serviceGroups[memberOf]
+
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrServiceGroupNotFound, memberOf)
+	}
+
+	// ensure idempotent
+	if !group.hasOverride {
+		return nil
+	}
+
+	group.hasOverride = false
+	group.overrideIP = nil
+
+	err := sm.svcGroupRepo.Update(memberOf, group.Group())
+	if err != nil {
+		return fmt.Errorf("failed to update service group: %w", err)
+	}
+
+	// delete override spoof
+	if err := sm.DNSDelete(fmt.Sprintf("%s:OVERRIDE", memberOf)); err != nil {
+		return fmt.Errorf("failed to delete override: %w", err)
+	}
+
+	active := group.active
+	if active != nil && active.IsHealthy() {
+		addr, err := netip.ParseAddr(active.GetIP())
+		if err != nil {
+			return fmt.Errorf("could not parse ip address: %w", err)
+		}
+
+		if err := sm.DNSCreate(update.Record{
+			RR: &dns.A{
+				Hdr: dns.Header{Name: memberOf},
+				A:   rdata.A{Addr: addr},
+			},
+			ID:         active.MemberOf + ":" + active.Datacenter,
+			Datacenter: active.Datacenter,
+		}); err != nil {
+			return fmt.Errorf("failed to create DNS spoof: %w", err)
+		}
+	}
+
+	return nil
 }

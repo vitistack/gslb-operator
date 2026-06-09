@@ -207,7 +207,7 @@ func TestServicesManager_updateService(t *testing.T) {
 				sm.Stop()
 			}()
 
-			sm.DNSUpdate = func(s *service.Service, b bool) {
+			sm.DNSUpdate = func(svc *service.Service, b bool) {
 
 			}
 			old, err := sm.RegisterService(tt.old)

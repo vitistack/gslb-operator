@@ -17,6 +17,9 @@ type Client interface {
 	// lists all rules
 	List() (string, error)
 
+	// checks if a rule with the given name exists
+	Exist(name string) (bool, error)
+
 	// removes all rules
 	Clear() error
 }
@@ -54,6 +57,22 @@ func (c *rulesClient) Remove(id string) error {
 // lists all rules
 func (c *rulesClient) List() (string, error) {
 	return c.transport.Execute("showRules()")
+}
+
+// checks wether a rule with the given name exist
+func (c *rulesClient) Exist(name string) (bool, error) {
+	cmd := fmt.Sprintf("tostring(getRule('%s') ~= nil)", name)
+	
+	response, err := c.transport.Execute(cmd)
+	if err != nil {
+		return false, err
+	}
+
+	if strings.Contains(response, "Error") {
+		return false, fmt.Errorf("failed to check rule existence: dnsdist returned lua error: %s: for command: %s", response, cmd)
+	}
+
+	return response == "true", nil
 }
 
 // removes all rules

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -20,7 +21,6 @@ import (
 	"github.com/vitistack/gslb-operator/internal/model"
 	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
 	repo "github.com/vitistack/gslb-operator/internal/repositories/spoof"
-	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/rules"
@@ -28,6 +28,7 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
+	"golang.org/x/sync/errgroup"
 )
 
 const DEFAULT_SYNCHRONIZE_JOB = time.Minute
@@ -88,70 +89,190 @@ func (d *DNSDISTUpdater) do(name string, fn func() error) error {
 	return nil
 }
 
-func (d *DNSDISTUpdater) OnServiceUp(svc *service.Service) error {
-	for name, client := range d.servers {
-		err := d.do(
-			name,
-			func() error {
-				err := client.Rules().Add(
-					svc.MemberOf+":"+svc.Datacenter,
-					rules.QNameRule(svc.MemberOf),
-					rules.SpoofAction([]string{svc.GetIP()}, rules.SpoofActionOptions{TTL: new(30)}),
-				)
+func (d *DNSDISTUpdater) Create(rec Record) error {
+	wg := errgroup.Group{}
+
+	for server, client := range d.servers {
+		wg.Go(func() error {
+
+			exist, err := client.Rules().Exist(rec.ID)
+			if err != nil {
+				return fmt.Errorf("%s: unable to check existing rules: %w", server, err)
+			}
+
+			if exist {
+				err := client.Rules().Remove(rec.ID)
 				if err != nil {
-					return fmt.Errorf("could not create dnsdist-spoof: %w", err)
+					return fmt.Errorf("%s: failed to delete old record: %w", server, err)
 				}
+			}
 
-				return nil
-			},
-		)
+			err = d.do(
+				server,
+				func() error {
+					return client.Rules().Add(
+						rec.ID,
+						rules.QNameRule(rec.Header().Name),
+						rules.SpoofAction(
+							[]string{rec.Data().String()},
+							rules.SpoofActionOptions{TTL: new(30)},
+						),
+					)
+				},
+			)
 
-		if err != nil {
-			return err
-		}
+			if err != nil {
+				return fmt.Errorf("%s: failed to create record: %w", server, err)
+			}
+
+			return nil
+		})
 	}
 
-	events.Emit(&events.Event{
-		Type: domainEvents.EventTypeDNSDISTSpoofCreate,
-		Payload: domainEvents.DNSDistSpoofCreateEvent{
-			Spoof: svc.GSLBService().Spoof(),
-		},
-		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofCreate, svc.MemberOf),
-	})
+	err := wg.Wait()
+	if err != nil {
+		if updateErr, ok := errors.AsType[UpdateError](err); ok {
+			events.Emit(&events.Event{
+				Type: domainEvents.EventTypeDNSDISTSpoofCreateFailed,
+				Payload: domainEvents.DNSDistSpoofCreateFailedEvent{
+					Server: updateErr.server,
+					Spoof:  spoofs.Spoof{FQDN: rec.Header().Name, IP: rec.Data().String(), DC: rec.Datacenter},
+				},
+				Timestamp: time.Now(),
+				ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofCreateFailed, updateErr.server),
+			})
+
+			return updateErr
+		}
+
+		return err
+	}
 
 	return nil
 }
 
-func (d *DNSDISTUpdater) OnServiceDown(svc *service.Service) error {
-	for name, client := range d.servers {
-		err := d.do(
-			name,
-			func() error {
-				err := client.Rules().Remove(svc.MemberOf + ":" + svc.Datacenter)
-				if err != nil {
-					return fmt.Errorf("could not remove dnsdist-spoof: %w", err)
-				}
-				return nil
-			},
-		)
+func (d *DNSDISTUpdater) Delete(id string) error {
+	wg := errgroup.Group{}
 
-		if err != nil {
-			return err
-		}
+	for server, client := range d.servers {
+		wg.Go(func() error {
+			exist, err := client.Rules().Exist(id)
+			if err != nil {
+				return fmt.Errorf("%s: unable to check existing rules: %w", server, err)
+			}
+
+			if !exist {
+				return nil
+			}
+
+			err = d.do(
+				server,
+				func() error {
+					return client.Rules().Remove(id)
+				},
+			)
+
+			if err != nil {
+				return fmt.Errorf("%s: failed to delete record: %w", server, err)
+			}
+
+			return nil
+		})
 	}
 
-	events.Emit(&events.Event{
-		Type: domainEvents.EventTypeDNSDISTSpoofDelete,
-		Payload: domainEvents.DNSDistSpoofDeleteEvent{
-			Spoof: svc.GSLBService().Spoof(),
-		},
-		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofDelete, svc.MemberOf),
-	})
+	err := wg.Wait()
+	if err != nil {
+		if updateErr, ok := errors.AsType[UpdateError](err); ok {
+			events.Emit(&events.Event{
+				Type:      domainEvents.EventTypeDNSDISTSpoofDeleteFailed,
+				Payload:   domainEvents.DNSDistSpoofDeleteFailedEvent{Server: updateErr.server, ID: id},
+				Timestamp: time.Now(),
+				ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofDeleteFailed, updateErr.server),
+			})
+
+			return updateErr
+		}
+
+		return err
+	}
 
 	return nil
 }
+
+//func (d *DNSDISTUpdater) OnServiceUp(rec Record) error {
+//	_, ok := rec.RR.(*dns.A)
+//	if !ok {
+//		return fmt.Errorf("record type not supported for dnsdist update: %T", rec.RR)
+//	}
+//
+//	for name, client := range d.servers {
+//		err := d.do(
+//			name,
+//			func() error {
+//				err := client.Rules().Add(
+//					rec.Header().Name+":"+rec.Datacenter,
+//					rules.QNameRule(rec.Header().Name),
+//					rules.SpoofAction([]string{rec.Data().String()}, rules.SpoofActionOptions{TTL: new(30)}),
+//				)
+//				if err != nil {
+//					return fmt.Errorf("could not create dnsdist-spoof: %w", err)
+//				}
+//
+//				return nil
+//			},
+//		)
+//
+//		if err != nil {
+//			return err
+//		}
+//	}
+//
+//	events.Emit(&events.Event{
+//		Type: domainEvents.EventTypeDNSDISTSpoofCreate,
+//		Payload: domainEvents.DNSDistSpoofCreateEvent{
+//			Spoof: spoofs.Spoof{FQDN: rec.Header().Name, IP: rec.RR.Data().String(), DC: rec.Datacenter},
+//		},
+//		Timestamp: time.Now(),
+//		ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofCreate, rec.Header().Name),
+//	})
+//
+//	return nil
+//}
+//
+//func (d *DNSDISTUpdater) OnServiceDown(rec Record) error {
+//	_, ok := rec.RR.(*dns.A)
+//	if !ok {
+//		return fmt.Errorf("record type not supported for dnsdist update: %T", rec.RR)
+//	}
+//
+//	for name, client := range d.servers {
+//		err := d.do(
+//			name,
+//			func() error {
+//				err := client.Rules().Remove(rec.Header().Name + ":" + rec.Datacenter)
+//				if err != nil {
+//					return fmt.Errorf("could not remove dnsdist-spoof: %w", err)
+//				}
+//				return nil
+//			},
+//		)
+//
+//		if err != nil {
+//			return err
+//		}
+//	}
+//
+//	events.Emit(&events.Event{
+//		Type: domainEvents.EventTypeDNSDISTSpoofDelete,
+//		Payload: domainEvents.DNSDistSpoofDeleteEvent{
+//			Spoof: spoofs.Spoof{FQDN: rec.Header().Name, IP: rec.RR.Data().String(), DC: rec.Datacenter},
+//		},
+//		Timestamp: time.Now(),
+//		ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofDelete, rec.Header().Name),
+//	})
+//
+//	return nil
+//}
 
 func (d *DNSDISTUpdater) Synchronize(ctx context.Context) {
 	go func() {
