@@ -97,13 +97,19 @@ func (d *DNSDISTUpdater) Create(rec Record) error {
 
 			exist, err := client.Rules().Exist(rec.ID)
 			if err != nil {
-				return fmt.Errorf("%s: unable to check existing rules: %w", server, err)
+				return UpdateError{
+					err:    fmt.Errorf("%s: unable to check existing rules: %w", server, err),
+					server: server,
+				}
 			}
 
 			if exist {
 				err := client.Rules().Remove(rec.ID)
 				if err != nil {
-					return fmt.Errorf("%s: failed to delete old record: %w", server, err)
+					return UpdateError{
+						err:    fmt.Errorf("%s: failed to delete old record: %w", server, err),
+						server: server,
+					}
 				}
 			}
 
@@ -122,7 +128,10 @@ func (d *DNSDISTUpdater) Create(rec Record) error {
 			)
 
 			if err != nil {
-				return fmt.Errorf("%s: failed to create record: %w", server, err)
+				return UpdateError{
+					err:    fmt.Errorf("%s: failed to create record: %w", server, err),
+					server: server,
+				}
 			}
 
 			return nil
@@ -158,7 +167,10 @@ func (d *DNSDISTUpdater) Delete(id string) error {
 		wg.Go(func() error {
 			exist, err := client.Rules().Exist(id)
 			if err != nil {
-				return fmt.Errorf("%s: unable to check existing rules: %w", server, err)
+				return UpdateError{
+					err:    fmt.Errorf("%s: unable to check existing rules: %w", server, err),
+					server: server,
+				}
 			}
 
 			if !exist {
@@ -173,7 +185,10 @@ func (d *DNSDISTUpdater) Delete(id string) error {
 			)
 
 			if err != nil {
-				return fmt.Errorf("%s: failed to delete record: %w", server, err)
+				return UpdateError{
+					err:    fmt.Errorf("%s: failed to delete record: %w", server, err),
+					server: server,
+				}
 			}
 
 			return nil
@@ -287,8 +302,9 @@ func (d *DNSDISTUpdater) Synchronize(ctx context.Context) {
 				bslog.Info("stopping dnsdist - server synchronization")
 
 				// close controll socket connections
-				for _, client := range d.servers {
+				for server, client := range d.servers {
 					if client != nil {
+						bslog.Error("closing dnsdist - server connection", slog.String("server", server))
 						client.Close()
 					}
 				}
