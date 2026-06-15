@@ -48,9 +48,9 @@ func TestMain(m *testing.M) {
 
 func TestServiceGroup_RegisterService(t *testing.T) {
 	group := NewEmptyServiceGroup("test")
-	group.OnPromotion = func(pe *PromotionEvent) {
+	group.OnPromotion = func(g *ServiceGroup) {
 		log.Println("got promotion")
-		if pe != nil {
+		if g != nil {
 			t.Errorf("should not be getting promotion event in this")
 		}
 	}
@@ -78,9 +78,9 @@ func TestServiceGroup_OnServiceHealthChange(t *testing.T) {
 	group := NewEmptyServiceGroup("test")
 
 	group.RegisterService(active)
-	group.OnPromotion = func(pe *PromotionEvent) {
+	group.OnPromotion = func(g *ServiceGroup) {
 		log.Println("got promotion event")
-		if pe != nil {
+		if g != nil {
 			t.Error("promotion event received when active service in ActiveActive is Healthy/UnHealthy")
 		}
 	}
@@ -96,47 +96,47 @@ func TestServiceGroup_OnServiceHealthChange(t *testing.T) {
 	})
 	group.RegisterService(passive)
 
-	group.OnPromotion = func(pe *PromotionEvent) {
+	group.OnPromotion = func(g *ServiceGroup) {
 		log.Println("got promotion event")
-		if pe != nil {
+		if g != nil {
 			t.Error("got promotion event when active service in ActivePassive is Healthy")
 		}
 	}
 	makeServiceHealthy(active)
 
-	group.OnPromotion = func(pe *PromotionEvent) {
+	group.OnPromotion = func(g *ServiceGroup) {
 		log.Println("got promotion event")
-		if pe != nil {
+		if g != nil {
 			t.Error("got promotion event when passive service in ActivePassive is Healthy, when active is already Healthy")
 		}
 	}
 	makeServiceHealthy(passive)
 
-	group.OnPromotion = func(pe *PromotionEvent) {
+	group.OnPromotion = func(g *ServiceGroup) {
 		log.Println("got promotion event")
-		if pe == nil {
+		if g == nil {
 			t.Error("should get promotion event when active service is UnHealthy in ActivePassive")
 			return
 		}
-		if pe.NewActive != passive {
+		if g.active != passive {
 			t.Error("passive is not the new active service in promotion event")
 		}
-		if pe.OldActive != active {
+		if g.lastActive != active {
 			t.Error("active is not the old active service in promotion event")
 		}
 	}
 	makeServiceUnHealthy(active)
 
-	group.OnPromotion = func(pe *PromotionEvent) {
+	group.OnPromotion = func(g *ServiceGroup) {
 		log.Println("got promotion event")
-		if pe == nil {
+		if g == nil {
 			t.Error("should get promotion event when active service is Healthy again in ActivePassive")
 			return
 		}
-		if pe.NewActive != active {
+		if g.active != active {
 			t.Error("active is not the new active service in promotion event")
 		}
-		if pe.OldActive != passive {
+		if g.lastActive != passive {
 			t.Error("passive is not the old active service in promotion event")
 		}
 	}
