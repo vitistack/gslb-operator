@@ -207,9 +207,6 @@ func TestServicesManager_updateService(t *testing.T) {
 				sm.Stop()
 			}()
 
-			sm.DNSUpdate = func(svc *service.Service, b bool) {
-
-			}
 			old, err := sm.RegisterService(tt.old)
 			if err != nil {
 				t.Fatalf("could not create service during testing: %s", err.Error())

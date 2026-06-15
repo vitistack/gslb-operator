@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/netip"
 	"sync"
 	"time"
@@ -41,9 +40,8 @@ type ServicesManager struct {
 	pool  *pool.WorkerPool
 	wg    *sync.WaitGroup // schedulers use this when scheduling services asynchronously
 
-	DNSCreate func(update.Record) error
+	DNSCreate func(...update.Record) error
 	DNSDelete func(string) error
-	DNSUpdate func(*service.Service, bool)
 
 	dryrun bool
 }
@@ -133,26 +131,6 @@ func (sm *ServicesManager) OnShutdown() error {
 	if len(updateErrors) > 0 {
 		return errors.Join(updateErrors...)
 	}
-
-	//for memberOf, group := range sm.serviceGroups {
-	//	active := group.GetActive()
-	//
-	//	for _, svc := range group.Members {
-	//		gslbService := svc.GSLBService()
-	//
-	//		gslbService.IsActive = (active != nil && active.GetID() == svc.GetID())
-	//		override, err := sm.svcRepo.HasOverride(memberOf)
-	//		if err != nil {
-	//			return fmt.Errorf("unable to check whether service group has active override: member-of: %s: %w", memberOf, err)
-	//		}
-	//		gslbService.HasOverride = override
-	//
-	//		err = sm.svcRepo.Update(gslbService)
-	//		if err != nil {
-	//			return fmt.Errorf("failed to persist service state: service: %v: %w", svc, err)
-	//		}
-	//	}
-	//}
 
 	return nil
 }
@@ -442,6 +420,114 @@ func (sm *ServicesManager) handleServiceHealthChange(ctx context.Context) {
 	}
 }
 
+// reconciles the current state of a group to reflect internal state of the manager
+// and external state
+func (sm *ServicesManager) reconcile(group *ServiceGroup) {
+	err := sm.svcGroupRepo.Update(group.Name, group.Group())
+	if err != nil {
+		bslog.Error("failed to reconcile service-group",
+			slog.String("reason", err.Error()),
+			slog.Any("group", group),
+		)
+		return
+	}
+
+	// remove all DNS reference for the group
+	err = sm.DNSDelete(group.Name)
+	if err != nil {
+		bslog.Error("failed to reconcile gslb service-group",
+			slog.String("reason", fmt.Errorf("failed to delete DNS records: %w", err).Error()),
+			slog.Any("group", group))
+		return
+	}
+
+	active := group.GetActive()
+	if active == nil {
+		// all services for the group is unhealthy
+		bslog.Warn("gslb service group is down",
+			slog.String("service", group.Name),
+			slog.String("status", "down"),
+			slog.String("reason", "all members are considered down"),
+		)
+
+		events.Emit(&events.Event{
+			Type: domainEvents.EventTypeGSLBServiceDown,
+			Payload: domainEvents.GSLBServiceDownEvent{
+				MemberOf: group.Name,
+			},
+			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceDown, group.Name),
+		})
+		return
+	}
+
+	err = sm.DNSCreate(update.Record{
+		RR: &dns.A{
+			Hdr: dns.Header{
+				Name: group.Name,
+			},
+			A: rdata.A{Addr: active.GetIP()},
+		},
+		ID: group.Name,
+	})
+	if err != nil {
+		bslog.Error("failed to reconcile gslb service-group",
+			slog.String("reason", fmt.Errorf("failed to create DNS record: %w", err).Error()),
+			slog.Any("activeService", active),
+		)
+		return
+	}
+
+	sm.reconcileHealthCheckIntervals(group)
+}
+
+func (sm *ServicesManager) reconcileHealthCheckIntervals(group *ServiceGroup) {
+	active := group.active
+	baseInterval := active.GetBaseInterval()
+
+	bslog.Info("promoting service",
+		slog.Any("newActive", active),
+		slog.Group("intervalChange",
+			slog.String("from", active.ScheduledInterval.String()),
+			slog.String("to", baseInterval.String()),
+		))
+	sm.moveServiceToInterval(active, baseInterval)
+
+	for _, member := range group.Members {
+		if member != active && member.ScheduledInterval == baseInterval {
+			demotedInterval := member.GetDefaultInterval()
+
+			if demotedInterval == baseInterval {
+				// the service with highest priority is not active
+				// so by setting its scheduled interval
+				// to the currently active service's default interval
+				// we achieve an interval "swap"
+				demotedInterval = group.active.GetDefaultInterval()
+			}
+
+			bslog.Info("demoting service-member to new interval",
+				slog.Any("member", member),
+				slog.Group("intervalChange",
+					slog.String("from", member.ScheduledInterval.String()),
+					slog.String("to", demotedInterval.String()),
+				),
+			)
+			sm.moveServiceToInterval(member, demotedInterval)
+		}
+	}
+
+	if group.lastActive == nil {
+		events.Emit(&events.Event{
+			Type:      domainEvents.EventTypeGSLBServiceUp,
+			Payload:   domainEvents.GSLBServiceUpEvent{NewActive: *active.GSLBService()},
+			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceUp, group.Name),
+		})
+		return
+	}
+}
+
+/*
 // re-schedules the relevant services in the PromotionEvent
 func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 	var newID, oldID string
@@ -455,7 +541,7 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 
 	// No-op: nothing to change
 	if newID == oldID {
-		bslog.Debug("skipping promotion event", slog.String("reason", "unchanged active member"))
+		bslog.Info("skipping promotion event", slog.String("memberOf", event.Service), slog.String("reason", "unchanged active member"))
 		return
 	}
 
@@ -483,60 +569,81 @@ func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
 
 	// new active member in the service group
 	if event.OldActive != nil && event.NewActive != nil {
-		sm.handleNewActiveMember(event, baseInterval)
+		err := sm.handleNewActiveMember(event, baseInterval)
+		if err != nil {
+			bslog.Error(
+				"failed to handle new active member for service group",
+				slog.String("reason", err.Error()),
+				slog.Any("oldActive", event.OldActive),
+				slog.Any("newActive", event.NewActive),
+			)
+		}
 		return
 	}
 
 	if event.NewActive != nil { // first service to come up when all services are down
-		sm.handleServiceUp(event, baseInterval)
+		err := sm.handleServiceUp(event, baseInterval)
+		if err != nil {
+			bslog.Error(
+				"failed to handle service up in healthchange event",
+				slog.String("reason", err.Error()),
+				slog.Any("newActive", event.NewActive),
+			)
+		}
 		return
 	}
 
 	if event.OldActive != nil { // no service to take over
-		sm.handleServiceDown(event)
+		err := sm.handleServiceDown(event)
+		if err != nil {
+			bslog.Error(
+				"failed to handle service down in healthchange event",
+				slog.String("reason", err.Error()),
+				slog.Any("oldActive", event.NewActive),
+			)
+		}
 		return
 	}
 }
 
-func (sm *ServicesManager) handleNewActiveMember(event *PromotionEvent, baseInterval timesutil.Duration) {
+func (sm *ServicesManager) handleNewActiveMember(event *PromotionEvent, baseInterval timesutil.Duration) error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
 	demotedInterval := event.NewActive.ScheduledInterval
 
-	//oldActiveGSLBService := event.OldActive.GSLBService()
-	//oldActiveGSLBService.IsActive = false
-	//err := sm.svcRepo.Update(oldActiveGSLBService)
-	//if err != nil {
-	//	bslog.Error("failed to remove active flag from service", slog.Any("oldActive", event.OldActive))
-	//	return
-	//}
-	//
-	//newActiveGSLBService := event.NewActive.GSLBService()
-	//newActiveGSLBService.IsActive = true
-	//err = sm.svcRepo.Update(newActiveGSLBService)
-	//if err != nil {
-	//	bslog.Error("failed to update active flag on service", slog.Any("newActive", event.NewActive))
-	//	return
-	//}
-
-	bslog.Warn("demoting service",
+	bslog.Info("demoting service",
 		slog.Any("oldActive", event.OldActive),
 		slog.Group("intervalChange",
 			slog.String("from", event.OldActive.ScheduledInterval.String()),
 			slog.String("to", demotedInterval.String()),
 		))
 	sm.moveServiceToInterval(event.OldActive, demotedInterval)
-	sm.DNSUpdate(event.OldActive, false)
+	err := sm.DNSDelete(event.OldActive.MemberOf)
+	if err != nil {
+		return fmt.Errorf("failed to demote service: %w", err)
+	}
 
-	bslog.Warn("promoting service",
+	bslog.Info("promoting service",
 		slog.Any("newActive", event.NewActive),
 		slog.Group("intervalChange",
 			slog.String("from", event.NewActive.ScheduledInterval.String()),
 			slog.String("to", baseInterval.String()),
 		))
 	sm.moveServiceToInterval(event.NewActive, baseInterval)
-	sm.DNSUpdate(event.NewActive, true)
+
+	err = sm.DNSCreate(update.Record{
+		RR: &dns.A{
+			Hdr: dns.Header{
+				Name: event.NewActive.MemberOf,
+			},
+			A: rdata.A{Addr: event.NewActive.GetIP()},
+		},
+		ID: event.NewActive.MemberOf,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to promote service: %w", err)
+	}
 
 	events.Emit(&events.Event{
 		Type: domainEvents.EventTypeGSLBServiceFailover,
@@ -548,26 +655,33 @@ func (sm *ServicesManager) handleNewActiveMember(event *PromotionEvent, baseInte
 		Timestamp: time.Now(),
 		ID:        events.ID(domainEvents.EventTypeGSLBServiceFailover, event.Service),
 	})
+
+	return nil
 }
 
-func (sm *ServicesManager) handleServiceUp(event *PromotionEvent, baseInterval timesutil.Duration) {
+func (sm *ServicesManager) handleServiceUp(event *PromotionEvent, baseInterval timesutil.Duration) error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
-	//newActiveGSLBService := event.NewActive.GSLBService()
-	//newActiveGSLBService.IsActive = true
-	//
-	//err := sm.svcRepo.Update(newActiveGSLBService)
-	//if err != nil {
-	//	bslog.Error("failed to update active flag on service", slog.Any("newActive", event.NewActive))
-	//	return
-	//}
 	bslog.Info("new gslb service status",
 		slog.Any("service", event.NewActive),
 		slog.String("status", "up"),
 	)
 	sm.moveServiceToInterval(event.NewActive, baseInterval)
-	sm.DNSUpdate(event.NewActive, true)
+
+	err := sm.DNSCreate(update.Record{
+		RR: &dns.A{
+			Hdr: dns.Header{
+				Name: event.NewActive.MemberOf,
+			},
+			A: rdata.A{Addr: event.NewActive.GetIP()},
+		},
+		ID: event.NewActive.MemberOf,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to configure dns: %w", err)
+	}
+
 	events.Emit(&events.Event{
 		Type: domainEvents.EventTypeGSLBServiceUp,
 		Payload: domainEvents.GSLBServiceUpEvent{
@@ -576,24 +690,24 @@ func (sm *ServicesManager) handleServiceUp(event *PromotionEvent, baseInterval t
 		Timestamp: time.Now(),
 		ID:        events.ID(domainEvents.EventTypeGSLBServiceUp, event.Service),
 	})
+
+	return nil
 }
 
-func (sm *ServicesManager) handleServiceDown(event *PromotionEvent) {
+func (sm *ServicesManager) handleServiceDown(event *PromotionEvent) error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
-	//oldActiveGSLBService := event.OldActive.GSLBService()
-	//oldActiveGSLBService.IsActive = false
-	//err := sm.svcRepo.Update(oldActiveGSLBService)
-	//if err != nil {
-	//	bslog.Error("failed to remove active flag from service", slog.Any("oldActive", event.OldActive))
-	//	return
-	//}
 	bslog.Warn("new gslb service status",
 		slog.String("serviceGroup", event.Service),
 		slog.String("status", "down"),
 	)
-	sm.DNSUpdate(event.OldActive, false)
+
+	err := sm.DNSDelete(event.OldActive.MemberOf)
+	if err != nil {
+		return fmt.Errorf("failed to configure dns: %w", err)
+	}
+
 	events.Emit(&events.Event{
 		Type: domainEvents.EventTypeGSLBServiceDown,
 		Payload: domainEvents.GSLBServiceDownEvent{
@@ -602,7 +716,10 @@ func (sm *ServicesManager) handleServiceDown(event *PromotionEvent) {
 		Timestamp: time.Now(),
 		ID:        events.ID(domainEvents.EventTypeGSLBServiceDown, event.Service),
 	})
+
+	return nil
 }
+*/
 
 func (sm *ServicesManager) newServiceGroup(memberOf string) *ServiceGroup {
 	serviceGroup, ok := sm.serviceGroups[memberOf]
@@ -611,9 +728,9 @@ func (sm *ServicesManager) newServiceGroup(memberOf string) *ServiceGroup {
 	}
 	newGroup := NewEmptyServiceGroup(memberOf)
 	newGroup.SetOnPromotion(
-		func(event *PromotionEvent) {
+		func(group *ServiceGroup) {
 			sm.wg.Go(func() {
-				sm.handlePromotion(event)
+				sm.reconcile(group)
 			})
 		},
 	)
@@ -623,6 +740,7 @@ func (sm *ServicesManager) newServiceGroup(memberOf string) *ServiceGroup {
 	serviceGroups.Inc()
 	return newGroup
 }
+
 
 // only called when we know it is safe to delete a group
 func (sm *ServicesManager) deleteGroup(memberOf string) {
@@ -765,10 +883,10 @@ func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChan
 		ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberHealthChange, event.Svc.MemberOf),
 	})
 
-	sm.serviceGroups[event.Svc.MemberOf].OnServiceHealthChange(event.Svc, event.Healthy)
+	group.OnServiceHealthChange(event.Svc, event.Healthy)
 }
 
-func (sm *ServicesManager) CreateOverride(memberOf string, ip net.IP) error {
+func (sm *ServicesManager) CreateOverride(memberOf string, ip netip.Addr) error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 	group, ok := sm.serviceGroups[memberOf]
@@ -782,7 +900,7 @@ func (sm *ServicesManager) CreateOverride(memberOf string, ip net.IP) error {
 	}
 
 	group.hasOverride = true
-	group.overrideIP = ip
+	group.overrideIP = new(ip)
 
 	err := sm.svcGroupRepo.Update(memberOf, group.Group())
 	if err != nil {
@@ -801,8 +919,7 @@ func (sm *ServicesManager) CreateOverride(memberOf string, ip net.IP) error {
 			Hdr: dns.Header{Name: memberOf},
 			A:   rdata.A{Addr: addr},
 		},
-		ID:         memberOf + ":OVERRIDE",
-		Datacenter: "OVERRIDE",
+		ID: memberOf,
 	}); err != nil {
 		return fmt.Errorf("failed to create DNS spoof: %w", err)
 	}
@@ -833,24 +950,18 @@ func (sm *ServicesManager) RemoveOverride(memberOf string) error {
 	}
 
 	// delete override spoof
-	if err := sm.DNSDelete(fmt.Sprintf("%s:OVERRIDE", memberOf)); err != nil {
+	if err := sm.DNSDelete(memberOf); err != nil {
 		return fmt.Errorf("failed to delete override: %w", err)
 	}
 
 	active := group.active
 	if active != nil && active.IsHealthy() {
-		addr, err := netip.ParseAddr(active.GetIP())
-		if err != nil {
-			return fmt.Errorf("could not parse ip address: %w", err)
-		}
-
 		if err := sm.DNSCreate(update.Record{
 			RR: &dns.A{
 				Hdr: dns.Header{Name: memberOf},
-				A:   rdata.A{Addr: addr},
+				A:   rdata.A{Addr: active.GetIP()},
 			},
-			ID:         active.MemberOf + ":" + active.Datacenter,
-			Datacenter: active.Datacenter,
+			ID: active.MemberOf,
 		}); err != nil {
 			return fmt.Errorf("failed to create DNS spoof: %w", err)
 		}

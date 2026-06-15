@@ -3,7 +3,7 @@ package manager
 import (
 	"cmp"
 	"log/slog"
-	"net"
+	"net/netip"
 	"slices"
 	"time"
 
@@ -60,10 +60,10 @@ type ServiceGroup struct {
 	lastActive *service.Service
 
 	// should never receive a nil promotion event
-	OnPromotion           func(*PromotionEvent)
+	OnPromotion           func(*ServiceGroup)
 	prioritizedDatacenter string
 	hasOverride           bool
-	overrideIP            net.IP
+	overrideIP            *netip.Addr
 }
 
 func NewEmptyServiceGroup(name string) *ServiceGroup {
@@ -81,12 +81,13 @@ func (sg *ServiceGroup) Group() *model.GSLBServiceGroup {
 		HasOverride: sg.hasOverride,
 		Members:     make(map[string]model.GSLBService),
 	}
-	if sg.hasOverride {
-		group.Active = sg.overrideIP.String()
-	}
 
 	if sg.active != nil {
 		group.Active = sg.active.GetID()
+	}
+
+	if sg.hasOverride {
+		group.Active = sg.overrideIP.String()
 	}
 
 	for _, member := range sg.Members {
@@ -96,33 +97,23 @@ func (sg *ServiceGroup) Group() *model.GSLBServiceGroup {
 	return group
 }
 
-func (sg *ServiceGroup) SetOnPromotion(fn func(*PromotionEvent)) {
-	sg.OnPromotion = func(pe *PromotionEvent) {
+func (sg *ServiceGroup) SetOnPromotion(fn func(*ServiceGroup)) {
+	sg.OnPromotion = func(g *ServiceGroup) {
 		// no promotion event if override
 		if sg.hasOverride {
 			return
 		}
-		fn(pe)
+		fn(sg)
 	}
 }
 
-// returns the active service in ActivePassive mode,
-// or returns the first healthy service in ActiveActive if no explicit active is set.
+// returns active service for the group
 func (sg *ServiceGroup) GetActive() *service.Service {
-	switch sg.mode {
-	case ActivePassive:
-		if sg.active != nil {
-			return sg.active
-		}
-	default:
-		for _, svc := range sg.Members {
-			if svc.IsHealthy() {
-				return svc
-			}
-		}
+	if sg.active != nil {
+		return sg.active
 	}
 
-	return sg.active
+	return sg.firstHealthy()
 }
 
 // returns the first healthy service of the members in the group.
@@ -147,20 +138,21 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 	case ActivePassive:
 		if !healthy && sg.active.GetID() == changedService.GetID() { // active has gone down!
 			sg.lastActive = sg.active
-			sg.OnPromotion(sg.promoteNextHealthy())
+			sg.promoteNextHealthy()
+			sg.OnPromotion( /*sg.promoteNextHealthy()*/ sg)
 			return
 		}
 
 		if healthy && sg.triggerPromotion(changedService) {
-			event := &PromotionEvent{
-				Service:   sg.Name,
-				OldActive: oldActive,
-				NewActive: changedService,
-			}
+			//event := &PromotionEvent{
+			//	Service:   sg.Name,
+			//	OldActive: oldActive,
+			//	NewActive: changedService,
+			//}
 
 			sg.lastActive = sg.active
 			sg.active = changedService
-			sg.OnPromotion(event)
+			sg.OnPromotion(sg)
 			return
 		}
 
@@ -168,21 +160,23 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 		if healthy {
 			// If prioritized DC service becomes healthy, it must become active (single DNS record).
 			if changedService.Datacenter == sg.prioritizedDatacenter && changedService != sg.active {
-				sg.OnPromotion(&PromotionEvent{
+				sg.OnPromotion( /*&PromotionEvent{
 					Service:   sg.Name,
 					NewActive: changedService,
 					OldActive: sg.active,
-				})
+					},*/
+					sg,
+				)
 				sg.active = changedService
 				return
 			}
 			// If there is no active or the current active is unhealthy, promote this healthy service.
 			if sg.active == nil || !sg.active.IsHealthy() {
-				sg.OnPromotion(&PromotionEvent{
-					Service:   sg.Name,
-					NewActive: changedService,
-					OldActive: sg.active,
-				})
+				sg.OnPromotion( /*&PromotionEvent{
+						Service:   sg.Name,
+						NewActive: changedService,
+						OldActive: sg.active,
+					}*/sg)
 				sg.active = changedService
 				return
 			}
@@ -193,22 +187,22 @@ func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, h
 		if changedService.GetID() == sg.active.GetID() {
 			next := sg.firstHealthy()
 			if next != nil {
-				sg.OnPromotion(&PromotionEvent{
-					Service:   sg.Name,
-					NewActive: next,
-					OldActive: sg.active,
-				})
+				sg.OnPromotion( /*&PromotionEvent{
+						Service:   sg.Name,
+						NewActive: next,
+						OldActive: sg.active,
+					}*/sg)
 				sg.lastActive = sg.active
 				sg.active = next
 				return
 			}
 
 			// all down -> signal DNS delete (single-record)
-			sg.OnPromotion(&PromotionEvent{
-				Service:   sg.Name,
-				NewActive: nil,
-				OldActive: sg.active,
-			})
+			sg.OnPromotion( /*&PromotionEvent{
+					Service:   sg.Name,
+					NewActive: nil,
+					OldActive: sg.active,
+				}*/sg)
 			sg.lastActive = sg.active
 			sg.active = nil
 			return
@@ -258,9 +252,9 @@ func (sg *ServiceGroup) RemoveService(id string) bool {
 	return len(sg.Members) == 0
 }
 
-func (sg *ServiceGroup) promoteNextHealthy() *PromotionEvent {
+func (sg *ServiceGroup) promoteNextHealthy() /**PromotionEvent*/ {
 	bslog.Debug("promoting next healthy service", slog.Any("oldActive", sg.active))
-	oldActive := sg.active
+	//oldActive := sg.active
 
 	// Try to find next healthy service with highest priority (lowest priority number)
 	bestIdx := -1
@@ -275,20 +269,21 @@ func (sg *ServiceGroup) promoteNextHealthy() *PromotionEvent {
 
 	if bestIdx != -1 {
 		sg.active = sg.Members[bestIdx]
-		return &PromotionEvent{
-			Service:   sg.Name,
-			NewActive: sg.active,
-			OldActive: oldActive,
-		}
+		return
+		//return &PromotionEvent{
+		//	Service:   sg.Name,
+		//	NewActive: sg.active,
+		//	OldActive: oldActive,
+		//}
 	}
 
 	// No healthy services: signal DNS delete (NewActive=nil)
 	sg.active = nil
-	return &PromotionEvent{
-		Service:   sg.Name,
-		NewActive: nil,
-		OldActive: oldActive,
-	}
+	//return &PromotionEvent{
+	//	Service:   sg.Name,
+	//	NewActive: nil,
+	//	OldActive: oldActive,
+	//}
 }
 
 func (sg *ServiceGroup) triggerPromotion(service *service.Service) bool {
@@ -378,12 +373,12 @@ func (sg *ServiceGroup) Update() {
 		sg.lastActive = sg.active
 		sg.active = firstHealthy
 
-		event := &PromotionEvent{
-			Service:   sg.Name,
-			OldActive: sg.lastActive,
-			NewActive: sg.active,
-		}
-		sg.OnPromotion(event)
+		//event := &PromotionEvent{
+		//	Service:   sg.Name,
+		//	OldActive: sg.lastActive,
+		//	NewActive: sg.active,
+		//}
+		sg.OnPromotion( /*event*/ sg)
 	}
 }
 
