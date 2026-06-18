@@ -32,17 +32,18 @@ type ServicesManager struct {
 	schedulers         map[timesutil.Duration]*scheduler.Scheduler // schedulers for health-checks
 	serviceGroups      map[string]*ServiceGroup
 	healthChangeEvents chan *service.HealthChangeEvent
-	//svcRepo            *svcRepo.ServiceRepo
+
 	svcGroupRepo *servicegroup.ServiceGroupRepo
 
-	mutex sync.RWMutex
-	stop  sync.Once
-	pool  *pool.WorkerPool
-	wg    *sync.WaitGroup // schedulers use this when scheduling services asynchronously
+	mutex      sync.RWMutex
+	groupLocks map[string]sync.Mutex
+	stop       sync.Once
+	wg         *sync.WaitGroup // schedulers use this when scheduling services asynchronously
 
 	DNSCreate func(...update.Record) error
 	DNSDelete func(string) error
 
+	pool   *pool.WorkerPool
 	dryrun bool
 }
 
@@ -79,9 +80,10 @@ func NewManager(opts ...serviceManagerOption) *ServicesManager {
 		healthChangeEvents: make(chan *service.HealthChangeEvent, cfg.MinRunningWorkers),
 		svcGroupRepo:       cfg.repo,
 		mutex:              sync.RWMutex{},
-		pool:               pool,
+		groupLocks:         make(map[string]sync.Mutex),
 		stop:               sync.Once{},
 		wg:                 &sync.WaitGroup{},
+		pool:               pool,
 		dryrun:             cfg.DryRun,
 	}
 
@@ -468,7 +470,7 @@ func (sm *ServicesManager) reconcile(group *ServiceGroup) {
 			},
 			A: rdata.A{Addr: active.GetIP()},
 		},
-		ID: group.Name,
+		UUID: group.uuid.String(),
 	})
 	if err != nil {
 		bslog.Error("failed to reconcile gslb service-group",
@@ -527,200 +529,6 @@ func (sm *ServicesManager) reconcileHealthCheckIntervals(group *ServiceGroup) {
 	}
 }
 
-/*
-// re-schedules the relevant services in the PromotionEvent
-func (sm *ServicesManager) handlePromotion(event *PromotionEvent) {
-	var newID, oldID string
-	if event.NewActive != nil {
-		newID = event.NewActive.GetID()
-	}
-
-	if event.OldActive != nil {
-		oldID = event.OldActive.GetID()
-	}
-
-	// No-op: nothing to change
-	if newID == oldID {
-		bslog.Info("skipping promotion event", slog.String("memberOf", event.Service), slog.String("reason", "unchanged active member"))
-		return
-	}
-
-	err := sm.svcGroupRepo.Update(event.Service, sm.serviceGroups[event.Service].Group())
-	if err != nil {
-		bslog.Error("failed to update servicegroup state: %w", err, slog.Any("promotionEvent", event))
-		return
-	}
-
-	var baseInterval timesutil.Duration
-
-	msg := "received promotion event for service: " + event.Service + ": "
-	// set baseInterval
-	if event.OldActive != nil {
-		msg += " OldActive: " + event.OldActive.Datacenter + " "
-		baseInterval = event.OldActive.GetBaseInterval()
-	}
-	if event.NewActive != nil {
-		msg += "NewActive: " + event.NewActive.Datacenter
-		if baseInterval == 0 {
-			baseInterval = event.NewActive.GetBaseInterval()
-		}
-	}
-	bslog.Debug(msg)
-
-	// new active member in the service group
-	if event.OldActive != nil && event.NewActive != nil {
-		err := sm.handleNewActiveMember(event, baseInterval)
-		if err != nil {
-			bslog.Error(
-				"failed to handle new active member for service group",
-				slog.String("reason", err.Error()),
-				slog.Any("oldActive", event.OldActive),
-				slog.Any("newActive", event.NewActive),
-			)
-		}
-		return
-	}
-
-	if event.NewActive != nil { // first service to come up when all services are down
-		err := sm.handleServiceUp(event, baseInterval)
-		if err != nil {
-			bslog.Error(
-				"failed to handle service up in healthchange event",
-				slog.String("reason", err.Error()),
-				slog.Any("newActive", event.NewActive),
-			)
-		}
-		return
-	}
-
-	if event.OldActive != nil { // no service to take over
-		err := sm.handleServiceDown(event)
-		if err != nil {
-			bslog.Error(
-				"failed to handle service down in healthchange event",
-				slog.String("reason", err.Error()),
-				slog.Any("oldActive", event.NewActive),
-			)
-		}
-		return
-	}
-}
-
-func (sm *ServicesManager) handleNewActiveMember(event *PromotionEvent, baseInterval timesutil.Duration) error {
-	sm.mutex.Lock()
-	defer sm.mutex.Unlock()
-
-	demotedInterval := event.NewActive.ScheduledInterval
-
-	bslog.Info("demoting service",
-		slog.Any("oldActive", event.OldActive),
-		slog.Group("intervalChange",
-			slog.String("from", event.OldActive.ScheduledInterval.String()),
-			slog.String("to", demotedInterval.String()),
-		))
-	sm.moveServiceToInterval(event.OldActive, demotedInterval)
-	err := sm.DNSDelete(event.OldActive.MemberOf)
-	if err != nil {
-		return fmt.Errorf("failed to demote service: %w", err)
-	}
-
-	bslog.Info("promoting service",
-		slog.Any("newActive", event.NewActive),
-		slog.Group("intervalChange",
-			slog.String("from", event.NewActive.ScheduledInterval.String()),
-			slog.String("to", baseInterval.String()),
-		))
-	sm.moveServiceToInterval(event.NewActive, baseInterval)
-
-	err = sm.DNSCreate(update.Record{
-		RR: &dns.A{
-			Hdr: dns.Header{
-				Name: event.NewActive.MemberOf,
-			},
-			A: rdata.A{Addr: event.NewActive.GetIP()},
-		},
-		ID: event.NewActive.MemberOf,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to promote service: %w", err)
-	}
-
-	events.Emit(&events.Event{
-		Type: domainEvents.EventTypeGSLBServiceFailover,
-		Payload: domainEvents.GSLBServiceFailoverEvent{
-			MemberOf:   event.Service,
-			LastActive: *event.OldActive.GSLBService(),
-			NewActive:  *event.NewActive.GSLBService(),
-		},
-		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeGSLBServiceFailover, event.Service),
-	})
-
-	return nil
-}
-
-func (sm *ServicesManager) handleServiceUp(event *PromotionEvent, baseInterval timesutil.Duration) error {
-	sm.mutex.Lock()
-	defer sm.mutex.Unlock()
-
-	bslog.Info("new gslb service status",
-		slog.Any("service", event.NewActive),
-		slog.String("status", "up"),
-	)
-	sm.moveServiceToInterval(event.NewActive, baseInterval)
-
-	err := sm.DNSCreate(update.Record{
-		RR: &dns.A{
-			Hdr: dns.Header{
-				Name: event.NewActive.MemberOf,
-			},
-			A: rdata.A{Addr: event.NewActive.GetIP()},
-		},
-		ID: event.NewActive.MemberOf,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to configure dns: %w", err)
-	}
-
-	events.Emit(&events.Event{
-		Type: domainEvents.EventTypeGSLBServiceUp,
-		Payload: domainEvents.GSLBServiceUpEvent{
-			NewActive: *event.NewActive.GSLBService(),
-		},
-		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeGSLBServiceUp, event.Service),
-	})
-
-	return nil
-}
-
-func (sm *ServicesManager) handleServiceDown(event *PromotionEvent) error {
-	sm.mutex.Lock()
-	defer sm.mutex.Unlock()
-
-	bslog.Warn("new gslb service status",
-		slog.String("serviceGroup", event.Service),
-		slog.String("status", "down"),
-	)
-
-	err := sm.DNSDelete(event.OldActive.MemberOf)
-	if err != nil {
-		return fmt.Errorf("failed to configure dns: %w", err)
-	}
-
-	events.Emit(&events.Event{
-		Type: domainEvents.EventTypeGSLBServiceDown,
-		Payload: domainEvents.GSLBServiceDownEvent{
-			MemberOf: event.OldActive.MemberOf,
-		},
-		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeGSLBServiceDown, event.Service),
-	})
-
-	return nil
-}
-*/
-
 func (sm *ServicesManager) newServiceGroup(memberOf string) *ServiceGroup {
 	serviceGroup, ok := sm.serviceGroups[memberOf]
 	if ok {
@@ -740,7 +548,6 @@ func (sm *ServicesManager) newServiceGroup(memberOf string) *ServiceGroup {
 	serviceGroups.Inc()
 	return newGroup
 }
-
 
 // only called when we know it is safe to delete a group
 func (sm *ServicesManager) deleteGroup(memberOf string) {
@@ -919,7 +726,7 @@ func (sm *ServicesManager) CreateOverride(memberOf string, ip netip.Addr) error 
 			Hdr: dns.Header{Name: memberOf},
 			A:   rdata.A{Addr: addr},
 		},
-		ID: memberOf,
+		UUID: group.uuid.String(),
 	}); err != nil {
 		return fmt.Errorf("failed to create DNS spoof: %w", err)
 	}
@@ -961,7 +768,7 @@ func (sm *ServicesManager) RemoveOverride(memberOf string) error {
 				Hdr: dns.Header{Name: memberOf},
 				A:   rdata.A{Addr: active.GetIP()},
 			},
-			ID: active.MemberOf,
+			UUID: group.uuid.String(),
 		}); err != nil {
 			return fmt.Errorf("failed to create DNS spoof: %w", err)
 		}

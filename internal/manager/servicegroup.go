@@ -2,11 +2,13 @@ package manager
 
 import (
 	"cmp"
+	"crypto/md5"
 	"log/slog"
 	"net/netip"
 	"slices"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/vitistack/gslb-operator/internal/model"
 	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
 	"github.com/vitistack/gslb-operator/internal/service"
@@ -45,6 +47,8 @@ type PromotionEvent struct {
 
 type ServiceGroup struct {
 	Name string
+	uuid uuid.UUID
+
 	mode ServiceGroupMode
 
 	// sorted by priority.
@@ -67,8 +71,16 @@ type ServiceGroup struct {
 }
 
 func NewEmptyServiceGroup(name string) *ServiceGroup {
+	// deterministic uuid generation from group name
+	hash := md5.Sum([]byte(name))
+	id, err := uuid.FromBytes(hash[:])
+	if err != nil {
+		bslog.Error("failed to generate uuid", slog.String("reason", err.Error()), slog.String("memberOf", name))
+	}
+
 	return &ServiceGroup{
 		Name:       name,
+		uuid:       id,
 		mode:       ActiveActive,
 		Members:    make([]*service.Service, 0),
 		active:     nil,
@@ -80,6 +92,7 @@ func (sg *ServiceGroup) Group() *model.GSLBServiceGroup {
 	group := &model.GSLBServiceGroup{
 		HasOverride: sg.hasOverride,
 		Members:     make(map[string]model.GSLBService),
+		UUID:        sg.uuid,
 	}
 
 	if sg.active != nil {
