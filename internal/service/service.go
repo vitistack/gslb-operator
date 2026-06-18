@@ -3,14 +3,13 @@ package service
 import (
 	"fmt"
 	"log/slog"
-	"net"
+	"net/netip"
 	"reflect"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/checks"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
-	"github.com/vitistack/gslb-operator/pkg/bslog"
 )
 
 const DEFAULT_FAILURE_THRESHOLD = 3
@@ -26,7 +25,7 @@ type HealthChangeEvent struct {
 
 type Service struct {
 	id                   string
-	addr                 *net.TCPAddr
+	addr                 netip.AddrPort
 	Fqdn                 string
 	MemberOf             string
 	Datacenter           string
@@ -45,14 +44,16 @@ type Service struct {
 }
 
 func NewServiceFromGSLBConfig(config model.GSLBConfig, opts ...ServiceOption) (*Service, error) {
-	ip := net.ParseIP(config.Ip)
-	if ip == nil {
-		return nil, ErrUnableToParseIpAddr
+	ipPort := config.Ip + ":443"
+	if config.Port != "" && config.Port != "443" {
+		ipPort = config.Ip + ":" + config.Port
 	}
 
-	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", ip.String(), config.Port))
+	addr, err := netip.ParseAddrPort(ipPort)
+
+	//addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", ip.String(), config.Port))
 	if err != nil {
-		return nil, ErrUnableToResolveAddr
+		return nil, ErrUnableToParseIpAddr
 	}
 
 	if config.ServiceID == "" {
@@ -200,7 +201,6 @@ OnFailure : count = 3, healthy = false -> update DNS
 
 // called when healthcheck is successful
 func (s *Service) OnSuccess() {
-	bslog.HealthCheck("Health-Check Successful", slog.Any("service", s))
 	if s.isHealthy { // already healthy
 		s.failureCount = 0
 		return
@@ -223,7 +223,6 @@ func (s *Service) OnSuccess() {
 
 // called when healthcheck fails
 func (s *Service) OnFailure(err error) {
-	bslog.HealthCheck("Health-Check Failed", slog.Any("service", s), slog.String("error", err.Error()))
 	if !s.isHealthy { // already unhealthy
 		s.failureCount = s.FailureThreshold
 		return
@@ -260,11 +259,8 @@ func (s *Service) GetPriority() int {
 	return s.priority
 }
 
-func (s *Service) GetIP() string {
-	if s.addr != nil {
-		return s.addr.IP.String()
-	}
-	return ""
+func (s *Service) GetIP() netip.Addr {
+	return s.addr.Addr()
 }
 
 func (s *Service) GetDefaultInterval() timesutil.Duration {
@@ -323,7 +319,7 @@ func (s *Service) LogValue() slog.Value {
 		slog.String("memberOf", s.MemberOf),
 		slog.String("fqdn", s.Fqdn),
 		slog.String("datacenter", s.Datacenter),
-		slog.String("ip", s.GetIP()),
+		slog.String("ip", s.GetIP().String()),
 	)
 }
 
@@ -351,8 +347,8 @@ func (s *Service) GSLBConfig() model.GSLBConfig {
 		ServiceID:        s.id,
 		MemberOf:         s.MemberOf,
 		Fqdn:             s.Fqdn,
-		Ip:               s.GetIP(),
-		Port:             fmt.Sprintf("%d", s.addr.Port),
+		Ip:               s.GetIP().String(),
+		Port:             fmt.Sprintf("%d", s.addr.Port()),
 		Datacenter:       s.Datacenter,
 		Interval:         s.defaultInterval,
 		Priority:         s.priority,
