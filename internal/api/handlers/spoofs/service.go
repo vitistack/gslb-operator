@@ -1,7 +1,7 @@
 package spoofs
 
 import (
-	"net"
+	"net/netip"
 
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
@@ -10,7 +10,7 @@ import (
 )
 
 type OverrideApplier interface {
-	CreateOverride(string, net.IP) error
+	CreateOverride(string, netip.Addr) error
 	RemoveOverride(string) error
 }
 

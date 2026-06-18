@@ -9,10 +9,12 @@ package spoofs
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/vitistack/gslb-operator/internal/api/routes"
+	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
@@ -69,6 +71,12 @@ func (s *SpoofsService) CreateOverride(w http.ResponseWriter, r *http.Request) {
 
 	err := s.overrideApplier.CreateOverride(override.MemberOf, override.IP)
 	if err != nil {
+		if errors.Is(err, manager.ErrServiceGroupNotFound) {
+			logger.Info("skipping request", slog.String("reason", err.Error()))
+			response.Err(w, response.ErrNotFound, override.MemberOf+" not found")
+			return
+		}
+
 		logger.Error("failed to create override",
 			slog.String("reason", err.Error()),
 			slog.Group(
@@ -82,6 +90,13 @@ func (s *SpoofsService) CreateOverride(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
+	bslog.Info("successfully created override",
+		slog.Group(
+			"override",
+			slog.String("memberOf", override.MemberOf),
+			slog.String("ip", override.IP.String()),
+		),
+	)
 }
 
 func (s *SpoofsService) DeleteOverride(w http.ResponseWriter, r *http.Request) {
@@ -106,5 +121,6 @@ func (s *SpoofsService) DeleteOverride(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
+	bslog.Info("successfully deleted override", slog.String("memberOf", memberOf))
 }

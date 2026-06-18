@@ -15,11 +15,10 @@ const (
 	GET_SPOOFS_HASH = http.MethodGet + " " + SPOOFS_HASH // Route to hash all spoofs, for config validation
 	POST_SPOOF      = http.MethodPost + " " + SPOOFS     // Route POST
 
-	OVERRIDE        = SPOOFS + "/override"                                    // override DNSDIST configuration
-	GET_OVERRIDE    = http.MethodGet + " " + OVERRIDE + "/{" + MemberOf + "}" // Route GET
-	POST_OVERRIDE   = http.MethodPost + " " + OVERRIDE                        // Route POST
-	PUT_OVERRIDE    = http.MethodPut + " " + OVERRIDE + "/{fqdn}"
-	DELETE_OVERRIDE = http.MethodDelete + " " + OVERRIDE // Route DELETE
+	OVERRIDE        = SPOOFS + "/override"                                       // override DNSDIST configuration
+	GET_OVERRIDE    = http.MethodGet + " " + OVERRIDE + "/{" + MemberOf + "}"    // Route GET
+	POST_OVERRIDE   = http.MethodPost + " " + OVERRIDE                           // Route POST
+	DELETE_OVERRIDE = http.MethodDelete + " " + OVERRIDE + "/{" + MemberOf + "}" // Route DELETE
 
 	FAILOVER      = ROOT + "failover"
 	POST_FAILOVER = http.MethodPost + " " + FAILOVER + "/{fqdn}"
