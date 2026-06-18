@@ -1,8 +1,10 @@
 package spoofs
 
-import "net"
+import (
+	"net/netip"
+)
 
 type Override struct {
-	MemberOf string `json:"memberOf"`
-	IP       net.IP `json:"ip,omitempty"`
+	MemberOf string     `json:"memberOf"`
+	IP       netip.Addr `json:"ip"`
 }
