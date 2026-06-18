@@ -127,6 +127,7 @@ func (d *DNSDISTUpdater) Create(records ...Record) error {
 							),
 							rules.GlobalRuleOptions{
 								Name: &rec.Header().Name,
+								UUID: &rec.UUID,
 							},
 						)
 					},
