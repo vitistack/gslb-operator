@@ -14,6 +14,7 @@ import (
 type HealthCheckJob struct {
 	Service   *service.Service
 	lastCheck time.Time
+	duration  float64
 }
 
 func NewJob(svc *service.Service) *HealthCheckJob {
@@ -29,7 +30,7 @@ func (hj *HealthCheckJob) Execute() error {
 		return fmt.Errorf("health-check returned wrong error type: %T", err)
 	}
 
-	bslog.HealthCheck("check complete", slog.Float64("duration_ms", result.CheckTime))
+	hj.duration = result.CheckTime
 	healthCheckDuration.WithLabelValues(
 		hj.Service.MemberOf,
 		hj.Service.Fqdn,
@@ -40,6 +41,11 @@ func (hj *HealthCheckJob) Execute() error {
 }
 
 func (hj *HealthCheckJob) OnSuccess() {
+	bslog.HealthCheck("Health-Check Successful",
+		slog.Float64("duration_ms", hj.duration),
+		slog.Any("service", hj.Service),
+	)
+
 	healthChecksTotal.WithLabelValues(hj.Service.MemberOf,
 		hj.Service.Fqdn,
 		hj.Service.Datacenter,
@@ -49,6 +55,12 @@ func (hj *HealthCheckJob) OnSuccess() {
 }
 
 func (hj *HealthCheckJob) OnFailure(err error) {
+	bslog.HealthCheck("Health-Check Failed",
+		slog.Float64("duration_ms", hj.duration),
+		slog.Any("service", hj.Service),
+		slog.String("error", err.Error()),
+	)
+
 	healthChecksTotal.WithLabelValues(hj.Service.MemberOf,
 		hj.Service.Fqdn,
 		hj.Service.Datacenter,

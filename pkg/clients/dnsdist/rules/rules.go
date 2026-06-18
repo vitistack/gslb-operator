@@ -5,8 +5,48 @@ import (
 	"strings"
 )
 
-type Rule interface {
-	luaRule() string
+type GlobalRuleOptions struct {
+	Name *string
+	UUID *string
+}
+
+func (t *GlobalRuleOptions) luaTable() string {
+	if t == nil {
+		return ""
+	}
+
+	var parts []string
+	if t.Name != nil {
+		parts = append(parts, fmt.Sprintf("name='%s'", *t.Name))
+	}
+
+	if t.UUID != nil {
+		parts = append(parts, fmt.Sprintf("uuid='%s'", *t.UUID))
+	}
+
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+type ListOptions struct {
+	ShowUUIDs         *bool
+	TruncateRuleWidth *int
+}
+
+func (t *ListOptions) luaTable() string {
+	if t == nil {
+		return ""
+	}
+
+	var parts []string
+	if t.ShowUUIDs != nil {
+		parts = append(parts, fmt.Sprintf("showUUIDs=%v", *t.ShowUUIDs))
+	}
+
+	if t.TruncateRuleWidth != nil {
+		parts = append(parts, fmt.Sprintf("truncateRuleWidth=%d", *t.TruncateRuleWidth))
+	}
+
+	return "{" + strings.Join(parts, ",") + "}"
 }
 
 type allRule struct{}
@@ -19,8 +59,8 @@ func AllRule() Rule { return allRule{} }
 type qnameRule struct{ name string }
 
 // QNameRule matches queries for the exact DNS name.
-func (r qnameRule) luaRule() string  { return fmt.Sprintf("QNameRule('%s')", r.name) }
-func QNameRule(name string) Rule { return qnameRule{name} }
+func (r qnameRule) luaRule() string { return fmt.Sprintf("QNameRule('%s')", r.name) }
+func QNameRule(name string) Rule    { return qnameRule{name} }
 
 type qnameSuffixRule struct{ names []string }
 
@@ -37,7 +77,7 @@ func (r qnameSuffixRule) luaRule() string {
 type qtypeRule struct{ qt QType }
 
 // QTypeRule matches queries of the given DNS type.
-func QTypeRule(qt QType) Rule   { return qtypeRule{qt} }
+func QTypeRule(qt QType) Rule       { return qtypeRule{qt} }
 func (r qtypeRule) luaRule() string { return fmt.Sprintf("QTypeRule(%d)", r.qt) }
 
 type netmaskGroupRule struct{ netmasks []string }
@@ -78,5 +118,5 @@ func (r orRule) luaRule() string {
 type notRule struct{ rule Rule }
 
 // NotRule inverts the given rule.
-func NotRule(rule Rule) Rule  { return notRule{rule} }
+func NotRule(rule Rule) Rule      { return notRule{rule} }
 func (r notRule) luaRule() string { return fmt.Sprintf("NotRule(%s)", r.rule.luaRule()) }

@@ -2,11 +2,11 @@ package update
 
 import (
 	"bufio"
-	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -20,7 +20,6 @@ import (
 	"github.com/vitistack/gslb-operator/internal/model"
 	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
 	repo "github.com/vitistack/gslb-operator/internal/repositories/spoof"
-	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/rules"
@@ -28,6 +27,7 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
+	"golang.org/x/sync/errgroup"
 )
 
 const DEFAULT_SYNCHRONIZE_JOB = time.Minute
@@ -88,67 +88,136 @@ func (d *DNSDISTUpdater) do(name string, fn func() error) error {
 	return nil
 }
 
-func (d *DNSDISTUpdater) OnServiceUp(svc *service.Service) error {
-	for name, client := range d.servers {
-		err := d.do(
-			name,
-			func() error {
-				err := client.Rules().Add(
-					svc.MemberOf+":"+svc.Datacenter,
-					rules.QNameRule(svc.MemberOf),
-					rules.SpoofAction([]string{svc.GetIP()}, rules.SpoofActionOptions{TTL: new(30)}),
-				)
+func (d *DNSDISTUpdater) Create(records ...Record) error {
+	wg := errgroup.Group{}
+
+	for server, client := range d.servers {
+		wg.Go(func() error {
+
+			for _, rec := range records {
+
+				exist, err := client.Rules().Exist(rec.UUID)
 				if err != nil {
-					return fmt.Errorf("could not create dnsdist-spoof: %w", err)
+					return UpdateError{
+						err:    fmt.Errorf("%s: unable to check existing rules: %w", server, err),
+						server: server,
+						spoof:  spoofs.Spoof{FQDN: rec.Header().Name, IP: rec.Data().String()},
+					}
 				}
 
-				return nil
-			},
-		)
+				if exist {
+					err := client.Rules().Remove(rec.Header().Name)
+					if err != nil {
+						return UpdateError{
+							err:    fmt.Errorf("%s: failed to delete old record: %w", server, err),
+							server: server,
+							spoof:  spoofs.Spoof{FQDN: rec.Header().Name, IP: rec.Data().String()},
+						}
+					}
+				}
 
-		if err != nil {
-			return err
-		}
+				err = d.do(
+					server,
+					func() error {
+						return client.Rules().Add(
+							rules.QNameRule(rec.Header().Name),
+							rules.SpoofAction(
+								[]string{rec.Data().String()},
+								rules.SpoofActionOptions{TTL: new(30)},
+							),
+							rules.GlobalRuleOptions{
+								Name: &rec.Header().Name,
+								UUID: &rec.UUID,
+							},
+						)
+					},
+				)
+
+				if err != nil {
+					return UpdateError{
+						err:    fmt.Errorf("%s: failed to create record: %w", server, err),
+						server: server,
+						spoof:  spoofs.Spoof{FQDN: rec.Header().Name, IP: rec.Data().String()},
+					}
+				}
+			}
+
+			return nil
+		})
 	}
 
-	events.Emit(&events.Event{
-		Type: domainEvents.EventTypeDNSDISTSpoofCreate,
-		Payload: domainEvents.DNSDistSpoofCreateEvent{
-			Spoof: svc.GSLBService().Spoof(),
-		},
-		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofCreate, svc.MemberOf),
-	})
+	err := wg.Wait()
+	if err != nil {
+		if updateErr, ok := errors.AsType[UpdateError](err); ok {
+			events.Emit(&events.Event{
+				Type: domainEvents.EventTypeDNSDISTSpoofCreateFailed,
+				Payload: domainEvents.DNSDistSpoofCreateFailedEvent{
+					Server: updateErr.server,
+					Spoof:  updateErr.spoof,
+				},
+				Timestamp: time.Now(),
+				ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofCreateFailed, updateErr.server),
+			})
+
+			return updateErr
+		}
+
+		return err
+	}
 
 	return nil
 }
 
-func (d *DNSDISTUpdater) OnServiceDown(svc *service.Service) error {
-	for name, client := range d.servers {
-		err := d.do(
-			name,
-			func() error {
-				err := client.Rules().Remove(svc.MemberOf + ":" + svc.Datacenter)
-				if err != nil {
-					return fmt.Errorf("could not remove dnsdist-spoof: %w", err)
-				}
-				return nil
-			},
-		)
+func (d *DNSDISTUpdater) Delete(id string) error {
+	wg := errgroup.Group{}
 
-		if err != nil {
-			return err
-		}
+	for server, client := range d.servers {
+		wg.Go(func() error {
+			exist, err := client.Rules().Exist(id)
+			if err != nil {
+				return UpdateError{
+					err:    fmt.Errorf("%s: unable to check existing rules: %w", server, err),
+					server: server,
+				}
+			}
+
+			if !exist {
+				return nil
+			}
+
+			err = d.do(
+				server,
+				func() error {
+					return client.Rules().Remove(id)
+				},
+			)
+
+			if err != nil {
+				return UpdateError{
+					err:    fmt.Errorf("%s: failed to delete record: %w", server, err),
+					server: server,
+				}
+			}
+
+			return nil
+		})
 	}
 
-	events.Emit(&events.Event{
-		Type: domainEvents.EventTypeDNSDISTSpoofDelete,
-		Payload: domainEvents.DNSDistSpoofDeleteEvent{
-			Spoof: svc.GSLBService().Spoof(),
-		},
-		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofDelete, svc.MemberOf),
-	})
+	err := wg.Wait()
+	if err != nil {
+		if updateErr, ok := errors.AsType[UpdateError](err); ok {
+			events.Emit(&events.Event{
+				Type:      domainEvents.EventTypeDNSDISTSpoofDeleteFailed,
+				Payload:   domainEvents.DNSDistSpoofDeleteFailedEvent{Server: updateErr.server, ID: id},
+				Timestamp: time.Now(),
+				ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofDeleteFailed, updateErr.server),
+			})
+
+			return updateErr
+		}
+
+		return err
+	}
 
 	return nil
 }
@@ -166,8 +235,9 @@ func (d *DNSDISTUpdater) Synchronize(ctx context.Context) {
 				bslog.Info("stopping dnsdist - server synchronization")
 
 				// close controll socket connections
-				for _, client := range d.servers {
+				for server, client := range d.servers {
 					if client != nil {
+						bslog.Debug("closing dnsdist - server connection", slog.String("server", server))
 						client.Close()
 					}
 				}
@@ -201,7 +271,7 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 			var rawRuleSet string
 			err := d.do(server, func() error {
 				var err error
-				rawRuleSet, err = client.Rules().List()
+				rawRuleSet, err = client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true) /*, TruncateRuleWidth: new(5)*/})
 				return err
 			})
 
@@ -211,31 +281,21 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 				return
 			}
 
-			data, err := d.ParseRuleSet(rawRuleSet)
+			spoofUUIDs, err := d.ParseRuleSet(rawRuleSet)
 			if err != nil {
-				bslog.Error("could not synchronize dnsdist server", slog.String("reason", err.Error()))
-				syncErrors <- fmt.Errorf("synchronization of %s failed: %w", server, err)
+				bslog.Error("failed to parse dnsdist rule set", slog.String("reason", err.Error()), "server_name", server)
+				syncErrors <- err
 				return
 			}
 
-			slices.SortFunc(data, func(a, b spoofs.Spoof) int {
-				return cmp.Compare(fmt.Sprintf("%s:%s", a.FQDN, a.DC), fmt.Sprintf("%s:%s", b.FQDN, b.DC))
-			})
-
-			marshalledSpoofs, err := json.Marshal(data)
-			if err != nil {
-				bslog.Error("unable to marshall spoofs", slog.String("reason", err.Error()))
-				syncErrors <- fmt.Errorf("synchronization of %s failed: %w", server, err)
-				return
-			}
-
-			// hash representation of all spoofs
-			rawHash := sha256.Sum256(marshalledSpoofs)
+			joinedUUIDs := strings.Join(spoofUUIDs, ",")
+			rawHash := sha256.Sum256([]byte(joinedUUIDs))
 			hash := hex.EncodeToString(rawHash[:])
+
 			if hash != desiredHash {
-				err := d.reconcileServer(client, data)
+				err := d.reconcileServer(client, spoofUUIDs)
 				if err != nil {
-					bslog.Warn("failed to reconcile server", slog.String("server_name", server), slog.String("reason", err.Error()))
+					bslog.Error("failed to reconcile dnsdist server", slog.String("server_name", server), slog.String("reason", err.Error()))
 					syncErrors <- err
 					events.Emit(&events.Event{
 						Type:      domainEvents.EventTypeDNSDISTServerOutOfSync,
@@ -269,71 +329,66 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 	return nil
 }
 
-func (d *DNSDISTUpdater) ParseRuleSet(ruleSet string) ([]spoofs.Spoof, error) {
+func (d *DNSDISTUpdater) ParseRuleSet(ruleSet string) ([]string, error) {
 	reader := strings.NewReader(ruleSet)
 	lines := bufio.NewScanner(reader)
 
-	pattern, err := regexp.Compile(`[a-zA-Z0-9._-]+:[A-Z0-9]+|spoof|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`)
+	pattern, err := regexp.Compile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|qname==[a-zA-Z0-9-_\.]+|spoof`)
 	if err != nil {
 		return nil, fmt.Errorf("unable to compile regex: %w", err)
 	}
 
-	spoofRules := make([]spoofs.Spoof, 0)
+	spoofRules := make([]string, 0)
 	for lines.Scan() {
 		line := lines.Text()
+
 		matches := pattern.FindAllString(line, -1)
+
 		if len(matches) < 3 {
 			continue
 		}
+
 		rule := rules.RuleLine{
-			Name:   matches[0],
-			Action: matches[1],
+			UUID:   matches[0],
+			Rule:   matches[1],
+			Action: matches[2],
 		}
 
-		if rule.Action != "spoof" {
+		if rule.Action != "spoof" && !strings.Contains(rule.Rule, "qname") {
 			continue
 		}
 
-		spoofRules = append(spoofRules,
-			spoofs.Spoof{
-				FQDN: strings.Split(rule.Name, ":")[0],
-				DC:   strings.Split(rule.Name, ":")[1],
-				IP:   matches[2],
-			})
+		spoofRules = append(spoofRules, rule.UUID)
 	}
+	slices.Sort(spoofRules)
 
 	return spoofRules, nil
 }
 
-func (d *DNSDISTUpdater) reconcileServer(client dnsdist.Client, configuredSpoofs []spoofs.Spoof) error {
+func (d *DNSDISTUpdater) reconcileServer(client dnsdist.Client, configuredSpoofs []string) error {
 	gslbspoofs, err := d.spoofRepo.ReadAll()
 	if err != nil {
 		return fmt.Errorf("could not fetch spoofs: %w", err)
 	}
 
 	for _, spoof := range configuredSpoofs { // remove all spoofs that should not exist any more
-		if !slices.ContainsFunc(gslbspoofs, func(s spoofs.Spoof) bool {
-			return s.FQDN+":"+s.DC == spoof.FQDN+":"+spoof.DC
-		}) {
-			err := client.Rules().Remove(spoof.FQDN + ":" + spoof.DC)
-			if err != nil {
-				return fmt.Errorf("could not remove spoof: %w", err)
-			}
+		err := client.Rules().Remove(spoof)
+		if err != nil {
+			return fmt.Errorf("failed to remove configured spoofs: %w", err)
 		}
 	}
 
 	for _, spoof := range gslbspoofs { // add all spoofs that does not exist but should
-		if !slices.ContainsFunc(configuredSpoofs, func(s spoofs.Spoof) bool {
-			return s.FQDN+":"+s.DC == spoof.FQDN+":"+spoof.DC
-		}) {
-			err := client.Rules().Add(
-				spoof.FQDN+":"+spoof.DC,
-				rules.QNameRule(spoof.FQDN),
-				rules.SpoofAction([]string{spoof.IP}, rules.SpoofActionOptions{TTL: new(30)}),
-			)
-			if err != nil {
-				return fmt.Errorf("could not remove spoof: %w", err)
-			}
+		err := client.Rules().Add(
+			rules.QNameRule(spoof.FQDN),
+			rules.SpoofAction([]string{spoof.IP}, rules.SpoofActionOptions{TTL: new(30)}),
+			rules.GlobalRuleOptions{
+				Name: &spoof.Name,
+				UUID: &spoof.UUID,
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("failed to add spoofs: %w", err)
 		}
 	}
 

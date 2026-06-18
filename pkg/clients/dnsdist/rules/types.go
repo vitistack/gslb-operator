@@ -20,7 +20,21 @@ const (
 type RuleLine struct {
 	ID      string
 	Name    string
+	UUID    string
 	Matches string
 	Rule    string
 	Action  string
 }
+
+type Rule interface {
+	luaRule() string
+}
+
+type Action interface {
+	luaAction() string
+}
+
+type Table interface {
+	luaTable() string
+}
+

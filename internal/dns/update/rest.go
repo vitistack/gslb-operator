@@ -1,5 +1,5 @@
 package update
-
+/*
 // sends HTTP request to update dns
 
 import (
@@ -11,7 +11,6 @@ import (
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
-	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
 	"github.com/vitistack/gslb-operator/pkg/rest/request/client"
 )
@@ -96,11 +95,7 @@ func (u *RESTUpdater) ServiceUp(svc *service.Service) error {
 
 	req, err := u.builder.POST().SetHeader("Authorization", token).
 		URL("/spoofs").
-		Body(spoofs.Spoof{
-			FQDN: svc.MemberOf,
-			IP:   svc.GetIP(),
-			DC:   svc.Datacenter,
-		}).
+		Body(svc.GSLBService().Spoof()).
 		Build()
 	if err != nil {
 		return fmt.Errorf("could not create post request for update: %s", err.Error())
@@ -113,3 +108,4 @@ func (u *RESTUpdater) ServiceUp(svc *service.Service) error {
 
 	return nil
 }
+*/

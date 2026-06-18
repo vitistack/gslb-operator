@@ -27,10 +27,10 @@ const (
 const (
 	EventTypeDNSDIST events.EventType = "dnsdist"
 
-	EventTypeDNSDISTSpoof             events.EventType = "dnsdist:spoof"
-	EventTypeDNSDISTSpoofCreate       events.EventType = "dnsdist:spoof:create"
-	EventTypeDNSDISTSpoofCreateFailed events.EventType = "dnsdist:spoof:create:failed"
-	EventTypeDNSDISTSpoofDelete       events.EventType = "dnsdist:spoof:delete"
+	EventTypeDNSDISTSpoof events.EventType = "dnsdist:spoof"
+
+	EventTypeDNSDISTSpoofCreateFailed events.EventType = "dnsdist:spoof:create_failed"
+	EventTypeDNSDISTSpoofDeleteFailed events.EventType = "dnsdist:spoof:delete_failed"
 
 	EventTypeDNSDISTSync       events.EventType = "dnsdist:sync"
 	EventTypeDNSDISTSyncFailed events.EventType = "dnsdist:sync:failed"
@@ -41,9 +41,8 @@ const (
 
 // DNS - specific event types
 const (
-	EventTypeDNS                      events.EventType = "dns"
-	EventTypeDNSZoneTransfer          events.EventType = "dns:zonetransfer"
-	EventTypeDNSZoneTransferStarted   events.EventType = "dns:zonetransfer:started"
-	EventTypeDNSZoneTransferCompleted events.EventType = "dns:zonetransfer:completed"
-	EventTypeDNSZoneTransferFailed    events.EventType = "dns:zonetransfer:failed"
+	EventTypeDNS events.EventType = "dns"
+
+	EventTypeDNSZoneTransfer       events.EventType = "dns:zonetransfer"
+	EventTypeDNSZoneTransferFailed events.EventType = "dns:zonetransfer:failed"
 )

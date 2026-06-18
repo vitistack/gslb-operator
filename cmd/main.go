@@ -113,7 +113,6 @@ func main() {
 
 	// routes handlers
 	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
-	//webhooksApiService := webhooks.NewWebhookService(webhooksStore)
 
 	// initializing the service jwt self signer
 	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
@@ -134,25 +133,19 @@ func main() {
 		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetSpoofsHash))
 
-	/*
-		// spoofs/override
-		// TODO: add auth!
-		api.HandleFunc(routes.GET_OVERRIDE, middleware.Chain(
-			middleware.WithIncomingRequestLogging(slog.Default()),
-		)(spoofsApiService.GetOverride))
+	// spoofs/override
+	// TODO: add auth!
+	api.HandleFunc(routes.GET_OVERRIDE, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(spoofsApiService.GetOverride))
 
-		api.HandleFunc(routes.PUT_OVERRIDE, middleware.Chain(
-			middleware.WithIncomingRequestLogging(slog.Default()),
-		)(spoofsApiService.UpdateOverride))
+	api.HandleFunc(routes.POST_OVERRIDE, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(spoofsApiService.CreateOverride))
 
-		api.HandleFunc(routes.POST_OVERRIDE, middleware.Chain(
-			middleware.WithIncomingRequestLogging(slog.Default()),
-		)(spoofsApiService.CreateOverride))
-
-		api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
-			middleware.WithIncomingRequestLogging(slog.Default()),
-		)(spoofsApiService.DeleteOverride))
-	*/
+	api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(spoofsApiService.DeleteOverride))
 
 	// metrics
 	api.Handle(routes.METRICS, promhttp.Handler())
