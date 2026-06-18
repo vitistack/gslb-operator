@@ -113,6 +113,14 @@ services:
       - ./data/valkey/data:/data:rw
       - ./data/valkey/valkey.conf:/etc/valkey/valkey.conf:ro
       - ./data/valkey/users.acl:/etc/valkey/users.acl:ro
+  
+  alpine:
+    image: alpine:latest
+    profiles:
+      - debug
+      - all
+    stdin_open: true
+    tty: true
 
 volumes:
   prometheus-data:
