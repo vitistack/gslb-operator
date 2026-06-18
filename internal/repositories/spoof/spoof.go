@@ -1,13 +1,12 @@
 package spoof
 
 import (
-	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
@@ -35,20 +34,12 @@ func (r *SpoofRepo) Read(memberOf string) (spoofs.Spoof, error) {
 		return spoofs.Spoof{}, fmt.Errorf("failed to read from storage: %w", err)
 	}
 
-	if group.HasOverride {
-		return spoofs.Spoof{
-			FQDN: memberOf,
-			IP:   group.Active,
-			DC:   "OVERRIDE",
-		}, nil
+	spoof := group.Spoof()
+	if spoof == nil {
+		return spoofs.Spoof{}, fmt.Errorf("no active spoof for %s", memberOf)
 	}
 
-	active, ok := group.Members[group.Active]
-	if ok {
-		return active.Spoof(), nil
-	}
-
-	return spoofs.Spoof{}, fmt.Errorf("no active spoof for %s", memberOf)
+	return *spoof, nil
 }
 
 func (r *SpoofRepo) ReadAll() ([]spoofs.Spoof, error) {
@@ -57,34 +48,32 @@ func (r *SpoofRepo) ReadAll() ([]spoofs.Spoof, error) {
 		return nil, fmt.Errorf("failed to read from storage: %w", err)
 	}
 
-	spoofs := make([]spoofs.Spoof, 0)
+	result := make([]spoofs.Spoof, 0)
 	for _, group := range groups {
-		if group.Active != "" {
-			spoofs = append(spoofs, group.Members[group.Active].Spoof())
+		spoof := group.Spoof()
+		if spoof != nil {
+			result = append(result, *spoof)
 		}
 	}
 
-	return spoofs, nil
+	return result, nil
 }
 
+// hash of all the combined uuids from service groups
 func (r *SpoofRepo) Hash() (string, error) {
-	data, err := r.ReadAll()
+	groups, err := r.store.LoadAll()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to read from storage: %w", err)
 	}
 
-	slices.SortFunc(
-		data,
-		func(a, b spoofs.Spoof) int {
-			return cmp.Compare(a.FQDN+":"+a.DC, b.FQDN+":"+b.DC)
-		},
-	)
-
-	marshalledSpoofs, err := json.Marshal(data)
-	if err != nil {
-		return "", fmt.Errorf("unable to serialize spoofs: %w", err)
+	ids := make([]string, 0, len(groups))
+	for _, group := range groups {
+		ids = append(ids, group.UUID.String())
 	}
+	slices.Sort(ids)
 
-	rawHash := sha256.Sum256(marshalledSpoofs) // creating bytes representation of spoofs
+	joinedIDs := strings.Join(ids, ",")
+	rawHash := sha256.Sum256([]byte(joinedIDs))
+
 	return hex.EncodeToString(rawHash[:]), nil
 }
