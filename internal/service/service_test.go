@@ -2,11 +2,13 @@ package service
 
 import (
 	"errors"
+	"net/netip"
 	"testing"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/checks"
 	"github.com/vitistack/gslb-operator/internal/model"
+	"github.com/vitistack/gslb-operator/internal/utils/ip"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 )
 
@@ -263,6 +265,7 @@ func TestOnFailure(t *testing.T) {
 }
 
 func TestService_GetBaseInterval(t *testing.T) {
+	localhostAddr := netip.MustParseAddr("127.0.0.1")
 	tests := []struct {
 		name string // description of this test case
 		// Named input parameters for receiver constructor.
@@ -275,7 +278,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 			config: model.GSLBConfig{
 				ServiceID:  "123",
 				Fqdn:       "test.nhn.no",
-				Ip:         "127.0.0.1",
+				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "Abels1",
 				Interval:   timesutil.FromDuration(time.Second * 5),
@@ -290,7 +293,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 			config: model.GSLBConfig{
 				ServiceID:  "123",
 				Fqdn:       "test.nhn.no",
-				Ip:         "127.0.0.1",
+				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "Abels1",
 				Interval:   timesutil.FromDuration(time.Second * 5),
@@ -305,7 +308,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 			config: model.GSLBConfig{
 				ServiceID:  "123",
 				Fqdn:       "test.nhn.no",
-				Ip:         "127.0.0.1",
+				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "Abels1",
 				Interval:   timesutil.FromDuration(time.Second * 5),
@@ -320,7 +323,7 @@ func TestService_GetBaseInterval(t *testing.T) {
 			config: model.GSLBConfig{
 				ServiceID:  "123",
 				Fqdn:       "test.nhn.no",
-				Ip:         "127.0.0.1",
+				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "Abels1",
 				Interval:   timesutil.FromDuration(time.Second * 5),
