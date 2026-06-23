@@ -69,7 +69,7 @@ func (s *SpoofsService) CreateOverride(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := s.overrideApplier.CreateOverride(override.MemberOf, override.IP)
+	err := s.overrideApplier.CreateOverride(override)
 	if err != nil {
 		if errors.Is(err, manager.ErrServiceGroupNotFound) {
 			logger.Info("skipping request", slog.String("reason", err.Error()))
@@ -79,11 +79,7 @@ func (s *SpoofsService) CreateOverride(w http.ResponseWriter, r *http.Request) {
 
 		logger.Error("failed to create override",
 			slog.String("reason", err.Error()),
-			slog.Group(
-				"override",
-				slog.String("memberOf", override.MemberOf),
-				slog.String("ip", override.IP.String()),
-			),
+			slog.Any("override", override),
 		)
 		response.Err(w, response.ErrInternalError, "something un-expected ocurred")
 		return
@@ -91,11 +87,7 @@ func (s *SpoofsService) CreateOverride(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusCreated)
 	bslog.Info("successfully created override",
-		slog.Group(
-			"override",
-			slog.String("memberOf", override.MemberOf),
-			slog.String("ip", override.IP.String()),
-		),
+		slog.Any("override", override),
 	)
 }
 
