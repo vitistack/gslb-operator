@@ -1,9 +1,10 @@
 package update
 
-import "codeberg.org/miekg/dns"
+import "github.com/vitistack/gslb-operator/internal/utils/ip"
 
 type Record struct {
-	dns.RR
-	UUID string
-	View string
+	Name    string
+	Address ip.Address
+	UUID    string
+	View    string
 }

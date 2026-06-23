@@ -101,17 +101,17 @@ func (d *DNSDISTUpdater) Create(records ...Record) error {
 					return UpdateError{
 						err:    fmt.Errorf("%s: unable to check existing rules: %w", server, err),
 						server: server,
-						spoof:  spoofs.Spoof{FQDN: rec.Header().Name, IP: rec.Data().String()},
+						spoof:  spoofs.Spoof{FQDN: rec.Name, Address: rec.Address},
 					}
 				}
 
 				if exist {
-					err := client.Rules().Remove(rec.Header().Name)
+					err := client.Rules().Remove(rec.Name)
 					if err != nil {
 						return UpdateError{
 							err:    fmt.Errorf("%s: failed to delete old record: %w", server, err),
 							server: server,
-							spoof:  spoofs.Spoof{FQDN: rec.Header().Name, IP: rec.Data().String()},
+							spoof:  spoofs.Spoof{FQDN: rec.Name, Address: rec.Address},
 						}
 					}
 				}
@@ -120,13 +120,13 @@ func (d *DNSDISTUpdater) Create(records ...Record) error {
 					server,
 					func() error {
 						return client.Rules().Add(
-							rules.QNameRule(rec.Header().Name),
+							rules.QNameRule(rec.Name),
 							rules.SpoofAction(
-								[]string{rec.Data().String()},
+								rec.Address.Strings(),
 								rules.SpoofActionOptions{TTL: new(30)},
 							),
 							rules.GlobalRuleOptions{
-								Name: &rec.Header().Name,
+								Name: &rec.Name,
 								UUID: &rec.UUID,
 							},
 						)
@@ -137,7 +137,7 @@ func (d *DNSDISTUpdater) Create(records ...Record) error {
 					return UpdateError{
 						err:    fmt.Errorf("%s: failed to create record: %w", server, err),
 						server: server,
-						spoof:  spoofs.Spoof{FQDN: rec.Header().Name, IP: rec.Data().String()},
+						spoof:  spoofs.Spoof{FQDN: rec.Name, Address: rec.Address},
 					}
 				}
 			}
@@ -365,13 +365,13 @@ func (d *DNSDISTUpdater) ParseRuleSet(ruleSet string) ([]string, error) {
 	return spoofRules, nil
 }
 
-func (d *DNSDISTUpdater) reconcileServer(client dnsdist.Client, configuredSpoofs []string) error {
+func (d *DNSDISTUpdater) reconcileServer(client dnsdist.Client, configuredSpoofUUIDs []string) error {
 	gslbspoofs, err := d.spoofRepo.ReadAll()
 	if err != nil {
 		return fmt.Errorf("could not fetch spoofs: %w", err)
 	}
 
-	for _, spoof := range configuredSpoofs { // remove all spoofs that should not exist any more
+	for _, spoof := range configuredSpoofUUIDs { // remove all spoofs that should not exist any more
 		err := client.Rules().Remove(spoof)
 		if err != nil {
 			return fmt.Errorf("failed to remove configured spoofs: %w", err)
@@ -381,7 +381,7 @@ func (d *DNSDISTUpdater) reconcileServer(client dnsdist.Client, configuredSpoofs
 	for _, spoof := range gslbspoofs { // add all spoofs that does not exist but should
 		err := client.Rules().Add(
 			rules.QNameRule(spoof.FQDN),
-			rules.SpoofAction([]string{spoof.IP}, rules.SpoofActionOptions{TTL: new(30)}),
+			rules.SpoofAction(spoof.Address.Strings(), rules.SpoofActionOptions{TTL: new(30)}),
 			rules.GlobalRuleOptions{
 				Name: &spoof.Name,
 				UUID: &spoof.UUID,
