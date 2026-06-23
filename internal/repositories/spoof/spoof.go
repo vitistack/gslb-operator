@@ -51,7 +51,7 @@ func (r *SpoofRepo) ReadAll() ([]spoofs.Spoof, error) {
 	result := make([]spoofs.Spoof, 0)
 	for _, group := range groups {
 		spoof := group.Spoof()
-		if spoof != nil {
+		if spoof != nil && spoof.Address != nil {
 			result = append(result, *spoof)
 		}
 	}
