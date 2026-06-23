@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"crypto/md5"
 	"log/slog"
-	"net/netip"
 	"slices"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/model"
 	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
 	"github.com/vitistack/gslb-operator/internal/service"
+	"github.com/vitistack/gslb-operator/internal/utils/ip"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/events"
 )
@@ -67,7 +67,7 @@ type ServiceGroup struct {
 	OnPromotion           func(*ServiceGroup)
 	prioritizedDatacenter string
 	hasOverride           bool
-	overrideIP            *netip.Addr
+	overrideAddr          ip.Address
 }
 
 func NewEmptyServiceGroup(name string) *ServiceGroup {
@@ -79,12 +79,14 @@ func NewEmptyServiceGroup(name string) *ServiceGroup {
 	}
 
 	return &ServiceGroup{
-		Name:       name,
-		uuid:       id,
-		mode:       ActiveActive,
-		Members:    make([]*service.Service, 0),
-		active:     nil,
-		lastActive: nil,
+		Name:         name,
+		uuid:         id,
+		mode:         ActiveActive,
+		Members:      make([]*service.Service, 0),
+		active:       nil,
+		lastActive:   nil,
+		hasOverride:  false,
+		overrideAddr: nil,
 	}
 }
 
@@ -100,7 +102,7 @@ func (sg *ServiceGroup) Group() *model.GSLBServiceGroup {
 	}
 
 	if sg.hasOverride {
-		group.Active = sg.overrideIP.String()
+		group.Active = sg.overrideAddr.String()
 	}
 
 	for _, member := range sg.Members {

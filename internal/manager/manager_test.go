@@ -2,19 +2,23 @@ package manager
 
 import (
 	"context"
+	"net/netip"
 	"testing"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
+	"github.com/vitistack/gslb-operator/internal/utils/ip"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 )
+
+var localhostAddr = netip.MustParseAddr("127.0.0.1")
 
 var genericGSLBConfig = model.GSLBConfig{
 	ServiceID:  "123-test-456",
 	MemberOf:   "example.com",
 	Fqdn:       "test.example.com",
-	Ip:         "192.168.1.1",
+	Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 	Port:       "80",
 	Datacenter: "dc1",
 	Interval:   timesutil.Duration(30 * time.Second),
@@ -112,7 +116,7 @@ func TestServicesManager_updateService(t *testing.T) {
 				ServiceID:  "123-test-456",
 				MemberOf:   "example.com",
 				Fqdn:       "test.example.com",
-				Ip:         "192.168.1.1",
+				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "dc1",
 				Interval:   timesutil.Duration(30 * time.Second),
@@ -127,7 +131,7 @@ func TestServicesManager_updateService(t *testing.T) {
 				ServiceID:  "123-test-456",
 				MemberOf:   "example.com",
 				Fqdn:       "test.example.com",
-				Ip:         "192.168.1.1",
+				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "dc2",
 				Interval:   timesutil.Duration(30 * time.Second),
@@ -142,7 +146,7 @@ func TestServicesManager_updateService(t *testing.T) {
 				ServiceID:  "123-test-456",
 				MemberOf:   "example.com",
 				Fqdn:       "test.example.com",
-				Ip:         "192.168.1.2",
+				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "dc1",
 				Interval:   timesutil.Duration(30 * time.Second),
@@ -157,7 +161,7 @@ func TestServicesManager_updateService(t *testing.T) {
 				ServiceID:  "123-test-456",
 				MemberOf:   "example.com",
 				Fqdn:       "test.example.com",
-				Ip:         "192.168.1.1",
+				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "dc1",
 				Interval:   timesutil.Duration(30 * time.Second),
@@ -172,7 +176,7 @@ func TestServicesManager_updateService(t *testing.T) {
 				ServiceID:  "123-test-456",
 				MemberOf:   "example.example.com",
 				Fqdn:       "test.example.com",
-				Ip:         "192.168.1.1",
+				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "dc1",
 				Interval:   timesutil.Duration(30 * time.Second),
@@ -187,7 +191,7 @@ func TestServicesManager_updateService(t *testing.T) {
 				ServiceID:  "123-test-456",
 				MemberOf:   "example.com",
 				Fqdn:       "testing.example.com",
-				Ip:         "192.168.1.1",
+				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "dc1",
 				Interval:   timesutil.Duration(30 * time.Second),

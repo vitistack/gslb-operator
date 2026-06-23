@@ -3,11 +3,13 @@ package manager
 import (
 	"errors"
 	"log"
+	"net/netip"
 	"testing"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
+	"github.com/vitistack/gslb-operator/internal/utils/ip"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 )
 
@@ -15,10 +17,12 @@ type Test struct {
 	Name string
 }
 
+var localhostAddress netip.Addr = netip.MustParseAddr("127.0.0.1")
+
 var activeConfig = model.GSLBConfig{
 	ServiceID:  "123",
 	Fqdn:       "test.example.com",
-	Ip:         "192.168.1.1",
+	Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 	Port:       "80",
 	Datacenter: "dc1",
 	Interval:   timesutil.Duration(5 * time.Second),
@@ -29,7 +33,7 @@ var activeConfig = model.GSLBConfig{
 var passiveConfig = model.GSLBConfig{
 	ServiceID:  "456",
 	Fqdn:       "test.example.com",
-	Ip:         "192.168.1.1",
+	Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 	Port:       "80",
 	Datacenter: "dc2",
 	Interval:   timesutil.Duration(5 * time.Second),

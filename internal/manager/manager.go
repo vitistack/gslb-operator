@@ -5,12 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/netip"
 	"sync"
 	"time"
 
-	"codeberg.org/miekg/dns"
-	"codeberg.org/miekg/dns/rdata"
 	"github.com/vitistack/gslb-operator/internal/dns/update"
 	"github.com/vitistack/gslb-operator/internal/manager/healthcheck"
 	"github.com/vitistack/gslb-operator/internal/manager/scheduler"
@@ -21,6 +18,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/events"
+	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence/store/memory"
 	"github.com/vitistack/gslb-operator/pkg/pool"
 )
@@ -435,7 +433,7 @@ func (sm *ServicesManager) reconcile(group *ServiceGroup) {
 	}
 
 	// remove all DNS reference for the group
-	err = sm.DNSDelete(group.Name)
+	err = sm.DNSDelete(group.uuid.String())
 	if err != nil {
 		bslog.Error("failed to reconcile gslb service-group",
 			slog.String("reason", fmt.Errorf("failed to delete DNS records: %w", err).Error()),
@@ -463,16 +461,13 @@ func (sm *ServicesManager) reconcile(group *ServiceGroup) {
 		return
 	}
 
-	err = sm.DNSCreate(update.Record{
-		RR: &dns.A{
-			Hdr: dns.Header{
-				Name: group.Name,
-			},
-			A: rdata.A{Addr: active.GetIP()},
+	if err := sm.DNSCreate(
+		update.Record{
+			Name:    active.MemberOf,
+			Address: active.GetAddress(),
+			UUID:    string(group.uuid.String()),
 		},
-		UUID: group.uuid.String(),
-	})
-	if err != nil {
+	); err != nil {
 		bslog.Error("failed to reconcile gslb service-group",
 			slog.String("reason", fmt.Errorf("failed to create DNS record: %w", err).Error()),
 			slog.Any("activeService", active),
@@ -693,41 +688,36 @@ func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChan
 	group.OnServiceHealthChange(event.Svc, event.Healthy)
 }
 
-func (sm *ServicesManager) CreateOverride(memberOf string, ip netip.Addr) error {
+func (sm *ServicesManager) CreateOverride(override spoofs.Override) error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
-	group, ok := sm.serviceGroups[memberOf]
+	group, ok := sm.serviceGroups[override.MemberOf]
 
 	if !ok {
-		return fmt.Errorf("%w: %s", ErrServiceGroupNotFound, memberOf)
+		return fmt.Errorf("%w: %s", ErrServiceGroupNotFound, override.MemberOf)
 	}
 
 	if group.hasOverride {
-		return fmt.Errorf("group %s already has an active override", memberOf)
+		return fmt.Errorf("group %s already has an active override", override.MemberOf)
 	}
 
 	group.hasOverride = true
-	group.overrideIP = new(ip)
+	group.overrideAddr = override.Address
 
-	err := sm.svcGroupRepo.Update(memberOf, group.Group())
+	err := sm.svcGroupRepo.Update(override.MemberOf, group.Group())
 	if err != nil {
 		group.hasOverride = false
-		group.overrideIP = nil
+		group.overrideAddr = nil
 		return fmt.Errorf("failed to update service group: %w", err)
 	}
 
-	addr, err := netip.ParseAddr(ip.String())
-	if err != nil {
-		return fmt.Errorf("could not parse ip address: %w", err)
-	}
-
-	if err := sm.DNSCreate(update.Record{
-		RR: &dns.A{
-			Hdr: dns.Header{Name: memberOf},
-			A:   rdata.A{Addr: addr},
+	if err := sm.DNSCreate(
+		update.Record{
+			Name:    override.MemberOf,
+			Address: override.Address,
+			UUID:    group.uuid.String(),
 		},
-		UUID: group.uuid.String(),
-	}); err != nil {
+	); err != nil {
 		return fmt.Errorf("failed to create DNS spoof: %w", err)
 	}
 
@@ -749,7 +739,7 @@ func (sm *ServicesManager) RemoveOverride(memberOf string) error {
 	}
 
 	group.hasOverride = false
-	group.overrideIP = nil
+	group.overrideAddr = nil
 
 	err := sm.svcGroupRepo.Update(memberOf, group.Group())
 	if err != nil {
@@ -757,18 +747,16 @@ func (sm *ServicesManager) RemoveOverride(memberOf string) error {
 	}
 
 	// delete override spoof
-	if err := sm.DNSDelete(memberOf); err != nil {
+	if err := sm.DNSDelete(group.uuid.String()); err != nil {
 		return fmt.Errorf("failed to delete override: %w", err)
 	}
 
 	active := group.active
 	if active != nil && active.IsHealthy() {
 		if err := sm.DNSCreate(update.Record{
-			RR: &dns.A{
-				Hdr: dns.Header{Name: memberOf},
-				A:   rdata.A{Addr: active.GetIP()},
-			},
-			UUID: group.uuid.String(),
+			Name:    active.MemberOf,
+			Address: active.GetAddress(),
+			UUID:    group.uuid.String(),
 		}); err != nil {
 			return fmt.Errorf("failed to create DNS spoof: %w", err)
 		}
