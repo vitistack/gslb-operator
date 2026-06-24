@@ -3,7 +3,6 @@ package manager
 import (
 	"errors"
 	"log"
-	"net/netip"
 	"testing"
 	"time"
 
@@ -16,8 +15,6 @@ import (
 type Test struct {
 	Name string
 }
-
-var localhostAddress netip.Addr = netip.MustParseAddr("127.0.0.1")
 
 var activeConfig = model.GSLBConfig{
 	ServiceID:  "123",
