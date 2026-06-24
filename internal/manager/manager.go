@@ -47,8 +47,8 @@ type ServicesManager struct {
 
 func NewManager(opts ...serviceManagerOption) *ServicesManager {
 	cfg := managerConfig{
-		MinRunningWorkers:     100,
-		NonBlockingBufferSize: 100,
+		MinRunningWorkers:     1,
+		NonBlockingBufferSize: 1,
 		DryRun:                false,
 		repo:                  servicegroup.NewServiceGroupRepo(memory.NewStore[model.GSLBServiceGroup]()),
 	}

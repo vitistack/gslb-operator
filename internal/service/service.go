@@ -3,8 +3,8 @@ package service
 import (
 	"fmt"
 	"log/slog"
-	"net/netip"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/checks"
@@ -26,7 +26,6 @@ type HealthChangeEvent struct {
 
 type Service struct {
 	id                   string
-	addresses            []netip.AddrPort
 	address              ip.Address
 	Fqdn                 string
 	MemberOf             string
@@ -47,18 +46,6 @@ type Service struct {
 }
 
 func NewServiceFromGSLBConfig(config model.GSLBConfig, opts ...ServiceOption) (*Service, error) {
-
-	//addresses := make([]netip.AddrPort, 0, len(config.IPs))
-	//for _, ip := range config.IPs {
-	//	ipAddr := ip.String() + port
-	//
-	//	addr, err := netip.ParseAddrPort(ipAddr)
-	//	if err != nil {
-	//		return nil, fmt.Errorf("%s: %w", ipAddr, err)
-	//	}
-	//	addresses = append(addresses, addr)
-	//}
-
 	if config.ServiceID == "" {
 		return nil, ErrEmptyServiceId
 	}
@@ -102,13 +89,13 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, opts ...ServiceOption) (*
 		svc.checker = checks.NewHTTPChecker("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, config.Script)
 
 	case config.CheckType == checks.TCP_FULL:
-		svc.checker = checks.NewTCPFullChecker(svc.addresses[0].String(), checks.DEFAULT_TIMEOUT)
+		svc.checker = checks.NewTCPFullChecker(svc.address.PrimaryTCPAddr(svc.Port), checks.DEFAULT_TIMEOUT)
 
 	case config.CheckType == checks.TCP_HALF:
-		svc.checker = checks.NewTCPHalfChecker(svc.addresses[0].String(), checks.DEFAULT_TIMEOUT)
+		svc.checker = checks.NewTCPHalfChecker(svc.address.PrimaryTCPAddr(svc.Port), checks.DEFAULT_TIMEOUT)
 
 	default:
-		svc.checker = checks.NewTCPFullChecker(svc.addresses[0].String(), checks.DEFAULT_TIMEOUT)
+		svc.checker = checks.NewTCPFullChecker(svc.address.PrimaryTCPAddr(svc.Port), checks.DEFAULT_TIMEOUT)
 	}
 
 	return svc, nil
@@ -272,15 +259,6 @@ func (s *Service) GetAddress() ip.Address {
 	return s.address
 }
 
-func (s *Service) GetIPs() []netip.Addr {
-	ips := make([]netip.Addr, 0, len(s.addresses))
-	for _, addr := range s.addresses {
-		ips = append(ips, addr.Addr())
-	}
-
-	return ips
-}
-
 func (s *Service) GetDefaultInterval() timesutil.Duration {
 	return s.defaultInterval
 }
@@ -316,6 +294,7 @@ func (s *Service) ConfigChanged(other model.GSLBConfig) bool {
 // updates the configuration values of s with the values of new
 func (s *Service) Assign(new *Service) {
 	s.Fqdn = new.Fqdn
+	s.Port = new.Port
 	s.checker = new.checker
 	s.MemberOf = new.MemberOf
 	s.priority = new.priority
@@ -366,7 +345,7 @@ func (s *Service) GSLBConfig() model.GSLBConfig {
 		MemberOf:         s.MemberOf,
 		Fqdn:             s.Fqdn,
 		Address:          s.address,
-		Port:             s.Port,
+		Port:             strings.Trim(s.Port, ":"),
 		Datacenter:       s.Datacenter,
 		Interval:         s.defaultInterval,
 		Priority:         s.priority,

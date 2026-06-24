@@ -110,6 +110,11 @@ func TestServicesManager_updateService(t *testing.T) {
 		new  model.GSLBConfig
 	}{
 		{
+			name: "no-change",
+			old: genericGSLBConfig,
+			new: genericGSLBConfig,
+		},
+		{
 			name: "update-priority",
 			old:  genericGSLBConfig,
 			new: model.GSLBConfig{
@@ -200,6 +205,7 @@ func TestServicesManager_updateService(t *testing.T) {
 			},
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sm := NewManager(WithDryRun(true))

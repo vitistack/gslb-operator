@@ -348,3 +348,127 @@ func TestService_GetBaseInterval(t *testing.T) {
 		})
 	}
 }
+
+func TestService_ConfigChanged(t *testing.T) {
+	localhostAddr := netip.MustParseAddr("127.0.0.1")
+	localhostAddr2 := netip.MustParseAddr("127.0.0.1")
+	baseConfig := model.GSLBConfig{
+		ServiceID:        "svc-1",
+		MemberOf:         "example.com",
+		Fqdn:             "api.example.com",
+		Address:          &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
+		Port:             "443",
+		Datacenter:       "dc1",
+		Interval:         timesutil.FromDuration(10 * time.Second),
+		Priority:         2,
+		FailureThreshold: 3,
+		CheckType:        "TCP-FULL",
+	}
+	tests := []struct {
+		name   string // description of this test case
+		config model.GSLBConfig
+		// Named input parameters for target function.
+		other model.GSLBConfig
+		want  bool
+	}{
+		{
+			name:   "unchanged-config",
+			config: baseConfig,
+			other: model.GSLBConfig{
+				ServiceID:        "svc-1",
+				MemberOf:         "example.com",
+				Fqdn:             "api.example.com",
+				Address:          &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
+				Port:             "443",
+				Datacenter:       "dc1",
+				Interval:         timesutil.FromDuration(10 * time.Second),
+				Priority:         2,
+				FailureThreshold: 3,
+				CheckType:        "TCP-FULL",
+			},
+			want: false,
+		},
+		{
+			name:   "changed-fqdn",
+			config: baseConfig,
+			other: model.GSLBConfig{
+				ServiceID:        "svc-1",
+				MemberOf:         "example.com",
+				Fqdn:             "api2.example.com",
+				Address:          &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr2},
+				Port:             "443",
+				Datacenter:       "dc1",
+				Interval:         timesutil.FromDuration(10 * time.Second),
+				Priority:         2,
+				FailureThreshold: 3,
+				CheckType:        "TCP-FULL",
+			},
+			want: true,
+		},
+		{
+			name:   "changed-priority",
+			config: baseConfig,
+			other: model.GSLBConfig{
+				ServiceID:        "svc-1",
+				MemberOf:         "example.com",
+				Fqdn:             "api.example.com",
+				Address:          &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr2},
+				Port:             "443",
+				Datacenter:       "dc1",
+				Interval:         timesutil.FromDuration(10 * time.Second),
+				Priority:         3,
+				FailureThreshold: 3,
+				CheckType:        "TCP-FULL",
+			},
+			want: true,
+		},
+		{
+			name:   "changed-base-interval",
+			config: baseConfig,
+			other: model.GSLBConfig{
+				ServiceID:        "svc-1",
+				MemberOf:         "example.com",
+				Fqdn:             "api.example.com",
+				Address:          &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr2},
+				Port:             "443",
+				Datacenter:       "dc1",
+				Interval:         timesutil.FromDuration(11 * time.Second),
+				Priority:         2,
+				FailureThreshold: 3,
+				CheckType:        "TCP-FULL",
+			},
+			want: true,
+		},
+		{
+			name:   "changed-port",
+			config: baseConfig,
+			other: model.GSLBConfig{
+				ServiceID:        "svc-1",
+				MemberOf:         "example.com",
+				Fqdn:             "api.example.com",
+				Address:          &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr2},
+				Port:             "8080",
+				Datacenter:       "dc1",
+				Interval:         timesutil.FromDuration(10 * time.Second),
+				Priority:         2,
+				FailureThreshold: 3,
+				CheckType:        "TCP-FULL",
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := NewServiceFromGSLBConfig(tt.config)
+			if err != nil {
+				t.Fatalf("could not construct receiver type: %v", err)
+			}
+			got := s.ConfigChanged(tt.other)
+
+			if got != tt.want {
+				t.Errorf("ConfigChanged() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
