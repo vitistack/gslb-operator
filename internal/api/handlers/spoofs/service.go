@@ -1,16 +1,15 @@
 package spoofs
 
 import (
-	"net/netip"
-
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
 	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
+	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
 )
 
 type OverrideApplier interface {
-	CreateOverride(string, netip.Addr) error
+	CreateOverride(spoofs.Override) error
 	RemoveOverride(string) error
 }
 
