@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -23,6 +24,26 @@ type Config struct {
 	Valkey        valkey   `mapstructure:"valkey"`
 	secretsLoaded int
 	secretsTotal  int
+}
+
+func (c *Config) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("env", c.Server.Env),
+		slog.String("log_level", c.Server.LOG_LEVEL),
+		slog.String("api_port", c.Api.PORT),
+		slog.Bool("split_dns_enabled", c.SplitDNS.Enabled),
+		slog.Any("split_dns_views", c.SplitDNS.Views),
+		slog.String("gslb_zone", c.Gslb.ZONE),
+		slog.String("gslb_nameserver", c.Gslb.NS),
+		slog.String("gslb_poll_interval", c.Gslb.PollInterval),
+		slog.Bool("webhooks_enabled", c.Webhooks.Enabled),
+		slog.Bool("slack_enabled", c.Webhooks.Notices.SlackNotifier.Enabled),
+		slog.String("mq_endpoint", c.Webhooks.Mq.EndPoint),
+		slog.String("mq_port", c.Webhooks.Mq.PORT),
+		slog.Bool("valkey_enabled", c.Valkey.Enabled),
+		slog.String("valkey_addr", c.Valkey.Addr),
+		slog.String("secrets_loaded", fmt.Sprintf("%d/%d", c.secretsLoaded, c.secretsTotal)),
+	)
 }
 
 func Server() *server {
@@ -106,10 +127,6 @@ func init() {
 	bslog.Info("config-loaded", slog.Any("config", cfg), slog.Int64("duration_ms", time.Since(loadTimeStart).Milliseconds()))
 }
 
-func (c *Config) LogValue() slog.Value {
-	return slog.StringValue("un-implemented LogValue")
-}
-
 // server configuration
 type server struct {
 	Env         string `mapstructure:"env"`
@@ -168,8 +185,8 @@ func (s *splitDns) DNSViews() []string {
 
 // gslb configuration
 type gslb struct {
-	ZONE         string
-	NAMESERVER   string
+	ZONE         string `mapstructure:"zone"`
+	NS           string `mapstructure:"nameserver"`
 	PollInterval string `mapstructure:"poll_interval"`
 	SERVERS      string `mapstructure:"dnsdist_servers_file"`
 }
@@ -179,7 +196,7 @@ func (g *gslb) Zone() string {
 }
 
 func (g *gslb) Nameserver() string {
-	return g.NAMESERVER
+	return g.NS
 }
 
 func (g *gslb) Poll() (timesutil.Duration, error) {
@@ -196,8 +213,8 @@ func (g *gslb) Servers() string {
 }
 
 type jwt struct {
-	SECRET string
-	USER   string
+	SECRET string `mapstructure:"secret"`
+	USER   string `mapstructure:"user"`
 }
 
 func (jwt *jwt) Secret() []byte {
@@ -236,9 +253,9 @@ func (n *notifications) Slack() *slack {
 
 type slack struct {
 	Enabled        bool
-	APP_TOKEN      string
-	BOT_TOKEN      string
-	SIGNING_SECRET string
+	APP_TOKEN      string `mapstructure:"app_token"`
+	BOT_TOKEN      string `mapstructure:"bot_token"`
+	SIGNING_SECRET string `mapstructure:"signing_secret"`
 }
 
 func (s *slack) Enable() bool {
@@ -258,10 +275,10 @@ func (s *slack) SigningSecret() string {
 }
 
 type mq struct {
-	Usr      string
-	Passwd   string
-	EndPoint string
-	PORT     string
+	Usr      string `mapstructure:"user"`
+	Passwd   string `mapstructure:"pass"`
+	EndPoint string `mapstructure:"endpoint"`
+	PORT     string `mapstructure:"port"`
 }
 
 func (mq *mq) User() string {
@@ -282,9 +299,9 @@ func (mq *mq) Port() string {
 
 type valkey struct {
 	Enabled bool
-	Addr    string
-	USER    string
-	PASS    string
+	Addr    string `mapstructure:"addr"`
+	USER    string `mapstructure:"user"`
+	PASS    string `mapstructure:"pass"`
 }
 
 func (v *valkey) Address() string {
@@ -298,68 +315,3 @@ func (v *valkey) User() string {
 func (v *valkey) Password() string {
 	return v.PASS
 }
-
-/*
-func newConfig() (*Config, error) {
-	fileLoader, err := loaders.NewFileLoader(
-		".env",
-		"./secrets",
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	loader := loaders.NewChainLoader(
-		loaders.NewEnvloader(),
-		fileLoader,
-		loaders.NewFlagLoader(),
-	)
-
-	// creating default config variables where possible
-	serverCfg := server{
-		ENV: "prod",
-	}
-
-	apiCfg := API{
-		PORT: ":8080",
-	}
-
-	gslbCfg := gslb{
-		POLLINTERVAL: "1m",
-	}
-
-	jwtCfg := jwt{}
-	slackCfg := slack{}
-	mqCfg := mq{}
-
-	valkeyCfg := valkey{Addr: "localhost:6379"}
-
-	configs := []any{
-		&serverCfg,
-		&apiCfg,
-		&gslbCfg,
-		&jwtCfg,
-		&slackCfg,
-		&mqCfg,
-		&valkeyCfg,
-	}
-
-	for _, cfg := range configs {
-		err := loader.Load(cfg)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return &Config{
-		server: serverCfg,
-		api:    apiCfg,
-		gslb:   gslbCfg,
-		jwt:    jwtCfg,
-		slack:  slackCfg,
-		mq:     mqCfg,
-		valkey: valkeyCfg,
-	}, nil
-}
-*/
