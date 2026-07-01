@@ -93,7 +93,7 @@ func loadSecrets(v *viper.Viper, flags FeatureFlags, dir string) (loaded, total 
 
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
-		return loaded, total, fmt.Errorf("not found directory: %s", dir)
+		return loaded, total, nil
 	}
 
 	if err != nil {
