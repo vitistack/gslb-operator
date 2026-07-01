@@ -19,7 +19,7 @@ type Config struct {
 	Api           api      `mapstructure:"api"`
 	SplitDNS      splitDns `mapstructure:"split_dns"`
 	Gslb          gslb     `mapstructure:"gslb"`
-	Jwt           jwt
+	Jwt           jwt      `mapstructure:"jwt"`
 	Webhooks      webhooks `mapstructure:"webhooks"`
 	Valkey        valkey   `mapstructure:"valkey"`
 	secretsLoaded int
