@@ -13,14 +13,17 @@ type Notifier interface {
 }
 
 func NewNotifier(format string) (Notifier, error) {
-	if config.Webhooks().Notifications().Slack().Enable() {
+	if config.Webhooks().Enable() {
 		switch format {
 		case "slack":
-			return NewSlackNotifier(), nil
-		default:
-			return nil, fmt.Errorf("un-supported notifier format: %s", format)
-		}
+			if config.Webhooks().Notifications().Slack().Enable() {
+				return NewSlackNotifier(), nil
+			}
+			return nil, fmt.Errorf("slack notifications are not enabled")
 
+		default:
+			return nil, fmt.Errorf("unknown notifier format: %s", format)
+		}
 	}
 	return nil, fmt.Errorf("webhooks not enabled")
 }

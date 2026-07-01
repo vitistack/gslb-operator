@@ -59,8 +59,8 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("api.port", ":8080")
 
-	v.SetDefault("split-dns.enabled", true)
-	v.SetDefault("split-dns.views", []string{"default"})
+	v.SetDefault("split_dns.enabled", true)
+	v.SetDefault("split_dns.views", []string{"default"})
 
 	v.SetDefault("gslb.poll_interval", "1m")
 	v.SetDefault("gslb.dnsdist_servers_file", "./secrets/GSLB_DNSDIST_SERVERS")
@@ -80,12 +80,12 @@ func loadSecrets(v *viper.Viper, flags FeatureFlags, dir string) (loaded, total 
 	}
 
 	if flags.WebHooks.Enabled {
-		secretsKeyMap["MQ_PASS"] = "mq.pass"
-		secretsKeyMap["MQ_USER"] = "mq.user"
+		secretsKeyMap["MQ_PASS"] = "webhooks.mq.pass"
+		secretsKeyMap["MQ_USER"] = "webhooks.mq.user"
 		if flags.WebHooks.Notifications.Slack.Enabled {
-			secretsKeyMap["SLACK_APP_TOKEN"] = "slack.app_token"
-			secretsKeyMap["SLACK_BOT_TOKEN"] = "slack.bot_token"
-			secretsKeyMap["SLACK_SIGNING_SECRET"] = "slack.signing_secret"
+			secretsKeyMap["SLACK_APP_TOKEN"] = "webhooks.notifications.slack.app_token"
+			secretsKeyMap["SLACK_BOT_TOKEN"] = "webhooks.notifications.slack.bot_token"
+			secretsKeyMap["SLACK_SIGNING_SECRET"] = "webhooks.notifications.slack.signing_secret"
 		}
 	}
 

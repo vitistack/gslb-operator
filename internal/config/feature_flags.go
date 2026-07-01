@@ -3,7 +3,7 @@ package config
 type FeatureFlags struct {
 	WebHooks           WebhooksFeatureFlag    `mapstructure:"webhooks"`
 	Valkey             struct{ Enabled bool } `mapstructure:"valkey"`
-	SplitDNS           struct{ Enabled bool } `mapstructure:"split-dns"`
+	SplitDNS           struct{ Enabled bool } `mapstructure:"split_dns"`
 }
 
 type WebhooksFeatureFlag struct {
