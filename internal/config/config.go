@@ -5,28 +5,70 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
-	"github.com/vitistack/gslb-operator/pkg/loaders"
 )
 
 var cfg *Config
 
+type Config struct {
+	Server        server   `mapstructure:"server"`
+	Api           api      `mapstructure:"api"`
+	SplitDNS      splitDns `mapstructure:"split_dns"`
+	Gslb          gslb     `mapstructure:"gslb"`
+	Jwt           jwt
+	Webhooks      webhooks `mapstructure:"webhooks"`
+	Valkey        valkey   `mapstructure:"valkey"`
+	secretsLoaded int
+	secretsTotal  int
+}
+
+func Server() *server {
+	return &cfg.Server
+}
+
+func API() *api {
+	return &cfg.Api
+}
+
+func SplitDNS() *splitDns {
+	return &cfg.SplitDNS
+}
+
+func GSLB() *gslb {
+	return &cfg.Gslb
+}
+
+func JWT() *jwt {
+	return &cfg.Jwt
+}
+
+func Webhooks() *webhooks {
+	return &cfg.Webhooks
+}
+
+func Valkey() *valkey {
+	return &cfg.Valkey
+}
+
 func init() {
 	var err error
-	cfg, err = newConfig()
+	loadTimeStart := time.Now()
+
+	cfg, err = new()
 	if err != nil {
 		log.Fatalf("unable to load config: %s", err.Error())
 	}
 
 	var handler slog.Handler
 	handlerOpts := &slog.HandlerOptions{
-		Level:       cfg.Server().LogLevel(),
+		Level:       cfg.Server.LogLevel(),
 		ReplaceAttr: bslog.BaseReplaceAttr,
 	}
 
-	switch cfg.server.ENV {
+	switch cfg.Server.Env {
 	case "dev", "development", "DEV", "DEVELOPMENT":
 		handler = bslog.NewHandler(
 			os.Stdout, // log output
@@ -61,70 +103,29 @@ func init() {
 	}
 
 	slog.SetDefault(slog.New(handler))
-}
-
-type Config struct {
-	server Server
-	api    API
-	gslb   GSLB
-	jwt    JWT
-	slack  Slack
-	mq     Mq
-	valkey Valkey
-}
-
-func GetInstance() *Config {
-	return cfg
+	bslog.Info("config-loaded", slog.Any("config", cfg), slog.Int64("duration_ms", time.Since(loadTimeStart).Milliseconds()))
 }
 
 func (c *Config) LogValue() slog.Value {
 	return slog.StringValue("un-implemented LogValue")
 }
 
-func (c *Config) Server() *Server {
-	return &c.server
+// server configuration
+type server struct {
+	Env         string `mapstructure:"env"`
+	LUA_SANDBOX string `mapstructure:"lua_sandbox"`
+	LOG_LEVEL   string `mapstructure:"log_level"`
 }
 
-func (c *Config) API() *API {
-	return &c.api
+func (s *server) Environment() string {
+	return s.Env
 }
 
-func (c *Config) GSLB() *GSLB {
-	return &c.gslb
-}
-
-func (c *Config) JWT() *JWT {
-	return &c.jwt
-}
-
-func (c *Config) Slack() *Slack {
-	return &c.slack
-}
-
-func (c *Config) MQ() *Mq {
-	return &c.mq
-}
-
-func (c *Config) Valkey() *Valkey {
-	return &c.valkey
-}
-
-// Server configuration
-type Server struct {
-	ENV         string `env:"SRV_ENV" flag:"env"`
-	LUA_SANDBOX string `env:"SRV_LUA_SANDBOX" flag:"lua-sandbox"`
-	LOG_LEVEL   string `env:"SRV_LOG_LEVEL" flag:"log-level"`
-}
-
-func (s *Server) Env() string {
-	return s.ENV
-}
-
-func (s *Server) LuaSandbox() string {
+func (s *server) LuaSandbox() string {
 	return s.LUA_SANDBOX
 }
 
-func (s *Server) LogLevel() slog.Level {
+func (s *server) LogLevel() slog.Level {
 	switch s.LOG_LEVEL {
 	case "healthcheck", "HEALTHCHECK":
 		return bslog.LevelHealthCheck
@@ -144,33 +145,45 @@ func (s *Server) LogLevel() slog.Level {
 }
 
 // API configuration
-type API struct {
-	PORT string `env:"API_PORT" flag:"port"`
+type api struct {
+	PORT string `mapstructure:"port"`
 }
 
-func (a *API) Port() string {
+func (a *api) Port() string {
 	return a.PORT
 }
 
-// GSLB configuration
-type GSLB struct {
-	ZONE         string `env:"GSLB_ZONE" flag:"gslb-zone"`
-	NAMESERVER   string `env:"GSLB_NAMESERVER" flag:"gslb-nameserver"`
-	POLLINTERVAL string `env:"GSLB_POLL_INTERVAL" flag:"poll-interval"`
-	UPDATERHOST  string `env:"GSLB_UPDATER_HOST" flag:"updater-host"`
-	SERVERS      string `env:"GSLB_DNSDIST_SERVERS_FILE"`
+type splitDns struct {
+	Enabled bool     `mapstructure:"enabled"`
+	Views   []string `mapstructure:"views"`
 }
 
-func (g *GSLB) Zone() string {
+func (s *splitDns) Enable() bool {
+	return s.Enabled
+}
+
+func (s *splitDns) DNSViews() []string {
+	return s.Views
+}
+
+// gslb configuration
+type gslb struct {
+	ZONE         string
+	NAMESERVER   string
+	PollInterval string `mapstructure:"poll_interval"`
+	SERVERS      string `mapstructure:"dnsdist_servers_file"`
+}
+
+func (g *gslb) Zone() string {
 	return g.ZONE
 }
 
-func (g *GSLB) NameServer() string {
+func (g *gslb) Nameserver() string {
 	return g.NAMESERVER
 }
 
-func (g *GSLB) PollInterval() (timesutil.Duration, error) {
-	duration, err := timesutil.FromString(g.POLLINTERVAL)
+func (g *gslb) Poll() (timesutil.Duration, error) {
+	duration, err := timesutil.FromString(g.PollInterval)
 	if err != nil {
 		return 0, err
 	}
@@ -178,91 +191,115 @@ func (g *GSLB) PollInterval() (timesutil.Duration, error) {
 	return duration, nil
 }
 
-func (g *GSLB) UpdaterHost() string {
-	return g.UPDATERHOST
-}
-
-func (g *GSLB) Servers() string {
+func (g *gslb) Servers() string {
 	return g.SERVERS
 }
 
-type JWT struct {
-	SECRET string `env:"JWT_SECRET"`
-	USER   string `env:"JWT_USER"`
+type jwt struct {
+	SECRET string
+	USER   string
 }
 
-func (jwt *JWT) Secret() []byte {
+func (jwt *jwt) Secret() []byte {
 	return []byte(jwt.SECRET)
 }
 
-func (jwt *JWT) User() string {
+func (jwt *jwt) User() string {
 	return jwt.USER
 }
 
-type Slack struct {
-	APP_TOKEN      string `env:"SLACK_APP_TOKEN"`
-	BOT_TOKEN      string `env:"SLACK_BOT_TOKEN"`
-	SIGNING_SECRET string `env:"SLACK_SIGNING_SECRET"`
+type webhooks struct {
+	Enabled bool
+	Notices notifications `mapstructure:"notifications"`
+	Mq      mq            `mapstructure:"mq"`
 }
 
-func (s *Slack) AppToken() string {
+func (w *webhooks) Enable() bool {
+	return w.Enabled
+}
+
+func (w *webhooks) Notifications() *notifications {
+	return &w.Notices
+}
+
+func (w *webhooks) MQ() *mq {
+	return &w.Mq
+}
+
+type notifications struct {
+	SlackNotifier slack `mapstructure:"slack"`
+}
+
+func (n *notifications) Slack() *slack {
+	return &n.SlackNotifier
+}
+
+type slack struct {
+	Enabled        bool
+	APP_TOKEN      string
+	BOT_TOKEN      string
+	SIGNING_SECRET string
+}
+
+func (s *slack) Enable() bool {
+	return s.Enabled
+}
+
+func (s *slack) AppToken() string {
 	return s.APP_TOKEN
 }
 
-func (s *Slack) BotToken() string {
+func (s *slack) BotToken() string {
 	return s.BOT_TOKEN
 }
 
-func (s *Slack) SigningSecret() string {
+func (s *slack) SigningSecret() string {
 	return s.SIGNING_SECRET
 }
 
-type Mq struct {
-	USER     string `env:"MQ_USER"`
-	PASS     string `env:"MQ_PASS"`
-	ENDPOINT string `env:"MQ_ENDPOINT"`
-	PORT     string `env:"MQ_PORT"`
-	ENABLED  bool   `env:"MQ_ENABLED"`
+type mq struct {
+	Usr      string
+	Passwd   string
+	EndPoint string
+	PORT     string
 }
 
-func (mq *Mq) User() string {
-	return mq.USER
+func (mq *mq) User() string {
+	return mq.Usr
 }
 
-func (mq *Mq) Pass() string {
-	return mq.PASS
+func (mq *mq) Pass() string {
+	return mq.Passwd
 }
 
-func (mq *Mq) Endpoint() string {
-	return mq.ENDPOINT
+func (mq *mq) Endpoint() string {
+	return mq.EndPoint
 }
 
-func (mq *Mq) Port() string {
+func (mq *mq) Port() string {
 	return mq.PORT
 }
 
-func (mq *Mq) Enabled() bool {
-	return mq.ENABLED
+type valkey struct {
+	Enabled bool
+	Addr    string
+	USER    string
+	PASS    string
 }
 
-type Valkey struct {
-	Addr string `env:"VK_ADDR"`
-	USER string `env:"VK_USER"`
-	PASS string `env:"VK_PASS"`
-}
-
-func (v *Valkey) Address() string {
+func (v *valkey) Address() string {
 	return v.Addr
 }
 
-func (v *Valkey) User() string {
+func (v *valkey) User() string {
 	return v.USER
 }
 
-func (v *Valkey) Password() string {
+func (v *valkey) Password() string {
 	return v.PASS
 }
 
+/*
 func newConfig() (*Config, error) {
 	fileLoader, err := loaders.NewFileLoader(
 		".env",
@@ -280,7 +317,7 @@ func newConfig() (*Config, error) {
 	)
 
 	// creating default config variables where possible
-	serverCfg := Server{
+	serverCfg := server{
 		ENV: "prod",
 	}
 
@@ -288,15 +325,15 @@ func newConfig() (*Config, error) {
 		PORT: ":8080",
 	}
 
-	gslbCfg := GSLB{
+	gslbCfg := gslb{
 		POLLINTERVAL: "1m",
 	}
 
-	jwtCfg := JWT{}
-	slackCfg := Slack{}
-	mqCfg := Mq{}
+	jwtCfg := jwt{}
+	slackCfg := slack{}
+	mqCfg := mq{}
 
-	valkeyCfg := Valkey{Addr: "localhost:6379"}
+	valkeyCfg := valkey{Addr: "localhost:6379"}
 
 	configs := []any{
 		&serverCfg,
@@ -325,3 +362,4 @@ func newConfig() (*Config, error) {
 		valkey: valkeyCfg,
 	}, nil
 }
+*/

@@ -20,8 +20,8 @@ type SlackNotifier struct {
 func NewSlackNotifier() *SlackNotifier {
 	return &SlackNotifier{
 		client: slack.New(
-			config.GetInstance().Slack().BotToken(),
-			slack.OptionAppLevelToken(config.GetInstance().Slack().AppToken()),
+			config.Webhooks().Notifications().Slack().BotToken(),
+			slack.OptionAppLevelToken(config.Webhooks().Notifications().Slack().AppToken()),
 		),
 	}
 }

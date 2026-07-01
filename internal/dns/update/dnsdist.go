@@ -44,7 +44,7 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 		spoofRepo: *repo.NewSpoofRepo(store),
 	}
 
-	file, err := os.ReadFile(config.GetInstance().GSLB().Servers())
+	file, err := os.ReadFile(config.GSLB().Servers())
 	if err != nil {
 		return nil, fmt.Errorf("could could not load dnsdist servers configuration: %w", err)
 	}

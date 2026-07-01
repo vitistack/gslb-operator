@@ -22,13 +22,13 @@ type WebhooksBroker struct {
 }
 
 func Init(ctx context.Context, store persistence.Store[model.WebHook]) {
-	if config.GetInstance().MQ().Enabled() {
+	if config.Webhooks().Enable() {
 		New(ctx, store).Subscribe(ctx)
 	}
 }
 
 func New(ctx context.Context, store persistence.Store[model.WebHook]) *WebhooksBroker {
-	mqCfg := config.GetInstance().MQ()
+	mqCfg := config.Webhooks().MQ()
 	broker := &WebhooksBroker{
 		repo: webhooks.NewWebHooksRepo(store),
 		client: rabbitmq.New(

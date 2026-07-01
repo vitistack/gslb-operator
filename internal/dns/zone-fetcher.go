@@ -27,15 +27,15 @@ type fetcherOption func(fetcher *ZoneFetcher)
 
 // auto fetches after a given duration
 func NewZoneFetcherWithAutoPoll(opts ...fetcherOption) *ZoneFetcher {
-	gslb := config.GetInstance().GSLB()
-	fetcInterval, err := gslb.PollInterval()
+	gslb := config.GSLB()
+	fetcInterval, err := gslb.Poll()
 	if err != nil {
 		fetcInterval = timesutil.Duration(DEFAULT_POLL_INTERVAL)
 	}
 
 	fetcher := &ZoneFetcher{ // default values
 		Zone:     gslb.Zone(),
-		Server:   gslb.NameServer(),
+		Server:   gslb.Nameserver(),
 		wg:       sync.WaitGroup{},
 		interval: fetcInterval,
 		timeout:  time.Second * 5,

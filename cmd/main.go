@@ -40,19 +40,17 @@ func main() {
 		slog.String("version", version),
 		slog.String("build-date", buildDate),
 	)
-	cfg := config.GetInstance()
-	bslog.Info("loaded environment", slog.Any("env", cfg))
 
 	// initialize lua execution environment
-	if err := lua.LoadSandboxConfig(cfg.Server().LuaSandbox()); err != nil {
+	if err := lua.LoadSandboxConfig(config.Server().LuaSandbox()); err != nil {
 		bslog.Fatal("could not load lua configuration", slog.Any("reason", err))
 	}
 
 	valkeyClient, err := valkeyStore.NewClient(
 		valkey.ClientOption{
-			InitAddress: []string{cfg.Valkey().Address()},
-			Username:    cfg.Valkey().User(),
-			Password:    cfg.Valkey().Password(),
+			InitAddress: []string{config.Valkey().Address()},
+			Username:    config.Valkey().User(),
+			Password:    config.Valkey().Password(),
 		},
 	)
 	if err != nil {
@@ -102,8 +100,8 @@ func main() {
 	updater.Synchronize(ctx)
 
 	//configs := getRandomGSLBConfig()
-	//for _, cfg := range configs {
-	//	_, err := mgr.RegisterService(cfg)
+	//for _, config := range configs {
+	//	_, err := mgr.RegisterService(config)
 	//	if err != nil {
 	//		bslog.Fatal("could not create service", slog.String("reason", err.Error()))
 	//	}
@@ -115,7 +113,7 @@ func main() {
 	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
 
 	// initializing the service jwt self signer
-	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
+	jwt.InitServiceTokenManager(config.JWT().Secret(), config.JWT().User())
 
 	// spoofs
 	api.HandleFunc(routes.GET_SPOOFS, middleware.Chain(
@@ -151,14 +149,14 @@ func main() {
 	api.Handle(routes.METRICS, promhttp.Handler())
 
 	server := http.Server{
-		Addr:    cfg.API().Port(),
+		Addr:    config.API().Port(),
 		Handler: api,
 	}
 	serverErr := make(chan error, 1)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
-	bslog.Info("starting API service", slog.String("port", cfg.API().Port()))
+	bslog.Info("starting API service", slog.String("port", config.API().Port()))
 	go func() {
 		err := server.ListenAndServe()
 		if err != nil {
@@ -188,7 +186,7 @@ func main() {
 //func getRandomGSLBConfig() []model.GSLBConfig {
 //	configs := make([]model.GSLBConfig, 0, 500)
 //
-//	cfg := model.GSLBConfig{
+//	config := model.GSLBConfig{
 //		Fqdn:             "test.example.com",
 //		Ip:               "10.10.0.1",
 //		Port:             "80",
@@ -201,10 +199,10 @@ func main() {
 //
 //	for idx := range cap(configs) {
 //
-//		cfg.ServiceID = fmt.Sprintf("%d", idx)
-//		cfg.MemberOf = fmt.Sprintf("%s.%s", cfg.ServiceID, cfg.Fqdn)
+//		config.ServiceID = fmt.Sprintf("%d", idx)
+//		config.MemberOf = fmt.Sprintf("%s.%s", config.ServiceID, config.Fqdn)
 //
-//		configs = append(configs, cfg)
+//		configs = append(configs, config)
 //	}
 //
 //	return configs
