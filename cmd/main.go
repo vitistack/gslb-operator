@@ -17,7 +17,7 @@ import (
 	whBroker "github.com/vitistack/gslb-operator/internal/brokers/webhooks"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
-	"github.com/vitistack/gslb-operator/internal/dns/update"
+	"github.com/vitistack/gslb-operator/internal/dns/update/dnsdist"
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
@@ -79,7 +79,7 @@ func main() {
 		//manager.WithDryRun(true),
 	)
 
-	updater, err := update.NewDNSDISTUpdater(servicesStore)
+	updater, err := dnsdist.NewDNSDISTUpdater(servicesStore)
 	if err != nil {
 		bslog.Error("unable to create updater", slog.String("error", err.Error()))
 	}
