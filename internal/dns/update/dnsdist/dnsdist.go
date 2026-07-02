@@ -1,4 +1,4 @@
-package update
+package dnsdist
 
 import (
 	"bufio"
@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/config"
+	"github.com/vitistack/gslb-operator/internal/dns/update"
+	dnsviews "github.com/vitistack/gslb-operator/internal/dns/views"
 	"github.com/vitistack/gslb-operator/internal/model"
 	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
 	repo "github.com/vitistack/gslb-operator/internal/repositories/spoof"
@@ -25,7 +27,6 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/rules"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/transport/tcp"
 	"github.com/vitistack/gslb-operator/pkg/events"
-	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
 	"golang.org/x/sync/errgroup"
 )
@@ -34,13 +35,13 @@ const DEFAULT_SYNCHRONIZE_JOB = time.Minute
 
 // contacts dnsdist servers to make update directly
 type DNSDISTUpdater struct {
-	servers   map[string]dnsdist.Client
+	servers   map[string]*server
 	spoofRepo repo.SpoofRepo
 }
 
 func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDISTUpdater, error) {
 	updater := &DNSDISTUpdater{
-		servers:   make(map[string]dnsdist.Client),
+		servers:   make(map[string]*server),
 		spoofRepo: *repo.NewSpoofRepo(store),
 	}
 
@@ -55,14 +56,14 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 		return nil, fmt.Errorf("malformed dnsdist servers configuration: %w", err)
 	}
 
-	for _, server := range servers {
+	for _, srv := range servers {
 		// initialize server connection to down
-		serverUpMetric.WithLabelValues(server.Name).Set(0)
+		serverUpMetric.WithLabelValues(srv.Name).Set(0)
 
 		transport, err := tcp.NewTCPTransport(
-			server.Key,
-			tcp.WithHost(server.Host.String()),
-			tcp.WithPort(server.Port),
+			srv.Key,
+			tcp.WithHost(srv.Host.String()),
+			tcp.WithPort(srv.Port),
 			tcp.WithTimeout(time.Second*5),
 			tcp.WithNumRetriesOnCommandFailure(3),
 		)
@@ -70,7 +71,19 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 			return nil, fmt.Errorf("unable to create dnsdist client: %w", err)
 		}
 
-		updater.servers[server.Name] = dnsdist.NewClient(transport)
+		var selector dnsviews.Selector = &dnsviews.AllSelector{}
+		if config.SplitDNS().Enable() {
+			if !dnsviews.Valid(srv.View) {
+				return nil, fmt.Errorf("server %s: with unknown view: %s", srv.Name, srv.View)
+			}
+			selector = &dnsviews.SplitDNSSelector{View: srv.View}
+		}
+
+		updater.servers[srv.Name] = &server{
+			name:     srv.Name,
+			client:   dnsdist.NewClient(transport),
+			selector: selector,
+		}
 	}
 
 	return updater, nil
@@ -88,58 +101,18 @@ func (d *DNSDISTUpdater) do(name string, fn func() error) error {
 	return nil
 }
 
-func (d *DNSDISTUpdater) Create(records ...Record) error {
+func (d *DNSDISTUpdater) Create(records ...update.Record) error {
 	wg := errgroup.Group{}
 
-	for server, client := range d.servers {
+	for _, server := range d.servers {
 		wg.Go(func() error {
-
-			for _, rec := range records {
-
-				exist, err := client.Rules().Exist(rec.UUID)
-				if err != nil {
-					return UpdateError{
-						err:    fmt.Errorf("%s: unable to check existing rules: %w", server, err),
-						server: server,
-						spoof:  spoofs.Spoof{FQDN: rec.Name, Address: rec.Address},
-					}
-				}
-
-				if exist {
-					err := client.Rules().Remove(rec.Name)
-					if err != nil {
-						return UpdateError{
-							err:    fmt.Errorf("%s: failed to delete old record: %w", server, err),
-							server: server,
-							spoof:  spoofs.Spoof{FQDN: rec.Name, Address: rec.Address},
-						}
-					}
-				}
-
-				err = d.do(
-					server,
-					func() error {
-						return client.Rules().Add(
-							rules.QNameRule(rec.Name),
-							rules.SpoofAction(
-								rec.Address.Strings(),
-								rules.SpoofActionOptions{TTL: new(30)},
-							),
-							rules.GlobalRuleOptions{
-								Name: &rec.Name,
-								UUID: &rec.UUID,
-							},
-						)
-					},
-				)
-
-				if err != nil {
-					return UpdateError{
-						err:    fmt.Errorf("%s: failed to create record: %w", server, err),
-						server: server,
-						spoof:  spoofs.Spoof{FQDN: rec.Name, Address: rec.Address},
-					}
-				}
+			err := d.do(server.name,
+				func() error {
+					return server.Create(records...)
+				},
+			)
+			if err != nil {
+				return err
 			}
 
 			return nil
@@ -148,15 +121,15 @@ func (d *DNSDISTUpdater) Create(records ...Record) error {
 
 	err := wg.Wait()
 	if err != nil {
-		if updateErr, ok := errors.AsType[UpdateError](err); ok {
+		if updateErr, ok := errors.AsType[update.UpdateError](err); ok {
 			events.Emit(&events.Event{
 				Type: domainEvents.EventTypeDNSDISTSpoofCreateFailed,
 				Payload: domainEvents.DNSDistSpoofCreateFailedEvent{
-					Server: updateErr.server,
-					Spoof:  updateErr.spoof,
+					Server: updateErr.Server,
+					Spoof:  updateErr.Spoof,
 				},
 				Timestamp: time.Now(),
-				ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofCreateFailed, updateErr.server),
+				ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofCreateFailed, updateErr.Server),
 			})
 
 			return updateErr
@@ -168,49 +141,28 @@ func (d *DNSDISTUpdater) Create(records ...Record) error {
 	return nil
 }
 
-func (d *DNSDISTUpdater) Delete(id string) error {
+func (d *DNSDISTUpdater) Delete(id string, views ...string) error {
 	wg := errgroup.Group{}
 
-	for server, client := range d.servers {
+	for _, server := range d.servers {
 		wg.Go(func() error {
-			exist, err := client.Rules().Exist(id)
-			if err != nil {
-				return UpdateError{
-					err:    fmt.Errorf("%s: unable to check existing rules: %w", server, err),
-					server: server,
-				}
-			}
-
-			if !exist {
-				return nil
-			}
-
-			err = d.do(
-				server,
+			return d.do(
+				server.name,
 				func() error {
-					return client.Rules().Remove(id)
+					return server.Delete(id, views...)
 				},
 			)
-
-			if err != nil {
-				return UpdateError{
-					err:    fmt.Errorf("%s: failed to delete record: %w", server, err),
-					server: server,
-				}
-			}
-
-			return nil
 		})
 	}
 
 	err := wg.Wait()
 	if err != nil {
-		if updateErr, ok := errors.AsType[UpdateError](err); ok {
+		if updateErr, ok := errors.AsType[update.UpdateError](err); ok {
 			events.Emit(&events.Event{
 				Type:      domainEvents.EventTypeDNSDISTSpoofDeleteFailed,
-				Payload:   domainEvents.DNSDistSpoofDeleteFailedEvent{Server: updateErr.server, ID: id},
+				Payload:   domainEvents.DNSDistSpoofDeleteFailedEvent{Server: updateErr.Server, ID: id},
 				Timestamp: time.Now(),
-				ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofDeleteFailed, updateErr.server),
+				ID:        events.ID(domainEvents.EventTypeDNSDISTSpoofDeleteFailed, updateErr.Server),
 			})
 
 			return updateErr
@@ -235,10 +187,10 @@ func (d *DNSDISTUpdater) Synchronize(ctx context.Context) {
 				bslog.Info("stopping dnsdist - server synchronization")
 
 				// close controll socket connections
-				for server, client := range d.servers {
-					if client != nil {
-						bslog.Debug("closing dnsdist - server connection", slog.String("server", server))
-						client.Close()
+				for _, server := range d.servers {
+					if server.client != nil {
+						bslog.Debug("closing dnsdist - server connection", slog.String("server", server.name))
+						server.client.Close()
 					}
 				}
 
@@ -263,21 +215,21 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 	wg := sync.WaitGroup{}
 	syncErrors := make(chan error, len(d.servers))
 
-	for server, client := range d.servers {
+	for _, srv := range d.servers {
 		wg.Add(1)
-		go func(server string) {
+		go func(server *server) {
 			defer wg.Done()
 
 			var rawRuleSet string
-			err := d.do(server, func() error {
+			err := d.do(server.name, func() error {
 				var err error
-				rawRuleSet, err = client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true) /*, TruncateRuleWidth: new(5)*/})
+				rawRuleSet, err = server.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true) /*, TruncateRuleWidth: new(5)*/})
 				return err
 			})
 
 			if err != nil {
 				bslog.Error("unable to fetch ruleset from dnsdist server", slog.String("reason", err.Error()))
-				syncErrors <- fmt.Errorf("synchronization of %s failed: %w", server, err)
+				syncErrors <- fmt.Errorf("synchronization of %s failed: %w", server.name, err)
 				return
 			}
 
@@ -293,20 +245,20 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 			hash := hex.EncodeToString(rawHash[:])
 
 			if hash != desiredHash {
-				err := d.reconcileServer(client, spoofUUIDs)
+				err := d.reconcileServer(server.client, spoofUUIDs)
 				if err != nil {
-					bslog.Error("failed to reconcile dnsdist server", slog.String("server_name", server), slog.String("reason", err.Error()))
+					bslog.Error("failed to reconcile dnsdist server", slog.String("server_name", server.name), slog.String("reason", err.Error()))
 					syncErrors <- err
 					events.Emit(&events.Event{
 						Type:      domainEvents.EventTypeDNSDISTServerOutOfSync,
 						Payload:   domainEvents.DNSDistServerOutOfSyncEvent{},
 						Timestamp: time.Now(),
-						ID:        events.ID(domainEvents.EventTypeDNSDISTServerOutOfSync, server),
+						ID:        events.ID(domainEvents.EventTypeDNSDISTServerOutOfSync, server.name),
 					})
 					return
 				}
 			}
-		}(server)
+		}(srv)
 	}
 
 	wg.Wait()

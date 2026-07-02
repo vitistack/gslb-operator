@@ -1,4 +1,4 @@
-package update
+package dnsdist
 
 import (
 	"github.com/prometheus/client_golang/prometheus"

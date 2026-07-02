@@ -39,7 +39,7 @@ type ServicesManager struct {
 	wg         *sync.WaitGroup // schedulers use this when scheduling services asynchronously
 
 	DNSCreate func(...update.Record) error
-	DNSDelete func(string) error
+	DNSDelete func(string, ...string) error
 
 	pool   *pool.WorkerPool
 	dryrun bool
