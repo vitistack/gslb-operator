@@ -28,7 +28,7 @@ func NewSpoofRepo(storage persistence.Store[model.GSLBServiceGroup]) *SpoofRepo 
 	}
 }
 
-func (r *SpoofRepo) Read(memberOf string) (spoofs.Spoof, error) {
+func (r *SpoofRepo) Read(memberOf string, views ...string) (spoofs.Spoof, error) {
 	group, err := r.store.Load(memberOf)
 	if err != nil {
 		return spoofs.Spoof{}, fmt.Errorf("failed to read from storage: %w", err)
@@ -42,7 +42,7 @@ func (r *SpoofRepo) Read(memberOf string) (spoofs.Spoof, error) {
 	return *spoof, nil
 }
 
-func (r *SpoofRepo) ReadAll() ([]spoofs.Spoof, error) {
+func (r *SpoofRepo) ReadAll(views ...string) ([]spoofs.Spoof, error) {
 	groups, err := r.store.LoadAll()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read from storage: %w", err)
@@ -60,7 +60,7 @@ func (r *SpoofRepo) ReadAll() ([]spoofs.Spoof, error) {
 }
 
 // hash of all the combined uuids from service groups
-func (r *SpoofRepo) Hash() (string, error) {
+func (r *SpoofRepo) Hash(views ...string) (string, error) {
 	groups, err := r.store.LoadAll()
 	if err != nil {
 		return "", fmt.Errorf("failed to read from storage: %w", err)
