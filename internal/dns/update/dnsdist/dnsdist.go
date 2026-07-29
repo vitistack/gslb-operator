@@ -1,19 +1,12 @@
 package dnsdist
 
 import (
-	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
-	"regexp"
-	"slices"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/config"
@@ -24,7 +17,6 @@ import (
 	repo "github.com/vitistack/gslb-operator/internal/repositories/spoof"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist"
-	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/rules"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/transport/tcp"
 	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
@@ -76,7 +68,7 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 			if !dnsviews.Valid(srv.View) {
 				return nil, fmt.Errorf("server %s: with unknown view: %s", srv.Name, srv.View)
 			}
-			selector = &dnsviews.SplitDNSSelector{View: srv.View}
+			selector = dnsviews.NewSplitDNSSelector(srv.View)
 		}
 
 		updater.servers[srv.Name] = &server{
@@ -175,17 +167,22 @@ func (d *DNSDISTUpdater) Delete(id string, views ...string) error {
 }
 
 func (d *DNSDISTUpdater) Synchronize(ctx context.Context) {
-	go func() {
-		err := d.synchronizeServers()
-		if err != nil {
-			bslog.Error("failed to synchronize servers", slog.String("reason", err.Error()))
-		}
+	err := d.synchronizeServers()
+	if err != nil {
+		bslog.Error("failed to synchronize dnsdist servers", slog.String("reason", err.Error()))
+		events.Emit(&events.Event{
+			Type:      domainEvents.EventTypeDNSDISTSyncFailed,
+			Payload:   domainEvents.DNSDistSyncFailedEvent{Reason: err.Error()},
+			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeDNSDISTSyncFailed, "???"),
+		})
+	}
 
+	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				bslog.Info("stopping dnsdist - server synchronization")
-
 				// close controll socket connections
 				for _, server := range d.servers {
 					if server.client != nil {
@@ -195,17 +192,98 @@ func (d *DNSDISTUpdater) Synchronize(ctx context.Context) {
 				}
 
 				return
+
 			case <-time.After(DEFAULT_SYNCHRONIZE_JOB):
 				bslog.Debug("starting dnsdist server synchronization")
-				err := d.synchronizeServers()
-				if err != nil {
-					bslog.Error("unable to synchronize dnsdist - servers", slog.String("reason", err.Error()))
+
+				if err := d.synchronizeServers(); err != nil {
+					bslog.Error("failed to synchronize dnsdist servers", slog.String("reason", err.Error()))
+					events.Emit(&events.Event{
+						Type:      domainEvents.EventTypeDNSDISTSyncFailed,
+						Payload:   domainEvents.DNSDistSyncFailedEvent{Reason: err.Error()},
+						Timestamp: time.Now(),
+						ID:        events.ID(domainEvents.EventTypeDNSDISTSyncFailed, "???"),
+					})
 				}
 			}
 		}
 	}()
+
+	/*
+		go func() {
+			err := d.synchronizeServers()
+			if err != nil {
+				bslog.Error("failed to synchronize servers", slog.String("reason", err.Error()))
+			}
+
+			for {
+				select {
+				case <-ctx.Done():
+					bslog.Info("stopping dnsdist - server synchronization")
+
+					// close controll socket connections
+					for _, server := range d.servers {
+						if server.client != nil {
+							bslog.Debug("closing dnsdist - server connection", slog.String("server", server.name))
+							server.client.Close()
+						}
+					}
+
+					return
+				case <-time.After(DEFAULT_SYNCHRONIZE_JOB):
+					bslog.Debug("starting dnsdist server synchronization")
+					err := d.synchronizeServers()
+					if err != nil {
+						bslog.Error("unable to synchronize dnsdist - servers", slog.String("reason", err.Error()))
+					}
+				}
+			}
+		}()
+	*/
 }
 
+func (d *DNSDISTUpdater) synchronizeServers() error {
+	wg := &errgroup.Group{}
+
+	hashesByView := make(map[string]string)
+	for _, server := range d.servers {
+		wg.Go(func() error {
+			hash, ok := hashesByView[""]
+			if !ok {
+				viewHash, err := d.spoofRepo.Hash(server.selector.View())
+				if err != nil {
+					return err
+				}
+				hashesByView[server.selector.View()] = viewHash
+				hash = viewHash
+			}
+
+			serverHash, err := server.Hash()
+			if err != nil {
+				return fmt.Errorf("failed to fetch %s hash: %w", server.name, err)
+			}
+
+			if hash != serverHash {
+				gslbSpoofs, err := d.spoofRepo.ReadAll(server.selector.View())
+				if err != nil {
+					return fmt.Errorf("failed to read spoofs: %w", err)
+				}
+
+				return server.Reconcile(gslbSpoofs)
+			}
+
+			return nil
+		})
+	}
+
+	if err := wg.Wait(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+/*
 func (d *DNSDISTUpdater) synchronizeServers() error {
 	desiredHash, err := d.spoofRepo.Hash()
 	if err != nil {
@@ -223,7 +301,7 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 			var rawRuleSet string
 			err := d.do(server.name, func() error {
 				var err error
-				rawRuleSet, err = server.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true) /*, TruncateRuleWidth: new(5)*/})
+				rawRuleSet, err = server.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
 				return err
 			})
 
@@ -346,3 +424,4 @@ func (d *DNSDISTUpdater) reconcileServer(client dnsdist.Client, configuredSpoofU
 
 	return nil
 }
+*/

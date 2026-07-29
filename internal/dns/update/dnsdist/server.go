@@ -1,12 +1,21 @@
 package dnsdist
 
 import (
+	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"regexp"
+	"slices"
+	"strings"
+	"time"
 
 	"github.com/vitistack/gslb-operator/internal/dns/update"
 	dnsviews "github.com/vitistack/gslb-operator/internal/dns/views"
+	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/rules"
+	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 )
 
@@ -105,4 +114,113 @@ func (s *server) Delete(id string, views ...string) error {
 	return nil
 }
 
-func (s *server) Reconcile()
+func (s *server) Hash() (string, error) {
+	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
+	if err != nil {
+		return "", fmt.Errorf("failed to list rules: %w", err)
+	}
+
+	spoofUUIDs, err := ParseRuleSet(rawRuleSet)
+	if err != nil {
+		return "", fmt.Errorf("%s could not parse rules: %w", s.name, err)
+	}
+
+	joinedUUIDs := strings.Join(spoofUUIDs, ",")
+	rawHash := sha256.Sum256([]byte(joinedUUIDs))
+	return hex.EncodeToString(rawHash[:]), nil
+}
+
+func (s *server) Reconcile(gslbSpoofs []spoofs.Spoof) error {
+	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
+	if err != nil {
+		events.Emit(&events.Event{
+			Type:      domainEvents.EventTypeDNSDISTServerOutOfSync,
+			Payload:   domainEvents.DNSDistServerOutOfSyncEvent{},
+			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeDNSDISTServerOutOfSync, s.name),
+		})
+		return fmt.Errorf("failed to list rules: %w", err)
+	}
+
+	spoofUUIDs, err := ParseRuleSet(rawRuleSet)
+	if err != nil {
+		events.Emit(&events.Event{
+			Type:      domainEvents.EventTypeDNSDISTServerOutOfSync,
+			Payload:   domainEvents.DNSDistServerOutOfSyncEvent{},
+			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeDNSDISTServerOutOfSync, s.name),
+		})
+		return fmt.Errorf("%s could not parse rules: %w", s.name, err)
+	}
+
+	for _, configuredSpoof := range spoofUUIDs {
+		err := s.client.Rules().Remove(configuredSpoof)
+		if err != nil {
+			events.Emit(&events.Event{
+				Type:      domainEvents.EventTypeDNSDISTServerOutOfSync,
+				Payload:   domainEvents.DNSDistServerOutOfSyncEvent{},
+				Timestamp: time.Now(),
+				ID:        events.ID(domainEvents.EventTypeDNSDISTServerOutOfSync, s.name),
+			})
+			return fmt.Errorf("%s failed to remove configured spoofs: %w", s.name, err)
+		}
+	}
+
+	for _, spoof := range gslbSpoofs { // add all spoofs that does not exist but should
+		err := s.client.Rules().Add(
+			rules.QNameRule(spoof.FQDN),
+			rules.SpoofAction(spoof.Address.Strings(), rules.SpoofActionOptions{TTL: new(30)}),
+			rules.GlobalRuleOptions{
+				Name: &spoof.Name,
+				UUID: &spoof.UUID,
+			},
+		)
+		if err != nil {
+			events.Emit(&events.Event{
+				Type:      domainEvents.EventTypeDNSDISTServerOutOfSync,
+				Payload:   domainEvents.DNSDistServerOutOfSyncEvent{},
+				Timestamp: time.Now(),
+				ID:        events.ID(domainEvents.EventTypeDNSDISTServerOutOfSync, s.name),
+			})
+			return fmt.Errorf("failed to add spoofs: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func ParseRuleSet(ruleSet string) ([]string, error) {
+	reader := strings.NewReader(ruleSet)
+	lines := bufio.NewScanner(reader)
+
+	pattern, err := regexp.Compile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|qname==[a-zA-Z0-9-_\.]+|spoof`)
+	if err != nil {
+		return nil, fmt.Errorf("unable to compile regex: %w", err)
+	}
+
+	spoofRules := make([]string, 0)
+	for lines.Scan() {
+		line := lines.Text()
+
+		matches := pattern.FindAllString(line, -1)
+
+		if len(matches) < 3 {
+			continue
+		}
+
+		rule := rules.RuleLine{
+			UUID:   matches[0],
+			Rule:   matches[1],
+			Action: matches[2],
+		}
+
+		if rule.Action != "spoof" && !strings.Contains(rule.Rule, "qname") {
+			continue
+		}
+
+		spoofRules = append(spoofRules, rule.UUID)
+	}
+	slices.Sort(spoofRules)
+
+	return spoofRules, nil
+}
