@@ -17,6 +17,7 @@ type GSLBConfig struct {
 	Address          ip.Address         `json:"address"`
 	Port             string             `json:"port"`
 	Datacenter       string             `json:"dc"`
+	Views            []string           `json:"views,omitempty"`
 	Interval         timesutil.Duration `json:"interval"`
 	Priority         int                `json:"priority"`
 	FailureThreshold int                `json:"threshold"`

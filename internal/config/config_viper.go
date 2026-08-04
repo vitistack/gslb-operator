@@ -28,6 +28,7 @@ func new() (*Config, error) {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return nil, fmt.Errorf("config file: %w", err)
 		}
+		return nil, fmt.Errorf("un-expected error while loading configuration: %w", err)
 	}
 
 	var featureFlags FeatureFlags
@@ -61,6 +62,7 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("split_dns.enabled", true)
 	v.SetDefault("split_dns.views", []string{"default"})
+	v.SetDefault("split_dns.defaultView", "default")
 
 	v.SetDefault("gslb.poll_interval", "1m")
 	v.SetDefault("gslb.dnsdist_servers_file", "./secrets/GSLB_DNSDIST_SERVERS")

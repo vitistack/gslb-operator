@@ -11,6 +11,7 @@ type Spoof struct {
 	Name    string     `json:"name"`
 	UUID    string     `json:"uuid"`
 	FQDN    string     `json:"fqdn"`
+	View    string     `json:"view"`
 	Address ip.Address `json:"address"`
 }
 
