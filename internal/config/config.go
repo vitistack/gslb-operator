@@ -172,11 +172,16 @@ func (a *api) Port() string {
 
 type splitDns struct {
 	Enabled bool     `mapstructure:"enabled"`
+	Default string   `mapstructure:"defaultView"`
 	Views   []string `mapstructure:"views"`
 }
 
 func (s *splitDns) Enable() bool {
 	return s.Enabled
+}
+
+func (s *splitDns) DefaultView() string {
+	return s.Default
 }
 
 func (s *splitDns) DNSViews() []string {

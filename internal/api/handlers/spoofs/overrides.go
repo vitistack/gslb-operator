@@ -46,13 +46,13 @@ func (s *SpoofsService) GetOverride(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = response.JSON(w, http.StatusOK, map[string]string{"ip": group.Active})
+	err = response.JSON(w, http.StatusOK, map[string]any{"override": group.Active})
 	if err != nil {
 		logger.Error("failed to create json response",
 			slog.String("reason", err.Error()),
 			slog.Group(
 				"override",
-				slog.String("ip", group.Active),
+				slog.Any("ip", group.Active),
 			))
 	}
 }

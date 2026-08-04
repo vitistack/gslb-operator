@@ -34,7 +34,7 @@ func (r *SpoofRepo) Read(memberOf string, views ...string) (spoofs.Spoof, error)
 		return spoofs.Spoof{}, fmt.Errorf("failed to read from storage: %w", err)
 	}
 
-	spoof := group.Spoof()
+	spoof := group.Spoof(views...)
 	if spoof == nil {
 		return spoofs.Spoof{}, fmt.Errorf("no active spoof for %s", memberOf)
 	}
@@ -50,9 +50,19 @@ func (r *SpoofRepo) ReadAll(views ...string) ([]spoofs.Spoof, error) {
 
 	result := make([]spoofs.Spoof, 0)
 	for _, group := range groups {
-		spoof := group.Spoof()
-		if spoof != nil && spoof.Address != nil {
-			result = append(result, *spoof)
+		var spoof *spoofs.Spoof
+		if len(views) == 0 {
+			spoof = group.Spoof()
+			if spoof != nil && spoof.Address != nil {
+				result = append(result, *spoof)
+			}
+		}
+
+		for _, view := range views {
+			spoof = group.Spoof(view)
+			if spoof != nil && spoof.Address != nil {
+				result = append(result, *spoof)
+			}
 		}
 	}
 
@@ -68,8 +78,17 @@ func (r *SpoofRepo) Hash(views ...string) (string, error) {
 
 	ids := make([]string, 0, len(groups))
 	for _, group := range groups {
-		ids = append(ids, group.UUID.String())
+		if len(views) == 0 {
+			ids = append(ids, group.UUID.String())
+		} else {
+			for _, view := range views {
+				if slices.Contains(views, view) {
+					ids = append(ids, group.UUID.String())
+				}
+			}
+		}
 	}
+
 	slices.Sort(ids)
 
 	joinedIDs := strings.Join(ids, ",")
