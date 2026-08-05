@@ -1,11 +1,13 @@
-package manager
+package group
 
 import (
 	"errors"
 	"log"
+	"net/netip"
 	"testing"
 	"time"
 
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/ip"
@@ -15,6 +17,8 @@ import (
 type Test struct {
 	Name string
 }
+
+var localhostAddr = netip.MustParseAddr("127.0.0.1")
 
 var activeConfig = model.GSLBConfig{
 	ServiceID:  "123",
@@ -47,26 +51,26 @@ func TestMain(m *testing.M) {
 	m.Run()
 }
 
-func TestServiceGroup_RegisterService(t *testing.T) {
-	group := NewEmptyServiceGroup("test")
-	group.OnPromotion = func(g *ServiceGroup) {
+func TestServiceGroup_RegisterMember(t *testing.T) {
+	group := NewServiceGroup("test")
+	group.onPromotion = func(g ServiceGroup, view string) {
 		log.Println("got promotion")
 		if g != nil {
 			t.Errorf("should not be getting promotion event in this")
 		}
 	}
-	if group.mode != ActiveActive {
+	if group.modeByView[config.SplitDNS().DefaultView()] != ActiveActive {
 		t.Error("group mode should be ActiveActive by default")
 	}
-	group.RegisterService(active)
+	group.RegisterMember(active)
 
-	if group.mode != ActiveActive {
+	if group.modeByView[config.SplitDNS().DefaultView()] != ActiveActive {
 		t.Error("group mode should be ActiveActive when only one service registered")
 	}
 
-	group.RegisterService(passive)
-	if group.mode != ActivePassive {
-		t.Errorf("Expected group mode: %v, but got: %v, after two services with different priorities registered", ActivePassive, group.mode)
+	group.RegisterMember(passive)
+	if group.modeByView[config.SplitDNS().DefaultView()] != ActivePassive {
+		t.Errorf("Expected group mode: %v, but got: %v, after two services with different priorities registered", ActivePassive, group.modeByView[config.SplitDNS().DefaultView()])
 	}
 	/*
 		if group.active != 0 {
@@ -76,10 +80,10 @@ func TestServiceGroup_RegisterService(t *testing.T) {
 }
 
 func TestServiceGroup_OnServiceHealthChange(t *testing.T) {
-	group := NewEmptyServiceGroup("test")
+	group := NewServiceGroup("test")
 
-	group.RegisterService(active)
-	group.OnPromotion = func(g *ServiceGroup) {
+	group.RegisterMember(active)
+	group.onPromotion = func(g ServiceGroup, view string) {
 		log.Println("got promotion event")
 		if g != nil {
 			t.Error("promotion event received when active service in ActiveActive is Healthy/UnHealthy")
@@ -95,9 +99,9 @@ func TestServiceGroup_OnServiceHealthChange(t *testing.T) {
 	passive.SetHealthChangeCallback(func(e *service.HealthChangeEvent) {
 		group.OnServiceHealthChange(e.Svc, e.Healthy)
 	})
-	group.RegisterService(passive)
+	group.RegisterMember(passive)
 
-	group.OnPromotion = func(g *ServiceGroup) {
+	group.onPromotion = func(g ServiceGroup, view string) {
 		log.Println("got promotion event")
 		if g != nil {
 			t.Error("got promotion event when active service in ActivePassive is Healthy")
@@ -105,7 +109,7 @@ func TestServiceGroup_OnServiceHealthChange(t *testing.T) {
 	}
 	makeServiceHealthy(active)
 
-	group.OnPromotion = func(g *ServiceGroup) {
+	group.onPromotion = func(g ServiceGroup, view string) {
 		log.Println("got promotion event")
 		if g != nil {
 			t.Error("got promotion event when passive service in ActivePassive is Healthy, when active is already Healthy")
@@ -113,31 +117,31 @@ func TestServiceGroup_OnServiceHealthChange(t *testing.T) {
 	}
 	makeServiceHealthy(passive)
 
-	group.OnPromotion = func(g *ServiceGroup) {
+	group.onPromotion = func(g ServiceGroup, view string) {
 		log.Println("got promotion event")
 		if g == nil {
 			t.Error("should get promotion event when active service is UnHealthy in ActivePassive")
 			return
 		}
-		if g.active != passive {
+		if g.GetActive() != passive {
 			t.Error("passive is not the new active service in promotion event")
 		}
-		if g.lastActive != active {
+		if g.GetLastActive() != active {
 			t.Error("active is not the old active service in promotion event")
 		}
 	}
 	makeServiceUnHealthy(active)
 
-	group.OnPromotion = func(g *ServiceGroup) {
+	group.onPromotion = func(g ServiceGroup, view string) {
 		log.Println("got promotion event")
 		if g == nil {
 			t.Error("should get promotion event when active service is Healthy again in ActivePassive")
 			return
 		}
-		if g.active != active {
+		if g.GetActive() != active {
 			t.Error("active is not the new active service in promotion event")
 		}
-		if g.lastActive != passive {
+		if g.GetLastActive() != passive {
 			t.Error("passive is not the old active service in promotion event")
 		}
 	}
@@ -181,9 +185,9 @@ func TestServiceGroup_memberExists(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sg := NewEmptyServiceGroup("test")
+			sg := NewServiceGroup("test")
 			if tt.want {
-				sg.RegisterService(tt.member)
+				sg.RegisterMember(tt.member)
 			}
 
 			got := sg.memberExists(tt.member)

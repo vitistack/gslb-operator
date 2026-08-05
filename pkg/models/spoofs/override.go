@@ -9,6 +9,7 @@ import (
 
 type Override struct {
 	MemberOf string     `json:"memberOf"`
+	View     string     `json:"view"`
 	Address  ip.Address `json:"address"`
 }
 
