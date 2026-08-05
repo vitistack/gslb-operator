@@ -6,5 +6,5 @@ type Record struct {
 	Name    string
 	Address ip.Address
 	UUID    string
-	View    string
+	Views   []string
 }

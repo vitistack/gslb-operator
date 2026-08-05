@@ -27,7 +27,7 @@ type server struct {
 
 func (s *server) Create(records ...update.Record) error {
 	for _, rec := range records {
-		if !s.selector.Select(rec.View) {
+		if !s.selector.Select(rec.Views...) {
 			return nil
 		}
 
@@ -76,18 +76,7 @@ func (s *server) Create(records ...update.Record) error {
 }
 
 func (s *server) Delete(id string, views ...string) error {
-	selectView := false
-	if len(views) == 0 {
-		selectView = true
-	}
-
-	for _, view := range views {
-		if s.selector.Select(view) {
-			selectView = true
-		}
-	}
-
-	if !selectView {
+	if !s.selector.Select(views...) {
 		return nil
 	}
 

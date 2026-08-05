@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/checks"
 	"github.com/vitistack/gslb-operator/internal/config"
+	dnsviews "github.com/vitistack/gslb-operator/internal/dns/views"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/utils/ip"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
@@ -60,7 +60,7 @@ func NewServiceFromGSLBConfig(cfg model.GSLBConfig, opts ...ServiceOption) (*Ser
 	validViews := make([]string, 0, len(cfg.Views))
 	if config.SplitDNS().Enable() {
 		for _, view := range cfg.Views {
-			if slices.Contains(config.SplitDNS().DNSViews(), view) {
+			if dnsviews.Valid(view) {
 				validViews = append(validViews, view)
 			}
 		}
