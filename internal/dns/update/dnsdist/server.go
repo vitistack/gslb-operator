@@ -16,6 +16,7 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/rules"
 	"github.com/vitistack/gslb-operator/pkg/events"
+	"github.com/vitistack/gslb-operator/pkg/iter"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 )
 
@@ -119,7 +120,7 @@ func (s *server) Hash() (string, error) {
 	return hex.EncodeToString(rawHash[:]), nil
 }
 
-func (s *server) Reconcile(gslbSpoofs []spoofs.Spoof) error {
+func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func() error) error {
 	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
 	if err != nil {
 		events.Emit(&events.Event{
@@ -155,8 +156,8 @@ func (s *server) Reconcile(gslbSpoofs []spoofs.Spoof) error {
 		}
 	}
 
-	for _, spoof := range gslbSpoofs { // add all spoofs that does not exist but should
-		err := s.client.Rules().Add(
+	for spoof := range gslbSpoofs.Filter(func(spoof spoofs.Spoof) bool { return spoof.View == s.selector.View() }) { // add all spoofs that does not exist but should
+		err = s.client.Rules().Add(
 			rules.QNameRule(spoof.FQDN),
 			rules.SpoofAction(spoof.Address.Strings(), rules.SpoofActionOptions{TTL: new(30)}),
 			rules.GlobalRuleOptions{
@@ -173,6 +174,10 @@ func (s *server) Reconcile(gslbSpoofs []spoofs.Spoof) error {
 			})
 			return fmt.Errorf("failed to add spoofs: %w", err)
 		}
+	}
+
+	if err := finish(); err != nil {
+		return fmt.Errorf("failed to fetch spoof: %w", err)
 	}
 
 	return nil

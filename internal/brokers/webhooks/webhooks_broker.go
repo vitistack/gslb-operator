@@ -44,22 +44,20 @@ func New(ctx context.Context, store persistence.Store[model.WebHook]) *WebhooksB
 			rabbitmq.WithRetryConnectionBackOff[model.WebHook](time.Second*10),
 		),
 	}
-
-	webhooks, err := broker.repo.ReadAll()
-	if err != nil {
-		bslog.Error("failed read webhooks", slog.String("reason", err.Error()))
-		return broker
-	}
-
-	for _, hook := range webhooks {
-		err := Dispatch(hook)
-		if err != nil {
+	webhooks, finish := broker.repo.ReadAll()
+	for webhook := range webhooks.Filter(func(wh model.WebHook) bool { return wh.ID != "" }) {
+		if err := Dispatch(webhook); err != nil {
 			bslog.Error(
 				"failed to dispatch stored webhook",
-				slog.String("webhook_id", hook.ID),
+				slog.String("webhook_id", webhook.ID),
 				slog.String("reason", err.Error()),
 			)
 		}
+	}
+
+	if err := finish(); err != nil {
+		bslog.Error("failed read webhooks", slog.String("reason", err.Error()))
+		return broker
 	}
 
 	return broker

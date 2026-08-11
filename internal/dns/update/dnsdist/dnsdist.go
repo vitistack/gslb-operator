@@ -233,12 +233,7 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 			}
 
 			if hash != serverHash {
-				gslbSpoofs, err := d.spoofRepo.ReadAll(server.selector.View())
-				if err != nil {
-					return fmt.Errorf("failed to read spoofs: %w", err)
-				}
-
-				err = d.do(server.name, func() error { return server.Reconcile(gslbSpoofs) })
+				err = d.do(server.name, func() error { return server.Reconcile(d.spoofRepo.ReadAll()) })
 				if err != nil {
 					return fmt.Errorf("failed to reconcile %s: %w", server.name, err)
 				}

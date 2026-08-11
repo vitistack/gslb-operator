@@ -40,7 +40,6 @@ func (i Iterator[T]) Collect() []T {
 	return collection
 }
 
-
 func (i Iterator[T]) Filter(filter func(T) bool) Iterator[T] {
 	copy := i
 	i = func(yield func(T) bool) {
@@ -78,14 +77,14 @@ func (i Iterator[T]) Take(n int) Iterator[T] {
 	return func(yield func(T) bool) {
 		counter := 0
 		for element := range i {
-			if counter >= n {
+			if counter > n {
 				return
 			}
-			
+
 			if !yield(element) {
 				return
 			}
-			
+
 			counter++
 		}
 	}
@@ -95,15 +94,28 @@ func (i Iterator[T]) Skip(n int) Iterator[T] {
 	return func(yield func(T) bool) {
 		counter := 0
 		for element := range i {
-			if counter <= n {
+			if counter < n {
+				counter++
 				continue
 			}
-			
+
 			if !yield(element) {
 				return
 			}
-			
+
 			counter++
+		}
+	}
+}
+
+func (i Iterator[T]) Tap(fn func(T)) Iterator[T] {
+	return func(yield func(T) bool) {
+		for element := range i {
+			fn(element)
+
+			if !yield(element) {
+				return
+			}
 		}
 	}
 }
