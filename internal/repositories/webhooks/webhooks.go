@@ -2,6 +2,7 @@ package webhooks
 
 import (
 	"github.com/vitistack/gslb-operator/internal/model"
+	"github.com/vitistack/gslb-operator/pkg/iter"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
 )
 
@@ -23,8 +24,9 @@ func (wr *WebHooksRepo) Read(id string) (model.WebHook, error) {
 	return wr.store.Load(id)
 }
 
-func (wr *WebHooksRepo) ReadAll() ([]model.WebHook, error) {
-	return wr.store.LoadAll()
+func (wr *WebHooksRepo) ReadAll() (iter.Iterator[model.WebHook], func() error) {
+	iterator, finish := wr.store.LoadAll()
+	return iter.Iterator[model.WebHook](iterator), finish
 }
 
 func (wr *WebHooksRepo) Update(id string, new model.WebHook) error {

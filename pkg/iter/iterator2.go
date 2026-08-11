@@ -14,7 +14,7 @@ func FromMap[K comparable, V any](mp map[K]V) Iterator2[K, V] {
 	}
 }
 
-func FromSeq2[K comparable, V any](i iter.Seq2[K, V]) Iterator2[K, V] {
+func FromSeq2[K any, V any](i iter.Seq2[K, V]) Iterator2[K, V] {
 	return Iterator2[K, V](i)
 }
 
