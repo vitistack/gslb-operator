@@ -57,7 +57,12 @@ func main() {
 		bslog.Fatal("failed to establish valkey connection", slog.String("reason", err.Error()))
 	}
 
-	servicesStore, err := valkeyStore.NewStore[model.GSLBServiceGroup](valkeyClient, "gslb:service_groups", time.Second*30)
+	servicesStore, err := valkeyStore.NewStore[model.GSLBServiceGroup](
+		valkeyClient,
+		"gslb:service_groups",
+		time.Second*30,
+		//valkeyStore.WithMigrations[model.GSLBServiceGroup](servicegroup.MigrateActiveToMap(config.SplitDNS().DefaultView())),
+	)
 	if err != nil {
 		bslog.Fatal("failed to create valkey store for gslb service groups", slog.String("reason", err.Error()))
 	}
