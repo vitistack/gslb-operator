@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"iter"
 	"sync"
 )
 
@@ -34,16 +35,19 @@ func (s *Store[T]) Load(key string) (T, error) {
 	return val, nil
 }
 
-func (s *Store[T]) LoadAll() ([]T, error) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+func (s *Store[T]) LoadAll() (iter.Seq[T], func() error) {
+	seq := func(yield func(T) bool) {
+		s.lock.Lock()
+		defer s.lock.Unlock()
 
-	result := make([]T, 0, len(s.data))
-	for _, val := range s.data {
-		result = append(result, val)
+		for _, val := range s.data {
+			if !yield(val) {
+				return
+			}
+		}
 	}
 
-	return result, nil
+	return seq, func() error { return nil }
 }
 
 func (s *Store[T]) Delete(key string) error {

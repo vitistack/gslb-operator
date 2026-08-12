@@ -23,7 +23,7 @@ func NewPaginationParams() *PaginationParams {
 	}
 }
 
-func NewPaginationResult[T any](params *PaginationParams, totalItems int, items []T) Pagination[T] {
+func NewPaginationResult[T any](params *PaginationParams, totalItems int, pageItems []T) Pagination[T] {
 if params.PageSize < 1 {
         params.PageSize = 50
     }
@@ -35,10 +35,10 @@ if params.PageSize < 1 {
 
     page := Pagination[T]{
         TotalItems: totalItems,
-        NumItems:   len(items),
+        NumItems:   len(pageItems),
         Page:       params.Page,
         NumPages:   numPages,
-        Items:      items,
+        Items:      pageItems,
     }
 
     if params.Page < numPages {
