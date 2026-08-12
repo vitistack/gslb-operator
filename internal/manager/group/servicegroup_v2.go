@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"crypto/md5"
 	"errors"
-	"iter"
 	"log/slog"
 	"slices"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/utils/ip"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/events"
+	"github.com/vitistack/gslb-operator/pkg/iter"
 )
 
 var (
@@ -50,7 +50,7 @@ type ServiceGroup interface {
 	// if no view is provided the default view is used
 	GetLastActive(...string) *service.Service
 
-	Members(view string) iter.Seq[*service.Service]
+	Members(view string) iter.Iterator[*service.Service]
 
 	// Refresh re-sorts membership and recomputes mode/active for the given views;
 	// call after an in-place config change (e.g. priority) that doesn't add or remove a member
@@ -109,6 +109,7 @@ func (sg *ServiceGroupV2) Group() *model.GSLBServiceGroup {
 	group := &model.GSLBServiceGroup{
 		Active:  make(map[string]string),
 		Members: make(map[string]model.GSLBService),
+		Views:   make([]string, 0),
 		UUID:    sg.uuid,
 	}
 
@@ -127,6 +128,11 @@ func (sg *ServiceGroupV2) Group() *model.GSLBServiceGroup {
 
 	for _, member := range sg.members {
 		group.Members[member.GetID()] = *member.GSLBService()
+		for _, view := range member.Views {
+			if !slices.Contains(group.Views, view) {
+				group.Views = append(group.Views, view)
+			}
+		}
 	}
 
 	return group
@@ -192,7 +198,7 @@ func (sg *ServiceGroupV2) onServiceHealthChangeForView(view string, changedServi
 
 func (sg *ServiceGroupV2) GetActive(views ...string) *service.Service {
 	view := config.SplitDNS().DefaultView()
-	if len(views) >= 0 {
+	if len(views) > 0 {
 		view = views[0]
 	}
 
@@ -205,7 +211,7 @@ func (sg *ServiceGroupV2) GetActive(views ...string) *service.Service {
 
 func (sg *ServiceGroupV2) GetLastActive(views ...string) *service.Service {
 	view := config.SplitDNS().DefaultView()
-	if len(views) >= 0 {
+	if len(views) > 0 {
 		view = views[0]
 	}
 
@@ -216,18 +222,8 @@ func (sg *ServiceGroupV2) GetLastActive(views ...string) *service.Service {
 	return nil
 }
 
-func (sg *ServiceGroupV2) Members(view string) iter.Seq[*service.Service] {
-	return func(yield func(*service.Service) bool) {
-		for _, member := range sg.members {
-			if view != "" && !slices.Contains(member.Views, view) {
-				continue
-			}
-
-			if !yield(member) {
-				return
-			}
-		}
-	}
+func (sg *ServiceGroupV2) Members(view string) iter.Iterator[*service.Service] {
+	return iter.FromSlice(sg.members)
 }
 
 func (sg *ServiceGroupV2) Refresh(views ...string) {
@@ -392,7 +388,7 @@ func sortmembersFunc(a, b *service.Service) int {
 	}
 }
 
-func firstHealthyOf(members iter.Seq[*service.Service]) *service.Service {
+func firstHealthyOf(members iter.Iterator[*service.Service]) *service.Service {
 	for member := range members {
 		if member.IsHealthy() {
 			return member

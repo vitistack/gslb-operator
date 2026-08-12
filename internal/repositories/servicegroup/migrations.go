@@ -9,7 +9,7 @@ func MigrateActiveToMap(defaultView string) persistence.MigrateFunc {
 			old["active"] = map[string]string{defaultView: ""}
 			return old, nil
 		}
-
+		
 		old["active"] = map[string]any{
 			defaultView: active,
 		}

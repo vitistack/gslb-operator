@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"codeberg.org/miekg/dns"
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns/update"
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/model"
@@ -153,6 +154,7 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 	svcConfig := model.GSLBConfig{
 		MemberOf:         txt.Hdr.Name,
 		FailureThreshold: service.DEFAULT_FAILURE_THRESHOLD,
+		Views:            []string{config.SplitDNS().DefaultView()},
 	}
 
 	err := json.Unmarshal([]byte(data), &svcConfig)
