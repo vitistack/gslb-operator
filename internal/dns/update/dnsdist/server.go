@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/dns/update"
 	dnsviews "github.com/vitistack/gslb-operator/internal/dns/views"
 	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/rules"
 	"github.com/vitistack/gslb-operator/pkg/events"
@@ -71,6 +73,12 @@ func (s *server) Create(records ...update.Record) error {
 				Spoof:  spoofs.Spoof{FQDN: rec.Name, Address: rec.Address, UUID: rec.UUID},
 			}
 		}
+		bslog.Debug(
+			"successfully created dnsdist spoof record",
+			slog.Any("record", rec),
+			slog.String("server", s.name),
+			slog.String("view", s.selector.View()),
+		)
 	}
 
 	return nil
@@ -100,6 +108,12 @@ func (s *server) Delete(id string, views ...string) error {
 			Server: s.name,
 		}
 	}
+	bslog.Debug(
+		"successfully deleted dnsdist spoof record",
+		slog.String("recordId", id),
+		slog.String("server", s.name),
+		slog.String("view", s.selector.View()),
+	)
 
 	return nil
 }

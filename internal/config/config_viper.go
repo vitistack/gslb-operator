@@ -20,8 +20,10 @@ func new() (*Config, error) {
 	v := viper.New()
 	setDefaults(v)
 
+	cfgPath := os.Getenv("GSLBCONFIG")
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
+	v.AddConfigPath(cfgPath)
 	v.AddConfigPath(".")
 	v.AddConfigPath("/app")
 	if err := v.ReadInConfig(); err != nil {

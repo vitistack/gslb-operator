@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -296,6 +297,7 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 	oldMemberOf, newMemberOf := old.MemberOf, new.MemberOf
 
 	lastConfig := old.GSLBConfig()
+	views := old.Views
 	old.Assign(new) // assigning changed config variables to the registered service
 	sm.mutex.Unlock()
 
@@ -306,7 +308,10 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 		oldGroup, ok := sm.serviceGroups[oldMemberOf]
 		sm.mutex.RUnlock()
 		if ok {
-			oldGroup.Refresh(old.Views...) // notify potential changes to group
+			views = append(views, old.Views...)
+			slices.Sort(views)
+			// update all views that may have had an effect
+			oldGroup.Refresh(slices.Compact(views)...)
 		} else { // this will probably never run, but you never know in concurrency!
 			sm.deleteGroup(oldMemberOf)
 		}
@@ -450,11 +455,12 @@ func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
 		return
 	}
 
-	active := group.GetActive()
+	active := group.GetActive(view)
 	if active == nil {
 		// all services for the group is unhealthy
 		bslog.Warn("gslb service group is down",
 			slog.String("service", group.Name()),
+			slog.String("view", view),
 			slog.String("status", "down"),
 			slog.String("reason", "all members are considered down"),
 		)
@@ -476,8 +482,7 @@ func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
 			Address: active.GetAddress(),
 			Views:   active.Views,
 			UUID:    string(group.ID()),
-		},
-	); err != nil {
+		}); err != nil {
 		bslog.Error("failed to reconcile gslb service-group",
 			slog.String("reason", fmt.Errorf("failed to create DNS record: %w", err).Error()),
 			slog.Any("activeService", active),
@@ -492,13 +497,15 @@ func (sm *ServicesManager) reconcileHealthCheckIntervals(group group.ServiceGrou
 	active := group.GetActive(view)
 	baseInterval := active.GetBaseInterval()
 
-	bslog.Info("promoting service",
-		slog.Any("newActive", active),
-		slog.Group("intervalChange",
-			slog.String("from", active.ScheduledInterval.String()),
-			slog.String("to", baseInterval.String()),
-		))
-	sm.moveServiceToInterval(active, baseInterval)
+	if active.ScheduledInterval > baseInterval {
+		bslog.Info("update gslb-service member healthcheck interval",
+			slog.Any("member", active),
+			slog.Group("intervalChange",
+				slog.String("from", active.ScheduledInterval.String()),
+				slog.String("to", baseInterval.String()),
+			))
+		sm.moveServiceToInterval(active, baseInterval)
+	}
 
 	for member := range group.Members(view) {
 		if member != active && member.ScheduledInterval == baseInterval {
@@ -512,7 +519,7 @@ func (sm *ServicesManager) reconcileHealthCheckIntervals(group group.ServiceGrou
 				demotedInterval = active.GetDefaultInterval()
 			}
 
-			bslog.Info("demoting service-member to new interval",
+			bslog.Info("update service healthcheck interval",
 				slog.Any("member", member),
 				slog.Group("intervalChange",
 					slog.String("from", member.ScheduledInterval.String()),
@@ -762,7 +769,7 @@ func (sm *ServicesManager) RemoveOverride(memberOf string, views ...string) erro
 	}
 
 	deleteViews := make([]string, 0, len(overridenViews))
-	for view  := range overridenViews {
+	for view := range overridenViews {
 		group.ClearOverride(view)
 		deleteViews = append(deleteViews, view)
 	}
