@@ -55,6 +55,18 @@ func new() (*Config, error) {
 	return &cfg, nil
 }
 
+func defaultConfig() *Config {
+	v := viper.New()
+	setDefaults(v)
+
+	cfg := Config{}
+	if err := v.Unmarshal(&cfg); err != nil {
+		return &cfg
+	}
+
+	return &cfg
+}
+
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.env", "prod")
 	v.SetDefault("server.lua_sandbox", "sandbox.lua")
