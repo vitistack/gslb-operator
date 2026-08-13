@@ -15,12 +15,4 @@ var (
 		Name: "service_groups_total",
 		Help: "Number of service groups",
 	})
-
-	serviceGroupMembers = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "service_group_members",
-			Help: "Number of members in each service group",
-		},
-		[]string{"memberOf"},
-	)
 )

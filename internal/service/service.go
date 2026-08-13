@@ -291,6 +291,7 @@ func (s *Service) ConfigChanged(other model.GSLBConfig) bool {
 func (s *Service) Assign(new *Service) {
 	s.Fqdn = new.Fqdn
 	s.Port = new.Port
+	s.Views = new.Views
 	s.checker = new.checker
 	s.MemberOf = new.MemberOf
 	s.priority = new.priority

@@ -223,7 +223,7 @@ func (sg *ServiceGroupV2) GetLastActive(views ...string) *service.Service {
 }
 
 func (sg *ServiceGroupV2) Members(view string) iter.Iterator[*service.Service] {
-	return iter.FromSlice(sg.members)
+	return iter.FromSlice(sg.members).Filter(func(s *service.Service) bool { return slices.Contains(s.Views, view) })
 }
 
 func (sg *ServiceGroupV2) Refresh(views ...string) {
@@ -239,9 +239,8 @@ func (sg *ServiceGroupV2) RegisterMember(newMember *service.Service) {
 	}
 
 	sg.members = append(sg.members, newMember)
-	slices.SortFunc(sg.members, sortmembersFunc)
-
 	sg.Refresh(newMember.Views...)
+	serviceGroupMembers.WithLabelValues(sg.name).Inc()
 }
 
 func (sg *ServiceGroupV2) RemoveMember(id string) bool {
@@ -264,8 +263,9 @@ func (sg *ServiceGroupV2) RemoveMember(id string) bool {
 		Type:      domainEvents.EventTypeGSLBServiceMemberRemove,
 		Payload:   domainEvents.GSLBServiceMemberRemoveEvent{Service: sg.name, Removed: *removed.GSLBService()},
 		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, removed.MemberOf),
+		ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, sg.name),
 	})
+	serviceGroupMembers.WithLabelValues(sg.name).Dec()
 
 	return len(sg.members) == 0
 }
@@ -275,8 +275,6 @@ func (sg *ServiceGroupV2) updateView(view string) {
 		delete(sg.activeByView, view)
 		return
 	}
-
-	sg.setGroupModeForView(view)
 
 	firstHealthy := firstHealthyOf(sg.Members(view))
 	if firstHealthy != sg.activeByView[view] {
