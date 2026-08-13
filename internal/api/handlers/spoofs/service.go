@@ -10,7 +10,7 @@ import (
 
 type OverrideApplier interface {
 	CreateOverride(spoofs.Override) error
-	RemoveOverride(string) error
+	RemoveOverride(string, ...string) error
 }
 
 type SpoofsService struct {

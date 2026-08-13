@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns/update"
+	"github.com/vitistack/gslb-operator/internal/manager/group"
 	"github.com/vitistack/gslb-operator/internal/manager/healthcheck"
 	"github.com/vitistack/gslb-operator/internal/manager/scheduler"
 	"github.com/vitistack/gslb-operator/internal/model"
@@ -28,7 +31,7 @@ type ServicesManager struct {
 	// servicesHealthCheck maps check intervals to services that should be checked at that interval.
 	scheduledServices  ScheduledServices                           // services that are scheduled on an interval
 	schedulers         map[timesutil.Duration]*scheduler.Scheduler // schedulers for health-checks
-	serviceGroups      map[string]*ServiceGroup
+	serviceGroups      group.ServiceGroups
 	healthChangeEvents chan *service.HealthChangeEvent
 
 	svcGroupRepo *servicegroup.ServiceGroupRepo
@@ -39,7 +42,7 @@ type ServicesManager struct {
 	wg         *sync.WaitGroup // schedulers use this when scheduling services asynchronously
 
 	DNSCreate func(...update.Record) error
-	DNSDelete func(string) error
+	DNSDelete func(string, ...string) error
 
 	pool   *pool.WorkerPool
 	dryrun bool
@@ -74,7 +77,7 @@ func NewManager(opts ...serviceManagerOption) *ServicesManager {
 	mgr := &ServicesManager{
 		scheduledServices:  make(ScheduledServices),
 		schedulers:         make(map[timesutil.Duration]*scheduler.Scheduler),
-		serviceGroups:      make(map[string]*ServiceGroup),
+		serviceGroups:      make(group.ServiceGroups),
 		healthChangeEvents: make(chan *service.HealthChangeEvent, cfg.MinRunningWorkers),
 		svcGroupRepo:       cfg.repo,
 		mutex:              sync.RWMutex{},
@@ -122,9 +125,9 @@ func (sm *ServicesManager) OnShutdown() error {
 
 	updateErrors := make([]error, 0, len(sm.serviceGroups))
 	for _, group := range sm.serviceGroups {
-		updateErr := sm.svcGroupRepo.Update(group.Name, group.Group())
+		updateErr := sm.svcGroupRepo.Update(group.Name(), group.Group())
 		if updateErr != nil {
-			updateErrors = append(updateErrors, fmt.Errorf("failed to update service group: %s: %w", group.Name, updateErr))
+			updateErrors = append(updateErrors, fmt.Errorf("failed to update service group: %s: %w", group.Name(), updateErr))
 		}
 	}
 
@@ -164,7 +167,7 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	svcGroup.Members[serviceCfg.ServiceID] = *newService.GSLBService()
 
 	// create new service group if needed, and register service in group
-	sm.newServiceGroup(newService.MemberOf).RegisterService(newService)
+	sm.newServiceGroup(newService.MemberOf).RegisterMember(newService)
 
 	// create/update service group
 	err = sm.svcGroupRepo.Create(serviceCfg.MemberOf, &svcGroup)
@@ -238,7 +241,7 @@ func (sm *ServicesManager) RemoveService(id string) error {
 	group := sm.serviceGroups[svc.MemberOf]
 	sm.mutex.RUnlock()
 
-	empty := group.RemoveService(svc.GetID()) // registered in group
+	empty := group.RemoveMember(svc.GetID()) // registered in group
 	if empty {
 		sm.deleteGroup(svc.MemberOf)
 
@@ -294,6 +297,7 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 	oldMemberOf, newMemberOf := old.MemberOf, new.MemberOf
 
 	lastConfig := old.GSLBConfig()
+	views := old.Views
 	old.Assign(new) // assigning changed config variables to the registered service
 	sm.mutex.Unlock()
 
@@ -304,7 +308,10 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 		oldGroup, ok := sm.serviceGroups[oldMemberOf]
 		sm.mutex.RUnlock()
 		if ok {
-			oldGroup.Update() // notify potential changes to group
+			views = append(views, old.Views...)
+			slices.Sort(views)
+			// update all views that may have had an effect
+			oldGroup.Refresh(slices.Compact(views)...)
 		} else { // this will probably never run, but you never know in concurrency!
 			sm.deleteGroup(oldMemberOf)
 		}
@@ -339,7 +346,7 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 		Type: domainEvents.EventTypeGSLBConfigUpdate,
 		Payload: domainEvents.GSLBConfigUpdateEvent{
 			LastConfig:    lastConfig,
-			CurrentConfig: new.GSLBConfig(),
+			CurrentConfig: cfg,
 		},
 		Timestamp: time.Now(),
 		ID:        events.ID(domainEvents.EventTypeGSLBConfigUpdate, new.GetID()),
@@ -353,7 +360,7 @@ func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc 
 	sm.mutex.Unlock()
 
 	// Register in new group and persist its state
-	newGroup.RegisterService(svc)
+	newGroup.RegisterMember(svc)
 	if err := sm.svcGroupRepo.Create(newMemberOf, newGroup.Group()); err != nil {
 		bslog.Error(
 			"failed to persist new service group membership",
@@ -383,7 +390,7 @@ func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc 
 		return
 	}
 
-	empty := oldGroup.RemoveService(svc.GetID())
+	empty := oldGroup.RemoveMember(svc.GetID())
 	if empty {
 		sm.deleteGroup(oldMemberOf)
 	} else {
@@ -422,8 +429,8 @@ func (sm *ServicesManager) handleServiceHealthChange(ctx context.Context) {
 
 // reconciles the current state of a group to reflect internal state of the manager
 // and external state
-func (sm *ServicesManager) reconcile(group *ServiceGroup) {
-	err := sm.svcGroupRepo.Update(group.Name, group.Group())
+func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
+	err := sm.svcGroupRepo.Update(group.Name(), group.Group())
 	if err != nil {
 		bslog.Error("failed to reconcile service-group",
 			slog.String("reason", err.Error()),
@@ -433,7 +440,14 @@ func (sm *ServicesManager) reconcile(group *ServiceGroup) {
 	}
 
 	// remove all DNS reference for the group
-	err = sm.DNSDelete(group.uuid.String())
+	/*
+	* conscious decision to leave out view here:
+	* because if the record is not created later then it should have not existed in the first place
+	* e.g. we clean it up here. (late non the less)
+	*
+	* or if all the sites are down, then it should be down from ALL views
+	 */
+	err = sm.DNSDelete(group.ID())
 	if err != nil {
 		bslog.Error("failed to reconcile gslb service-group",
 			slog.String("reason", fmt.Errorf("failed to delete DNS records: %w", err).Error()),
@@ -441,11 +455,12 @@ func (sm *ServicesManager) reconcile(group *ServiceGroup) {
 		return
 	}
 
-	active := group.GetActive()
+	active := group.GetActive(view)
 	if active == nil {
 		// all services for the group is unhealthy
 		bslog.Warn("gslb service group is down",
-			slog.String("service", group.Name),
+			slog.String("service", group.Name()),
+			slog.String("view", view),
 			slog.String("status", "down"),
 			slog.String("reason", "all members are considered down"),
 		)
@@ -453,10 +468,10 @@ func (sm *ServicesManager) reconcile(group *ServiceGroup) {
 		events.Emit(&events.Event{
 			Type: domainEvents.EventTypeGSLBServiceDown,
 			Payload: domainEvents.GSLBServiceDownEvent{
-				MemberOf: group.Name,
+				MemberOf: group.Name(),
 			},
 			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBServiceDown, group.Name),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceDown, group.Name()),
 		})
 		return
 	}
@@ -465,9 +480,9 @@ func (sm *ServicesManager) reconcile(group *ServiceGroup) {
 		update.Record{
 			Name:    active.MemberOf,
 			Address: active.GetAddress(),
-			UUID:    string(group.uuid.String()),
-		},
-	); err != nil {
+			Views:   active.Views,
+			UUID:    string(group.ID()),
+		}); err != nil {
 		bslog.Error("failed to reconcile gslb service-group",
 			slog.String("reason", fmt.Errorf("failed to create DNS record: %w", err).Error()),
 			slog.Any("activeService", active),
@@ -475,22 +490,24 @@ func (sm *ServicesManager) reconcile(group *ServiceGroup) {
 		return
 	}
 
-	sm.reconcileHealthCheckIntervals(group)
+	sm.reconcileHealthCheckIntervals(group, view)
 }
 
-func (sm *ServicesManager) reconcileHealthCheckIntervals(group *ServiceGroup) {
-	active := group.active
+func (sm *ServicesManager) reconcileHealthCheckIntervals(group group.ServiceGroup, view string) {
+	active := group.GetActive(view)
 	baseInterval := active.GetBaseInterval()
 
-	bslog.Info("promoting service",
-		slog.Any("newActive", active),
-		slog.Group("intervalChange",
-			slog.String("from", active.ScheduledInterval.String()),
-			slog.String("to", baseInterval.String()),
-		))
-	sm.moveServiceToInterval(active, baseInterval)
+	if active.ScheduledInterval > baseInterval {
+		bslog.Info("update gslb-service member healthcheck interval",
+			slog.Any("member", active),
+			slog.Group("intervalChange",
+				slog.String("from", active.ScheduledInterval.String()),
+				slog.String("to", baseInterval.String()),
+			))
+		sm.moveServiceToInterval(active, baseInterval)
+	}
 
-	for _, member := range group.Members {
+	for member := range group.Members(view) {
 		if member != active && member.ScheduledInterval == baseInterval {
 			demotedInterval := member.GetDefaultInterval()
 
@@ -499,10 +516,10 @@ func (sm *ServicesManager) reconcileHealthCheckIntervals(group *ServiceGroup) {
 				// so by setting its scheduled interval
 				// to the currently active service's default interval
 				// we achieve an interval "swap"
-				demotedInterval = group.active.GetDefaultInterval()
+				demotedInterval = active.GetDefaultInterval()
 			}
 
-			bslog.Info("demoting service-member to new interval",
+			bslog.Info("update service healthcheck interval",
 				slog.Any("member", member),
 				slog.Group("intervalChange",
 					slog.String("from", member.ScheduledInterval.String()),
@@ -513,27 +530,27 @@ func (sm *ServicesManager) reconcileHealthCheckIntervals(group *ServiceGroup) {
 		}
 	}
 
-	if group.lastActive == nil {
+	if group.GetLastActive(view) == nil {
 		events.Emit(&events.Event{
 			Type:      domainEvents.EventTypeGSLBServiceUp,
 			Payload:   domainEvents.GSLBServiceUpEvent{NewActive: *active.GSLBService()},
 			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBServiceUp, group.Name),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceUp, group.Name()),
 		})
 		return
 	}
 }
 
-func (sm *ServicesManager) newServiceGroup(memberOf string) *ServiceGroup {
+func (sm *ServicesManager) newServiceGroup(memberOf string) group.ServiceGroup {
 	serviceGroup, ok := sm.serviceGroups[memberOf]
 	if ok {
 		return serviceGroup
 	}
-	newGroup := NewEmptyServiceGroup(memberOf)
+	newGroup := group.NewServiceGroup(memberOf)
 	newGroup.SetOnPromotion(
-		func(group *ServiceGroup) {
+		func(group group.ServiceGroup, view string) {
 			sm.wg.Go(func() {
-				sm.reconcile(group)
+				sm.reconcile(group, view)
 			})
 		},
 	)
@@ -667,7 +684,7 @@ func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChan
 	group := sm.serviceGroups[event.Svc.MemberOf]
 	sm.mutex.Unlock()
 
-	err := sm.svcGroupRepo.Update(group.Name, group.Group())
+	err := sm.svcGroupRepo.Update(group.Name(), group.Group())
 	if err != nil {
 		bslog.Error(
 			"failed to update service health on health-change",
@@ -697,17 +714,15 @@ func (sm *ServicesManager) CreateOverride(override spoofs.Override) error {
 		return fmt.Errorf("%w: %s", ErrServiceGroupNotFound, override.MemberOf)
 	}
 
-	if group.hasOverride {
+	if group.HasOverride(override.View) {
 		return fmt.Errorf("group %s already has an active override", override.MemberOf)
 	}
 
-	group.hasOverride = true
-	group.overrideAddr = override.Address
+	group.SetOverride(override.View, override.Address)
 
 	err := sm.svcGroupRepo.Update(override.MemberOf, group.Group())
 	if err != nil {
-		group.hasOverride = false
-		group.overrideAddr = nil
+		group.ClearOverride(override.View)
 		return fmt.Errorf("failed to update service group: %w", err)
 	}
 
@@ -715,7 +730,7 @@ func (sm *ServicesManager) CreateOverride(override spoofs.Override) error {
 		update.Record{
 			Name:    override.MemberOf,
 			Address: override.Address,
-			UUID:    group.uuid.String(),
+			UUID:    group.ID(),
 		},
 	); err != nil {
 		return fmt.Errorf("failed to create DNS spoof: %w", err)
@@ -724,7 +739,7 @@ func (sm *ServicesManager) CreateOverride(override spoofs.Override) error {
 	return nil
 }
 
-func (sm *ServicesManager) RemoveOverride(memberOf string) error {
+func (sm *ServicesManager) RemoveOverride(memberOf string, views ...string) error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 	group, ok := sm.serviceGroups[memberOf]
@@ -733,13 +748,31 @@ func (sm *ServicesManager) RemoveOverride(memberOf string) error {
 		return fmt.Errorf("%w: %s", ErrServiceGroupNotFound, memberOf)
 	}
 
-	// ensure idempotent
-	if !group.hasOverride {
+	overridenViews := make(map[string]struct{})
+	for _, view := range views {
+		if group.HasOverride(view) {
+			overridenViews[view] = struct{}{}
+		}
+	}
+
+	if config.DNS().Enable() {
+		for _, view := range config.DNS().DNSViews() {
+			if group.HasOverride(view) {
+				overridenViews[view] = struct{}{}
+			}
+		}
+	}
+
+	// ensure idempotency
+	if !(len(overridenViews) > 0) {
 		return nil
 	}
 
-	group.hasOverride = false
-	group.overrideAddr = nil
+	deleteViews := make([]string, 0, len(overridenViews))
+	for view := range overridenViews {
+		group.ClearOverride(view)
+		deleteViews = append(deleteViews, view)
+	}
 
 	err := sm.svcGroupRepo.Update(memberOf, group.Group())
 	if err != nil {
@@ -747,18 +780,20 @@ func (sm *ServicesManager) RemoveOverride(memberOf string) error {
 	}
 
 	// delete override spoof
-	if err := sm.DNSDelete(group.uuid.String()); err != nil {
+	if err := sm.DNSDelete(group.ID(), deleteViews...); err != nil {
 		return fmt.Errorf("failed to delete override: %w", err)
 	}
 
-	active := group.active
-	if active != nil && active.IsHealthy() {
-		if err := sm.DNSCreate(update.Record{
-			Name:    active.MemberOf,
-			Address: active.GetAddress(),
-			UUID:    group.uuid.String(),
-		}); err != nil {
-			return fmt.Errorf("failed to create DNS spoof: %w", err)
+	for _, view := range deleteViews {
+		active := group.GetActive(view)
+		if active != nil && active.IsHealthy() {
+			if err := sm.DNSCreate(update.Record{
+				Name:    active.MemberOf,
+				Address: active.GetAddress(),
+				UUID:    group.ID(),
+			}); err != nil {
+				return fmt.Errorf("failed to create DNS spoof: %w", err)
+			}
 		}
 	}
 

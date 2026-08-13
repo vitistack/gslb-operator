@@ -20,14 +20,17 @@ func new() (*Config, error) {
 	v := viper.New()
 	setDefaults(v)
 
+	cfgPath := os.Getenv("GSLBCONFIG")
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
+	v.AddConfigPath(cfgPath)
 	v.AddConfigPath(".")
 	v.AddConfigPath("/app")
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return nil, fmt.Errorf("config file: %w", err)
 		}
+		return nil, fmt.Errorf("un-expected error while loading configuration: %w", err)
 	}
 
 	var featureFlags FeatureFlags
@@ -52,6 +55,18 @@ func new() (*Config, error) {
 	return &cfg, nil
 }
 
+func defaultConfig() *Config {
+	v := viper.New()
+	setDefaults(v)
+
+	cfg := Config{}
+	if err := v.Unmarshal(&cfg); err != nil {
+		return &cfg
+	}
+
+	return &cfg
+}
+
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.env", "prod")
 	v.SetDefault("server.lua_sandbox", "sandbox.lua")
@@ -61,6 +76,7 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("split_dns.enabled", true)
 	v.SetDefault("split_dns.views", []string{"default"})
+	v.SetDefault("split_dns.defaultView", "default")
 
 	v.SetDefault("gslb.poll_interval", "1m")
 	v.SetDefault("gslb.dnsdist_servers_file", "./secrets/GSLB_DNSDIST_SERVERS")

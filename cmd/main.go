@@ -17,7 +17,7 @@ import (
 	whBroker "github.com/vitistack/gslb-operator/internal/brokers/webhooks"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
-	"github.com/vitistack/gslb-operator/internal/dns/update"
+	"github.com/vitistack/gslb-operator/internal/dns/update/dnsdist"
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
@@ -56,8 +56,18 @@ func main() {
 	if err != nil {
 		bslog.Fatal("failed to establish valkey connection", slog.String("reason", err.Error()))
 	}
-	servicesStore := valkeyStore.NewStore[model.GSLBServiceGroup](valkeyClient, "gslb:service_groups", time.Second*30)
-	webhooksStore := valkeyStore.NewStore[model.WebHook](valkeyClient, "gslb:webhooks", time.Minute*30)
+
+	servicesStore, err := valkeyStore.NewStore[model.GSLBServiceGroup](
+		valkeyClient,
+		"gslb:service_groups",
+		time.Second*30,
+		//valkeyStore.WithMigrations[model.GSLBServiceGroup](servicegroup.MigrateActiveToMap(config.SplitDNS().DefaultView())),
+	)
+	if err != nil {
+		bslog.Fatal("failed to create valkey store for gslb service groups", slog.String("reason", err.Error()))
+	}
+
+	webhooksStore, _ := valkeyStore.NewStore[model.WebHook](valkeyClient, "gslb:webhooks", time.Minute*30)
 
 	//serviceFileStore, err := file.NewStore[model.GSLBServiceGroup]("./data/store.json")
 	//if err != nil {
@@ -79,7 +89,7 @@ func main() {
 		//manager.WithDryRun(true),
 	)
 
-	updater, err := update.NewDNSDISTUpdater(servicesStore)
+	updater, err := dnsdist.NewDNSDISTUpdater(servicesStore)
 	if err != nil {
 		bslog.Error("unable to create updater", slog.String("error", err.Error()))
 	}
@@ -126,10 +136,10 @@ func main() {
 		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetFQDNSpoof))
 
-	api.HandleFunc(routes.GET_SPOOFS_HASH, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-		auth.WithTokenValidation(slog.Default()),
-	)(spoofsApiService.GetSpoofsHash))
+	//api.HandleFunc(routes.GET_SPOOFS_HASH, middleware.Chain(
+	//	middleware.WithIncomingRequestLogging(slog.Default()),
+	//	auth.WithTokenValidation(slog.Default()),
+	//)(spoofsApiService.GetSpoofsHash))
 
 	// spoofs/override
 	// TODO: add auth!

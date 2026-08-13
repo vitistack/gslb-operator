@@ -8,8 +8,10 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
-	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
+	"github.com/vitistack/gslb-operator/pkg/iter"
+	spoofModel "github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
 )
 
@@ -17,7 +19,7 @@ var (
 	ErrSpoofInServiceGroupNotFound = errors.New("spoof in service group not found")
 )
 
-// read-only repo for spoofs
+// read-only repo for spoofModel.Spoof
 type SpoofRepo struct {
 	store persistence.Store[model.GSLBServiceGroup]
 }
@@ -28,48 +30,71 @@ func NewSpoofRepo(storage persistence.Store[model.GSLBServiceGroup]) *SpoofRepo 
 	}
 }
 
-func (r *SpoofRepo) Read(memberOf string) (spoofs.Spoof, error) {
+func (r *SpoofRepo) Read(memberOf string, views ...string) (spoofModel.Spoof, error) {
 	group, err := r.store.Load(memberOf)
 	if err != nil {
-		return spoofs.Spoof{}, fmt.Errorf("failed to read from storage: %w", err)
+		return spoofModel.Spoof{}, fmt.Errorf("failed to read from storage: %w", err)
 	}
 
-	spoof := group.Spoof()
+	spoof := group.Spoof(views...)
 	if spoof == nil {
-		return spoofs.Spoof{}, fmt.Errorf("no active spoof for %s", memberOf)
+		return spoofModel.Spoof{}, fmt.Errorf("no active spoof for %s", memberOf)
 	}
 
 	return *spoof, nil
 }
 
-func (r *SpoofRepo) ReadAll() ([]spoofs.Spoof, error) {
-	groups, err := r.store.LoadAll()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read from storage: %w", err)
-	}
+func (r *SpoofRepo) ReadAll() (iter.Iterator[spoofModel.Spoof], func() error) {
+	groups, finish := r.store.LoadAll()
 
-	result := make([]spoofs.Spoof, 0)
-	for _, group := range groups {
-		spoof := group.Spoof()
-		if spoof != nil && spoof.Address != nil {
-			result = append(result, *spoof)
+	var iterError error
+	seq := func(yield func(spoofModel.Spoof) bool) {
+		for group := range groups {
+			for _, view := range group.Views {
+				spoof := group.Spoof(view)
+				if spoof != nil && spoof.Address != nil {
+					if !yield(*spoof) {
+						return
+					}
+					continue
+				}
+			}
 		}
+
+		iterError = finish()
 	}
 
-	return result, nil
+	finish = func() error {
+		if iterError != nil {
+			return fmt.Errorf("failed to read from storage: %w", iterError)
+		}
+		return nil
+	}
+
+	return seq, finish
 }
 
 // hash of all the combined uuids from service groups
-func (r *SpoofRepo) Hash() (string, error) {
-	groups, err := r.store.LoadAll()
-	if err != nil {
-		return "", fmt.Errorf("failed to read from storage: %w", err)
+func (r *SpoofRepo) Hash(views ...string) (string, error) {
+	ids := make([]string, 0)
+
+	if len(views) == 0 {
+		views = []string{
+			config.DNS().DefaultView(),
+		}
 	}
 
-	ids := make([]string, 0, len(groups))
-	for _, group := range groups {
-		ids = append(ids, group.UUID.String())
+	spoofs, finish := r.ReadAll()
+	spoofs.Filter(
+		func(s spoofModel.Spoof) bool { return slices.Contains(views, s.View) },
+	).Each(
+		func(s spoofModel.Spoof) { ids = append(ids, s.UUID) },
+	)
+
+	if err := finish(); err != nil {
+		return "", fmt.Errorf("failed to produce spoof-hash: %w", err)
 	}
+
 	slices.Sort(ids)
 
 	joinedIDs := strings.Join(ids, ",")

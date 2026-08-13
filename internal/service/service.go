@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/checks"
+	"github.com/vitistack/gslb-operator/internal/config"
+	dnsviews "github.com/vitistack/gslb-operator/internal/dns/views"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/utils/ip"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
@@ -17,7 +19,6 @@ const DEFAULT_FAILURE_THRESHOLD = 3
 
 type HealthChangeCallback func(*HealthChangeEvent)
 type FailureCountCallback func(*model.GSLBService)
-type ServiceOption func(s *Service)
 
 type HealthChangeEvent struct {
 	Svc     *Service
@@ -31,8 +32,9 @@ type Service struct {
 	MemberOf             string
 	Port                 string
 	Datacenter           string
+	Views                []string
 	checkType            string
-	checkScript          *model.LuaScript // lua script for HTTP(S) response validation
+	checkScript          *model.LuaScript // lua script for HTTPS response validation
 	ScheduledInterval    timesutil.Duration
 	defaultInterval      timesutil.Duration
 	priority             int
@@ -45,31 +47,45 @@ type Service struct {
 	dryRun               bool
 }
 
-func NewServiceFromGSLBConfig(config model.GSLBConfig, opts ...ServiceOption) (*Service, error) {
-	if config.ServiceID == "" {
+func NewServiceFromGSLBConfig(cfg model.GSLBConfig, opts ...ServiceOption) (*Service, error) {
+	if cfg.ServiceID == "" {
 		return nil, ErrEmptyServiceId
 	}
 
 	port := ":443"
-	if config.Port != "" && config.Port != "443" {
-		port = fmt.Sprintf(":%s", config.Port)
+	if cfg.Port != "" && cfg.Port != "443" {
+		port = fmt.Sprintf(":%s", cfg.Port)
 	}
 
-	interval := CalculateInterval(config.Priority, config.Interval)
+	validViews := make([]string, 0, len(cfg.Views))
+	if config.DNS().Enable() {
+		for _, view := range cfg.Views {
+			if dnsviews.Valid(view) {
+				validViews = append(validViews, view)
+			}
+		}
+	}
+
+	if len(validViews) == 0 {
+		validViews = append(validViews, config.DNS().DefaultView())
+	}
+
+	interval := CalculateInterval(cfg.Priority, cfg.Interval)
 	svc := &Service{
-		id:                config.ServiceID,
-		address:           config.Address,
-		Fqdn:              config.Fqdn,
-		MemberOf:          config.MemberOf,
+		id:                cfg.ServiceID,
+		address:           cfg.Address,
+		Fqdn:              cfg.Fqdn,
+		MemberOf:          cfg.MemberOf,
 		Port:              port,
-		Datacenter:        config.Datacenter,
-		checkType:         config.CheckType,
-		checkScript:       config.Script,
+		Datacenter:        cfg.Datacenter,
+		Views:             cfg.Views,
+		checkType:         cfg.CheckType,
+		checkScript:       cfg.Script,
 		ScheduledInterval: interval,
 		defaultInterval:   interval,
-		priority:          config.Priority,
-		FailureThreshold:  config.FailureThreshold,
-		failureCount:      config.FailureThreshold, // need to succeed check N times before healthy!
+		priority:          cfg.Priority,
+		FailureThreshold:  cfg.FailureThreshold,
+		failureCount:      cfg.FailureThreshold, // need to succeed check N times before healthy!
 		isHealthy:         false,
 		dryRun:            false,
 	}
@@ -82,16 +98,16 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, opts ...ServiceOption) (*
 	case svc.dryRun:
 		svc.checker = &checks.DryRun{}
 
-	case config.CheckType == checks.HTTPS:
-		svc.checker = checks.NewHTTPChecker("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, config.Script)
+	case cfg.CheckType == checks.HTTPS:
+		svc.checker = checks.NewHTTPChecker("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, cfg.Script)
 
-	case config.CheckType == checks.HTTP:
-		svc.checker = checks.NewHTTPChecker("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, config.Script)
+	case cfg.CheckType == checks.HTTP:
+		svc.checker = checks.NewHTTPChecker("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, cfg.Script)
 
-	case config.CheckType == checks.TCP_FULL:
+	case cfg.CheckType == checks.TCP_FULL:
 		svc.checker = checks.NewTCPFullChecker(svc.address.PrimaryTCPAddr(svc.Port), checks.DEFAULT_TIMEOUT)
 
-	case config.CheckType == checks.TCP_HALF:
+	case cfg.CheckType == checks.TCP_HALF:
 		svc.checker = checks.NewTCPHalfChecker(svc.address.PrimaryTCPAddr(svc.Port), checks.DEFAULT_TIMEOUT)
 
 	default:
@@ -99,26 +115,6 @@ func NewServiceFromGSLBConfig(config model.GSLBConfig, opts ...ServiceOption) (*
 	}
 
 	return svc, nil
-}
-
-func WithDryRunChecks(enabled bool) ServiceOption {
-	return func(s *Service) {
-		s.dryRun = enabled
-	}
-}
-
-func WithHealthy() ServiceOption {
-	return func(s *Service) {
-		s.isHealthy = true
-	}
-}
-
-func WithFailureCount(count int) ServiceOption {
-	return func(s *Service) {
-		if count > -1 {
-			s.failureCount = count
-		} // default values are handled in the creation of the service!
-	}
 }
 
 // 5s, 15s, 45s, checks.MAX_CHECK_INTERVAL.
@@ -145,7 +141,7 @@ func CalculateInterval(priority int, baseInterval timesutil.Duration) timesutil.
 }
 
 // this is different from s.Interval. Because that is the interval the service is currently scheduled
-// its base intervall is the intervall which resides in the services' GSLB - config in the dns - zone
+// its base intervall is the intervall which resides in the services' GSLB - cfg in the dns - zone
 func (s *Service) GetBaseInterval() timesutil.Duration {
 	scaleFactor := 3.0
 	multiplier := 1.0
@@ -276,9 +272,9 @@ func (s *Service) GetAverageRoundtrip() time.Duration {
 }
 
 func (s *Service) ConfigChanged(other model.GSLBConfig) bool {
-	configSelf := s.GSLBConfig()
+	cfgSelf := s.GSLBConfig()
 	other.Interval = CalculateInterval(other.Priority, other.Interval)
-	return !reflect.DeepEqual(configSelf, other)
+	return !reflect.DeepEqual(cfgSelf, other)
 	//if s.Fqdn != other.Fqdn ||
 	//	s.addr.String() != other.addr.String() ||
 	//	s.Datacenter != other.Datacenter ||
@@ -291,10 +287,11 @@ func (s *Service) ConfigChanged(other model.GSLBConfig) bool {
 	//return false
 }
 
-// updates the configuration values of s with the values of new
+// updates the cfguration values of s with the values of new
 func (s *Service) Assign(new *Service) {
 	s.Fqdn = new.Fqdn
 	s.Port = new.Port
+	s.Views = new.Views
 	s.checker = new.checker
 	s.MemberOf = new.MemberOf
 	s.priority = new.priority
@@ -331,6 +328,7 @@ func (s *Service) GSLBService() *model.GSLBService {
 		Fqdn:         s.Fqdn,
 		Port:         s.Port,
 		Datacenter:   s.Datacenter,
+		Views:        s.Views,
 		Address:      s.address,
 		IsHealthy:    s.isHealthy,
 		FailureCount: s.failureCount,
@@ -347,6 +345,7 @@ func (s *Service) GSLBConfig() model.GSLBConfig {
 		Address:          s.address,
 		Port:             strings.Trim(s.Port, ":"),
 		Datacenter:       s.Datacenter,
+		Views:            s.Views,
 		Interval:         s.defaultInterval,
 		Priority:         s.priority,
 		FailureThreshold: s.FailureThreshold,
