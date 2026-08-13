@@ -17,7 +17,7 @@ var cfg *Config
 type Config struct {
 	Server        server   `mapstructure:"server"`
 	Api           api      `mapstructure:"api"`
-	SplitDNS      splitDns `mapstructure:"split_dns"`
+	Dns           splitDns `mapstructure:"split_dns"`
 	Gslb          gslb     `mapstructure:"gslb"`
 	Jwt           jwt      `mapstructure:"jwt"`
 	Webhooks      webhooks `mapstructure:"webhooks"`
@@ -31,8 +31,9 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("env", c.Server.Env),
 		slog.String("log_level", c.Server.LOG_LEVEL),
 		slog.String("api_port", c.Api.PORT),
-		slog.Bool("split_dns_enabled", c.SplitDNS.Enabled),
-		slog.Any("split_dns_views", c.SplitDNS.Views),
+		slog.Bool("dns_enabled", c.Dns.Enabled),
+		slog.Any("dns_views", c.Dns.Views),
+		slog.String("dns_default_view", c.Dns.Default),
 		slog.String("gslb_zone", c.Gslb.ZONE),
 		slog.String("gslb_nameserver", c.Gslb.NS),
 		slog.String("gslb_poll_interval", c.Gslb.PollInterval),
@@ -54,8 +55,8 @@ func API() *api {
 	return &cfg.Api
 }
 
-func SplitDNS() *splitDns {
-	return &cfg.SplitDNS
+func DNS() *splitDns {
+	return &cfg.Dns
 }
 
 func GSLB() *gslb {

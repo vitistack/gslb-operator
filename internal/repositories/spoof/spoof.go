@@ -80,7 +80,7 @@ func (r *SpoofRepo) Hash(views ...string) (string, error) {
 
 	if len(views) == 0 {
 		views = []string{
-			config.SplitDNS().DefaultView(),
+			config.DNS().DefaultView(),
 		}
 	}
 

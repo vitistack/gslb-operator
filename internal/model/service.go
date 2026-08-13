@@ -31,7 +31,7 @@ func (g GSLBServiceGroup) Spoof(views ...string) *spoofs.Spoof {
 
 	var view string
 	if len(views) == 0 {
-		view = config.SplitDNS().DefaultView()
+		view = config.DNS().DefaultView()
 	} else {
 		view = views[0]
 	}

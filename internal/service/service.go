@@ -58,7 +58,7 @@ func NewServiceFromGSLBConfig(cfg model.GSLBConfig, opts ...ServiceOption) (*Ser
 	}
 
 	validViews := make([]string, 0, len(cfg.Views))
-	if config.SplitDNS().Enable() {
+	if config.DNS().Enable() {
 		for _, view := range cfg.Views {
 			if dnsviews.Valid(view) {
 				validViews = append(validViews, view)
@@ -67,7 +67,7 @@ func NewServiceFromGSLBConfig(cfg model.GSLBConfig, opts ...ServiceOption) (*Ser
 	}
 
 	if len(validViews) == 0 {
-		validViews = append(validViews, config.SplitDNS().DefaultView())
+		validViews = append(validViews, config.DNS().DefaultView())
 	}
 
 	interval := CalculateInterval(cfg.Priority, cfg.Interval)

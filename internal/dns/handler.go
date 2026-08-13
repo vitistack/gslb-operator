@@ -154,7 +154,7 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 	svcConfig := model.GSLBConfig{
 		MemberOf:         txt.Hdr.Name,
 		FailureThreshold: service.DEFAULT_FAILURE_THRESHOLD,
-		Views:            []string{config.SplitDNS().DefaultView()},
+		Views:            []string{config.DNS().DefaultView()},
 	}
 
 	err := json.Unmarshal([]byte(data), &svcConfig)

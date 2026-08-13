@@ -755,8 +755,8 @@ func (sm *ServicesManager) RemoveOverride(memberOf string, views ...string) erro
 		}
 	}
 
-	if config.SplitDNS().Enable() {
-		for _, view := range config.SplitDNS().DNSViews() {
+	if config.DNS().Enable() {
+		for _, view := range config.DNS().DNSViews() {
 			if group.HasOverride(view) {
 				overridenViews[view] = struct{}{}
 			}
