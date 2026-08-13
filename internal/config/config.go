@@ -81,7 +81,8 @@ func init() {
 
 	cfg, err = new()
 	if err != nil {
-		log.Fatalf("unable to load config: %s", err.Error())
+		log.Printf("unable to load config, falling back to defaults: %s", err.Error())
+		cfg = defaultConfig()
 	}
 
 	var handler slog.Handler
