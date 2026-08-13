@@ -197,7 +197,7 @@ func (sg *ServiceGroupV2) onServiceHealthChangeForView(view string, changedServi
 }
 
 func (sg *ServiceGroupV2) GetActive(views ...string) *service.Service {
-	view := config.SplitDNS().DefaultView()
+	view := config.DNS().DefaultView()
 	if len(views) > 0 {
 		view = views[0]
 	}
@@ -210,7 +210,7 @@ func (sg *ServiceGroupV2) GetActive(views ...string) *service.Service {
 }
 
 func (sg *ServiceGroupV2) GetLastActive(views ...string) *service.Service {
-	view := config.SplitDNS().DefaultView()
+	view := config.DNS().DefaultView()
 	if len(views) > 0 {
 		view = views[0]
 	}

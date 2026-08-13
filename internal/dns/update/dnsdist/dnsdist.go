@@ -64,7 +64,7 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 		}
 
 		var selector dnsviews.Selector = &dnsviews.AllSelector{}
-		if config.SplitDNS().Enable() {
+		if config.DNS().Enable() {
 			if !dnsviews.Valid(srv.View) {
 				return nil, fmt.Errorf("server %s: with unknown view: %s", srv.Name, srv.View)
 			}

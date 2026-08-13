@@ -16,7 +16,7 @@ type Selector interface {
 type AllSelector struct{}
 
 func (*AllSelector) Select(...string) bool { return true }
-func (*AllSelector) View() string          { return config.SplitDNS().DefaultView() }
+func (*AllSelector) View() string          { return config.DNS().DefaultView() }
 
 type SplitDNSSelector struct {
 	view string
@@ -39,9 +39,9 @@ func (s *SplitDNSSelector) View() string {
 }
 
 func Valid(view string) bool {
-	if !config.SplitDNS().Enable() {
+	if !config.DNS().Enable() {
 		return true
 	}
 
-	return slices.Contains(config.SplitDNS().DNSViews(), view)
+	return slices.Contains(config.DNS().DNSViews(), view)
 }
