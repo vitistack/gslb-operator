@@ -48,7 +48,7 @@ type Service struct {
 }
 
 func NewServiceFromGSLBConfig(cfg model.GSLBConfig, opts ...ServiceOption) (*Service, error) {
-	if cfg.ServiceID == "" {
+	if strings.Trim(cfg.ServiceID, " ") == "" {
 		return nil, ErrEmptyServiceId
 	}
 
@@ -78,7 +78,7 @@ func NewServiceFromGSLBConfig(cfg model.GSLBConfig, opts ...ServiceOption) (*Ser
 		MemberOf:          cfg.MemberOf,
 		Port:              port,
 		Datacenter:        cfg.Datacenter,
-		Views:             cfg.Views,
+		Views:             validViews,
 		checkType:         cfg.CheckType,
 		checkScript:       cfg.Script,
 		ScheduledInterval: interval,
@@ -102,7 +102,7 @@ func NewServiceFromGSLBConfig(cfg model.GSLBConfig, opts ...ServiceOption) (*Ser
 		svc.checker = checks.NewHTTPChecker("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, cfg.Script)
 
 	case cfg.CheckType == checks.HTTP:
-		svc.checker = checks.NewHTTPChecker("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, cfg.Script)
+		svc.checker = checks.NewHTTPChecker("http://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, cfg.Script)
 
 	case cfg.CheckType == checks.TCP_FULL:
 		svc.checker = checks.NewTCPFullChecker(svc.address.PrimaryTCPAddr(svc.Port), checks.DEFAULT_TIMEOUT)

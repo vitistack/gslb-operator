@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/config"
@@ -205,15 +206,20 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 	wg := &errgroup.Group{}
 
 	hashesByView := make(map[string]string)
+	lock := sync.Mutex{}
 	for _, server := range d.servers {
 		wg.Go(func() error {
+			lock.Lock()
 			hash, ok := hashesByView[server.selector.View()]
+			lock.Unlock()
 			if !ok {
 				viewHash, err := d.spoofRepo.Hash(server.selector.View())
 				if err != nil {
 					return err
 				}
+				lock.Lock()
 				hashesByView[server.selector.View()] = viewHash
+				lock.Unlock()
 				hash = viewHash
 			}
 

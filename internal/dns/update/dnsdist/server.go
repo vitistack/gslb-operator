@@ -31,7 +31,7 @@ type server struct {
 func (s *server) Create(records ...update.Record) error {
 	for _, rec := range records {
 		if !s.selector.Select(rec.Views...) {
-			return nil
+			continue
 		}
 
 		exist, err := s.client.Rules().Exist(rec.UUID)
@@ -44,7 +44,7 @@ func (s *server) Create(records ...update.Record) error {
 		}
 
 		if exist {
-			err := s.client.Rules().Remove(rec.Name)
+			err := s.client.Rules().Remove(rec.UUID)
 			if err != nil {
 				return update.UpdateError{
 					Err:    fmt.Errorf("%s: failed to delete old record: %w", s.name, err),

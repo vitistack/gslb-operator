@@ -75,7 +75,7 @@ func (s *ValkeyStore[T]) runMigration() error {
 			continue
 		}
 
-		for _, result := range results {
+		for idx, result := range results {
 			rawRecord, err := result.ToString()
 			if err != nil {
 				migrationErrors = append(migrationErrors, fmt.Errorf("could not convert record: %w", err))
@@ -100,12 +100,11 @@ func (s *ValkeyStore[T]) runMigration() error {
 				continue
 			}
 
-			key := batch[i%min(batchSize, len(keys))]
-			cmd := s.client.B().Set().Key(key).Value(string(newRecordRaw)).Build()
+			cmd := s.client.B().Set().Key(batch[idx]).Value(string(newRecordRaw)).Build()
 
 			err = s.client.Do(context.Background(), cmd).Error()
 			if err != nil {
-				migrationErrors = append(migrationErrors, fmt.Errorf("failed to set key: %s: %w", key, err))
+				migrationErrors = append(migrationErrors, fmt.Errorf("failed to set key: %s: %w", batch[idx], err))
 				continue
 			}
 		}

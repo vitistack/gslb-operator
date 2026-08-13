@@ -77,7 +77,7 @@ func (i Iterator[T]) Take(n int) Iterator[T] {
 	return func(yield func(T) bool) {
 		counter := 0
 		for element := range i {
-			if counter > n {
+			if counter >= n {
 				return
 			}
 
