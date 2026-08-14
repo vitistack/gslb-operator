@@ -1,16 +1,17 @@
 package spoof
 
 import (
-	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
-	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
+	"github.com/vitistack/gslb-operator/pkg/iter"
+	spoofModel "github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
 )
 
@@ -18,7 +19,7 @@ var (
 	ErrSpoofInServiceGroupNotFound = errors.New("spoof in service group not found")
 )
 
-// read-only repo for spoofs
+// read-only repo for spoofModel.Spoof
 type SpoofRepo struct {
 	store persistence.Store[model.GSLBServiceGroup]
 }
@@ -29,62 +30,75 @@ func NewSpoofRepo(storage persistence.Store[model.GSLBServiceGroup]) *SpoofRepo 
 	}
 }
 
-func (r *SpoofRepo) Read(memberOf string) (spoofs.Spoof, error) {
+func (r *SpoofRepo) Read(memberOf string, views ...string) (spoofModel.Spoof, error) {
 	group, err := r.store.Load(memberOf)
 	if err != nil {
-		return spoofs.Spoof{}, fmt.Errorf("failed to read from storage: %w", err)
+		return spoofModel.Spoof{}, fmt.Errorf("failed to read from storage: %w", err)
 	}
 
-	if group.HasOverride {
-		return spoofs.Spoof{
-			FQDN: memberOf,
-			IP:   group.Active,
-			DC:   "OVERRIDE",
-		}, nil
+	spoof := group.Spoof(views...)
+	if spoof == nil {
+		return spoofModel.Spoof{}, fmt.Errorf("no active spoof for %s", memberOf)
 	}
 
-	active, ok := group.Members[group.Active]
-	if ok {
-		return active.Spoof(), nil
-	}
-
-	return spoofs.Spoof{}, fmt.Errorf("no active spoof for %s", memberOf)
+	return *spoof, nil
 }
 
-func (r *SpoofRepo) ReadAll() ([]spoofs.Spoof, error) {
-	groups, err := r.store.LoadAll()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read from storage: %w", err)
+func (r *SpoofRepo) ReadAll() (iter.Iterator[spoofModel.Spoof], func() error) {
+	groups, finish := r.store.LoadAll()
+
+	var iterError error
+	seq := func(yield func(spoofModel.Spoof) bool) {
+		for group := range groups {
+			for _, view := range group.Views {
+				spoof := group.Spoof(view)
+				if spoof != nil && spoof.Address != nil {
+					if !yield(*spoof) {
+						return
+					}
+					continue
+				}
+			}
+		}
+
+		iterError = finish()
 	}
 
-	spoofs := make([]spoofs.Spoof, 0)
-	for _, group := range groups {
-		if group.Active != "" {
-			spoofs = append(spoofs, group.Members[group.Active].Spoof())
+	finish = func() error {
+		if iterError != nil {
+			return fmt.Errorf("failed to read from storage: %w", iterError)
+		}
+		return nil
+	}
+
+	return seq, finish
+}
+
+// hash of all the combined uuids from service groups
+func (r *SpoofRepo) Hash(views ...string) (string, error) {
+	ids := make([]string, 0)
+
+	if len(views) == 0 {
+		views = []string{
+			config.DNS().DefaultView(),
 		}
 	}
 
-	return spoofs, nil
-}
-
-func (r *SpoofRepo) Hash() (string, error) {
-	data, err := r.ReadAll()
-	if err != nil {
-		return "", err
-	}
-
-	slices.SortFunc(
-		data,
-		func(a, b spoofs.Spoof) int {
-			return cmp.Compare(a.FQDN+":"+a.DC, b.FQDN+":"+b.DC)
-		},
+	spoofs, finish := r.ReadAll()
+	spoofs.Filter(
+		func(s spoofModel.Spoof) bool { return slices.Contains(views, s.View) },
+	).Each(
+		func(s spoofModel.Spoof) { ids = append(ids, s.UUID) },
 	)
 
-	marshalledSpoofs, err := json.Marshal(data)
-	if err != nil {
-		return "", fmt.Errorf("unable to serialize spoofs: %w", err)
+	if err := finish(); err != nil {
+		return "", fmt.Errorf("failed to produce spoof-hash: %w", err)
 	}
 
-	rawHash := sha256.Sum256(marshalledSpoofs) // creating bytes representation of spoofs
+	slices.Sort(ids)
+
+	joinedIDs := strings.Join(ids, ",")
+	rawHash := sha256.Sum256([]byte(joinedIDs))
+
 	return hex.EncodeToString(rawHash[:]), nil
 }

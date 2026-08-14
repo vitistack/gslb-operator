@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"codeberg.org/miekg/dns"
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns/update"
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/model"
@@ -44,13 +45,16 @@ func (h *Handler) Start(ctx context.Context, cancel func()) {
 	}
 
 	// function to update DNS
-	h.svcManager.DNSUpdate = func(service *service.Service, healthy bool) {
-		if healthy {
-			h.onServiceUp(service)
-		} else {
-			h.onServiceDown(service)
-		}
-	}
+	//h.svcManager.DNSUpdate = func(record update.Record, healthy bool) {
+	//	if healthy {
+	//		h.onServiceUp(record)
+	//	} else {
+	//		h.onServiceDown(record)
+	//	}
+	//}
+
+	h.svcManager.DNSCreate = h.updater.Create
+	h.svcManager.DNSDelete = h.updater.Delete
 
 	h.svcManager.Start(ctx)
 
@@ -78,23 +82,28 @@ func (h *Handler) Stop(ctx context.Context) {
 	}
 }
 
-func (h *Handler) onServiceDown(svc *service.Service) {
-	h.wg.Go(func() {
-		err := h.updater.OnServiceDown(svc)
-		if err != nil {
-			bslog.Error("error while updating service on service down", slog.String("error", err.Error()))
-		}
-	})
+func (h *Handler) Create(rec update.Record) error { return h.updater.Create(rec) }
+func (h *Handler) Delete(id string, views ...string) error {
+	return h.updater.Delete(id, views...)
 }
 
-func (h *Handler) onServiceUp(svc *service.Service) {
-	h.wg.Go(func() {
-		err := h.updater.OnServiceUp(svc)
-		if err != nil {
-			bslog.Error("error while updating service state on service up", slog.String("error", err.Error()))
-		}
-	})
-}
+//func (h *Handler) onServiceDown(rec update.Record) {
+//	h.wg.Go(func() {
+//		err := h.updater.OnServiceDown(rec)
+//		if err != nil {
+//			bslog.Error("error while updating service on service down", slog.String("error", err.Error()))
+//		}
+//	})
+//}
+//
+//func (h *Handler) onServiceUp(rec update.Record) {
+//	h.wg.Go(func() {
+//		err := h.updater.OnServiceUp(rec)
+//		if err != nil {
+//			bslog.Error("error while updating service state on service up", slog.String("error", err.Error()))
+//		}
+//	})
+//}
 
 func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan error) {
 	for {
@@ -147,6 +156,7 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 	svcConfig := model.GSLBConfig{
 		MemberOf:         txt.Hdr.Name,
 		FailureThreshold: service.DEFAULT_FAILURE_THRESHOLD,
+		Views:            []string{config.DNS().DefaultView()},
 	}
 
 	err := json.Unmarshal([]byte(data), &svcConfig)

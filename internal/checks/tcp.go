@@ -21,16 +21,6 @@ type TCPFullChecker struct {
 	TCPChecker
 }
 
-func NewTCPChecker(typ, addr string, timeout time.Duration) Checker {
-	switch typ {
-	case TCP_FULL:
-		return NewTCPFullChecker(addr, timeout)
-	case TCP_HALF:
-		return NewTCPHalfChecker(addr, timeout)
-	}
-
-	return nil
-}
 
 func NewTCPFullChecker(addr string, timeout time.Duration) Checker {
 	return &TCPFullChecker{

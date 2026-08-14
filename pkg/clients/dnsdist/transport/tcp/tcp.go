@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/transport"
@@ -25,6 +26,7 @@ type tcpTransport struct {
 	sNonce   [transport.NONCE_LEN]byte //ServerNonce
 	wNonce   [transport.NONCE_LEN]byte //WriteNonce
 	rNonce   [transport.NONCE_LEN]byte //ReadNonce
+	lock     sync.Mutex
 }
 
 func NewTCPTransport(key string, opts ...tcpTransportOption) (*tcpTransport, error) {
@@ -175,6 +177,9 @@ func (t *tcpTransport) command(cmd string) (string, error) {
 }
 
 func (t *tcpTransport) sendCommand(cmd string) (response string, err error) {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
 	encoded := t.encrypt(cmd)
 
 	bufferLen := make([]byte, 4)

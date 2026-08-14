@@ -1,18 +1,22 @@
 package scheduler
 
 import (
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
+	"github.com/vitistack/gslb-operator/internal/utils/ip"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 )
 
+var localhostAddr netip.Addr = netip.MustParseAddr("127.0.0.1")
+
 var genericGSLBConfig = model.GSLBConfig{
 	ServiceID:  "123",
-	Ip:         "192.168.1.1",
+	Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 	Port:       "80",
 	Datacenter: "dc1",
 	Interval:   timesutil.Duration(time.Second),
@@ -22,7 +26,7 @@ var genericGSLBConfig = model.GSLBConfig{
 
 var genericGSLBConfig2 = model.GSLBConfig{
 	ServiceID:  "456",
-	Ip:         "192.168.1.2",
+	Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 	Port:       "80",
 	Datacenter: "dc2",
 	Interval:   timesutil.Duration(time.Second),

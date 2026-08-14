@@ -5,10 +5,6 @@ import (
 	"strings"
 )
 
-type Action interface {
-	luaAction() string
-}
-
 // optional flags for SpoofAction
 type SpoofActionOptions struct {
 	AA  *bool

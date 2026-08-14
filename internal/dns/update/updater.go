@@ -1,8 +1,8 @@
 package update
 
-import "github.com/vitistack/gslb-operator/internal/service"
-
 type Updater interface {
-	OnServiceUp(*service.Service) error
-	OnServiceDown(*service.Service) error
+	Create(...Record) error
+	Delete(string, ...string) error
+	//OnServiceUp(Record) error
+	//OnServiceDown(Record) error
 }

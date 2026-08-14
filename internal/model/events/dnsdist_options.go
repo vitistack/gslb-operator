@@ -13,20 +13,17 @@ func init() {
 	events.Register(EventTypeDNSDISTSpoof, func() events.FilterOption {
 		return &DNSDistSpoofEventOptions{}
 	})
-	events.Register(EventTypeDNSDISTSpoofCreate, func() events.FilterOption {
-		return &DNSDistSpoofCreateEventOptions{}
+	events.Register(EventTypeDNSDISTSpoofCreateFailed, func() events.FilterOption {
+		return &DNSDistSpoofCreateFailedEventOptions{}
 	})
-	events.Register(EventTypeDNSDISTSpoofDelete, func() events.FilterOption {
-		return &DNSDistSpoofDeleteEventOptions{}
+	events.Register(EventTypeDNSDISTSpoofDeleteFailed, func() events.FilterOption {
+		return &DNSDistSpoofDeleteFailedEventOptions{}
 	})
 	events.Register(EventTypeDNSDISTSync, func() events.FilterOption {
 		return &DNSDistSynchEventOptions{}
 	})
 	events.Register(EventTypeDNSDISTSyncFailed, func() events.FilterOption {
 		return &DNSDistSynchFailedEventOptions{}
-	})
-	events.Register(EventTypeDNSDISTSpoofCreateFailed, func() events.FilterOption {
-		return &DNSDistSpoofCreateFailedEventOptions{}
 	})
 	events.Register(EventTypeDNSDISTServer, func() events.FilterOption {
 		return &DNSDistServerEventOptions{}
@@ -74,22 +71,21 @@ func (d *DNSDistSpoofEventOptions) Filter() events.EventFilter {
 		return child.Filter()(e)
 	}
 }
-
-type DNSDistSpoofCreateEventOptions struct {
+type DNSDistSpoofCreateFailedEventOptions struct {
 	DNSDistWebHookOptions
 }
 
-func (d *DNSDistSpoofCreateEventOptions) Filter() events.EventFilter {
+func (d *DNSDistSpoofCreateFailedEventOptions) Filter() events.EventFilter {
 	return func(e *events.Event) bool {
 		return d.matches()
 	}
 }
 
-type DNSDistSpoofDeleteEventOptions struct {
+type DNSDistSpoofDeleteFailedEventOptions struct {
 	DNSDistWebHookOptions
 }
 
-func (d *DNSDistSpoofDeleteEventOptions) Filter() events.EventFilter {
+func (d *DNSDistSpoofDeleteFailedEventOptions) Filter() events.EventFilter {
 	return func(e *events.Event) bool {
 		return d.matches()
 	}
@@ -121,15 +117,6 @@ func (d *DNSDistSynchFailedEventOptions) Filter() events.EventFilter {
 	}
 }
 
-type DNSDistSpoofCreateFailedEventOptions struct {
-	DNSDistWebHookOptions
-}
-
-func (d *DNSDistSpoofCreateFailedEventOptions) Filter() events.EventFilter {
-	return func(e *events.Event) bool {
-		return d.matches()
-	}
-}
 
 type DNSDistServerEventOptions struct {
 	DNSDistWebHookOptions

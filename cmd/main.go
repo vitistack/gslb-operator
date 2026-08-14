@@ -17,7 +17,7 @@ import (
 	whBroker "github.com/vitistack/gslb-operator/internal/brokers/webhooks"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
-	"github.com/vitistack/gslb-operator/internal/dns/update"
+	"github.com/vitistack/gslb-operator/internal/dns/update/dnsdist"
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
@@ -40,37 +40,39 @@ func main() {
 		slog.String("version", version),
 		slog.String("build-date", buildDate),
 	)
-	cfg := config.GetInstance()
-	bslog.Info("loaded environment", slog.Any("env", cfg))
 
 	// initialize lua execution environment
-	if err := lua.LoadSandboxConfig(cfg.Server().LuaSandbox()); err != nil {
+	if err := lua.LoadSandboxConfig(config.Server().LuaSandbox()); err != nil {
 		bslog.Fatal("could not load lua configuration", slog.Any("reason", err))
 	}
 
 	valkeyClient, err := valkeyStore.NewClient(
 		valkey.ClientOption{
-			InitAddress: []string{cfg.Valkey().Address()},
-			Username:    cfg.Valkey().User(),
-			Password:    cfg.Valkey().Password(),
+			InitAddress: []string{config.Valkey().Address()},
+			Username:    config.Valkey().User(),
+			Password:    config.Valkey().Password(),
 		},
 	)
 	if err != nil {
 		bslog.Fatal("failed to establish valkey connection", slog.String("reason", err.Error()))
 	}
-	servicesStore := valkeyStore.NewStore[model.GSLBServiceGroup](valkeyClient, "gslb:service_groups", time.Second*30)
-	webhooksStore := valkeyStore.NewStore[model.WebHook](valkeyClient, "gslb:webhooks", time.Minute*30)
 
-	//serviceFileStore, err := file.NewStore[model.GSLBServiceGroup]("./data/store.json")
-	//if err != nil {
-	//	bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
-	//}
+	servicesStore, err := valkeyStore.NewStore[model.GSLBServiceGroup](
+		valkeyClient,
+		"gslb:service_groups",
+		time.Second*30,
+		//valkeyStore.WithMigrations[model.GSLBServiceGroup](servicegroup.MigrateActiveToMap(config.SplitDNS().DefaultView())),
+	)
+	if err != nil {
+		bslog.Fatal("failed to create valkey store for gslb service groups", slog.String("reason", err.Error()))
+	}
+
+	webhooksStore, err := valkeyStore.NewStore[model.WebHook](valkeyClient, "gslb:webhooks", time.Minute*30)
+	if err != nil {
+		bslog.Fatal("failed to create valkey store for gslb webhooks", slog.String("reason", err.Error()))
+	}
+
 	svcGroupRepo := servicegroup.NewServiceGroupRepo(servicesStore)
-
-	//webhooksFileStore, err := file.NewStore[model.WebHook]("./data/webhooks.json")
-	//if err != nil {
-	//	bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
-	//}
 
 	// creating dns - handler objects
 	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
@@ -81,7 +83,7 @@ func main() {
 		//manager.WithDryRun(true),
 	)
 
-	updater, err := update.NewDNSDISTUpdater(servicesStore)
+	updater, err := dnsdist.NewDNSDISTUpdater(servicesStore)
 	if err != nil {
 		bslog.Error("unable to create updater", slog.String("error", err.Error()))
 	}
@@ -102,8 +104,8 @@ func main() {
 	updater.Synchronize(ctx)
 
 	//configs := getRandomGSLBConfig()
-	//for _, cfg := range configs {
-	//	_, err := mgr.RegisterService(cfg)
+	//for _, config := range configs {
+	//	_, err := mgr.RegisterService(config)
 	//	if err != nil {
 	//		bslog.Fatal("could not create service", slog.String("reason", err.Error()))
 	//	}
@@ -113,10 +115,9 @@ func main() {
 
 	// routes handlers
 	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
-	//webhooksApiService := webhooks.NewWebhookService(webhooksStore)
 
 	// initializing the service jwt self signer
-	jwt.InitServiceTokenManager(cfg.JWT().Secret(), cfg.JWT().User())
+	jwt.InitServiceTokenManager(config.JWT().Secret(), config.JWT().User())
 
 	// spoofs
 	api.HandleFunc(routes.GET_SPOOFS, middleware.Chain(
@@ -129,43 +130,37 @@ func main() {
 		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetFQDNSpoof))
 
-	api.HandleFunc(routes.GET_SPOOFS_HASH, middleware.Chain(
+	//api.HandleFunc(routes.GET_SPOOFS_HASH, middleware.Chain(
+	//	middleware.WithIncomingRequestLogging(slog.Default()),
+	//	auth.WithTokenValidation(slog.Default()),
+	//)(spoofsApiService.GetSpoofsHash))
+
+	// spoofs/override
+	// TODO: add auth!
+	api.HandleFunc(routes.GET_OVERRIDE, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),
-		auth.WithTokenValidation(slog.Default()),
-	)(spoofsApiService.GetSpoofsHash))
+	)(spoofsApiService.GetOverride))
 
-	/*
-		// spoofs/override
-		// TODO: add auth!
-		api.HandleFunc(routes.GET_OVERRIDE, middleware.Chain(
-			middleware.WithIncomingRequestLogging(slog.Default()),
-		)(spoofsApiService.GetOverride))
+	api.HandleFunc(routes.POST_OVERRIDE, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(spoofsApiService.CreateOverride))
 
-		api.HandleFunc(routes.PUT_OVERRIDE, middleware.Chain(
-			middleware.WithIncomingRequestLogging(slog.Default()),
-		)(spoofsApiService.UpdateOverride))
-
-		api.HandleFunc(routes.POST_OVERRIDE, middleware.Chain(
-			middleware.WithIncomingRequestLogging(slog.Default()),
-		)(spoofsApiService.CreateOverride))
-
-		api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
-			middleware.WithIncomingRequestLogging(slog.Default()),
-		)(spoofsApiService.DeleteOverride))
-	*/
+	api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(spoofsApiService.DeleteOverride))
 
 	// metrics
 	api.Handle(routes.METRICS, promhttp.Handler())
 
 	server := http.Server{
-		Addr:    cfg.API().Port(),
+		Addr:    config.API().Port(),
 		Handler: api,
 	}
 	serverErr := make(chan error, 1)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
-	bslog.Info("starting API service", slog.String("port", cfg.API().Port()))
+	bslog.Info("starting API service", slog.String("port", config.API().Port()))
 	go func() {
 		err := server.ListenAndServe()
 		if err != nil {
@@ -195,7 +190,7 @@ func main() {
 //func getRandomGSLBConfig() []model.GSLBConfig {
 //	configs := make([]model.GSLBConfig, 0, 500)
 //
-//	cfg := model.GSLBConfig{
+//	config := model.GSLBConfig{
 //		Fqdn:             "test.example.com",
 //		Ip:               "10.10.0.1",
 //		Port:             "80",
@@ -208,10 +203,10 @@ func main() {
 //
 //	for idx := range cap(configs) {
 //
-//		cfg.ServiceID = fmt.Sprintf("%d", idx)
-//		cfg.MemberOf = fmt.Sprintf("%s.%s", cfg.ServiceID, cfg.Fqdn)
+//		config.ServiceID = fmt.Sprintf("%d", idx)
+//		config.MemberOf = fmt.Sprintf("%s.%s", config.ServiceID, config.Fqdn)
 //
-//		configs = append(configs, cfg)
+//		configs = append(configs, config)
 //	}
 //
 //	return configs

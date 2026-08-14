@@ -5,21 +5,23 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 )
 
-// dnsdist:spoof:create
-type DNSDistSpoofCreateEvent struct {
-	Spoof spoofs.Spoof
+// dnsdist:spoof:create:failed
+type DNSDistSpoofCreateFailedEvent struct {
+	Server string
+	Spoof  spoofs.Spoof
 }
 
-func (e DNSDistSpoofCreateEvent) SlackValue() slack.MsgOption {
+func (e DNSDistSpoofCreateFailedEvent) SlackValue() slack.MsgOption {
 	return slack.MsgOptionBlocks()
 }
 
-// dnsdist:spoof:delete
-type DNSDistSpoofDeleteEvent struct {
-	Spoof spoofs.Spoof
+// dnsdist:spoof:delete:failed
+type DNSDistSpoofDeleteFailedEvent struct {
+	ID     string
+	Server string
 }
 
-func (e DNSDistSpoofDeleteEvent) SlackValue() slack.MsgOption {
+func (e DNSDistSpoofDeleteFailedEvent) SlackValue() slack.MsgOption {
 	return slack.MsgOptionBlocks()
 }
 

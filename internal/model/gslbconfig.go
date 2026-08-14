@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/vitistack/gslb-operator/internal/utils/ip"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 )
 
@@ -13,14 +14,42 @@ type GSLBConfig struct {
 	ServiceID        string             `json:"id"`
 	Fqdn             string             `json:"fqdn"`
 	MemberOf         string             `json:"memberOf"`
-	Ip               string             `json:"ip"`
+	Address          ip.Address         `json:"address"`
 	Port             string             `json:"port"`
 	Datacenter       string             `json:"dc"`
+	Views            []string           `json:"views,omitempty"`
 	Interval         timesutil.Duration `json:"interval"`
 	Priority         int                `json:"priority"`
 	FailureThreshold int                `json:"threshold"`
 	CheckType        string             `json:"check"`
 	Script           *LuaScript         `json:"lua,omitempty"`
+}
+
+func (c *GSLBConfig) UnmarshalJSON(b []byte) error {
+	type Alias GSLBConfig
+	aux := struct {
+		Address json.RawMessage `json:"address"`
+		*Alias
+	}{
+		Alias: (*Alias)(c),
+	}
+
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+
+	addr, err := ip.ParseAddressJSON(aux.Address)
+	if err != nil {
+		return fmt.Errorf("address: %w", err)
+	}
+
+	if addr == nil {
+		return fmt.Errorf("invalid GSLB-config: address field cannot be a nil value")
+	}
+
+	c.Address = addr
+
+	return nil
 }
 
 type LuaScript string

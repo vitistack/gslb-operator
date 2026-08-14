@@ -7,4 +7,5 @@ type DNSDISTServer struct {
 	Host net.IP `json:"host"`
 	Port uint16 `json:"port"`
 	Key  string `json:"key"`
+	View string `json:"view"`
 }
