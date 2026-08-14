@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/ip"
@@ -25,7 +26,7 @@ var activeConfig = model.GSLBConfig{
 	Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 	Port:       "80",
 	Datacenter: "dc1",
-	Views:      []string{view},
+	Views:      []string{config.DNS().DefaultView()},
 	Interval:   timesutil.Duration(5 * time.Second),
 	Priority:   1,
 	CheckType:  "TCP-FULL",
@@ -37,7 +38,7 @@ var passiveConfig = model.GSLBConfig{
 	Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 	Port:       "80",
 	Datacenter: "dc2",
-	Views:      []string{view},
+	Views:      []string{config.DNS().DefaultView()},
 	Interval:   timesutil.Duration(5 * time.Second),
 	Priority:   2,
 	CheckType:  "TCP-FULL",
@@ -45,7 +46,6 @@ var passiveConfig = model.GSLBConfig{
 
 var active *service.Service
 var passive *service.Service
-var view = "view"
 
 func TestMain(m *testing.M) {
 	active, _ = service.NewServiceFromGSLBConfig(activeConfig, service.WithDryRunChecks(true))
@@ -61,18 +61,18 @@ func TestServiceGroup_RegisterMember(t *testing.T) {
 			t.Errorf("should not be getting promotion event in this")
 		}
 	}
-	if group.modeByView[view] != ActiveActive {
+	if group.modeByView[config.DNS().DefaultView()] != ActiveActive {
 		t.Error("group mode should be ActiveActive by default")
 	}
 	group.RegisterMember(active)
 
-	if group.modeByView[view] != ActiveActive {
+	if group.modeByView[config.DNS().DefaultView()] != ActiveActive {
 		t.Error("group mode should be ActiveActive when only one service registered")
 	}
 
 	group.RegisterMember(passive)
-	if group.modeByView[view] != ActivePassive {
-		t.Errorf("Expected group mode: %v, but got: %v, after two services with different priorities registered", ActivePassive, group.modeByView[view])
+	if group.modeByView[config.DNS().DefaultView()] != ActivePassive {
+		t.Errorf("Expected group mode: %v, but got: %v, after two services with different priorities registered", ActivePassive, group.modeByView[config.DNS().DefaultView()])
 	}
 }
 
