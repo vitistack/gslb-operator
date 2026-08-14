@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/ip"
@@ -21,6 +22,7 @@ var genericGSLBConfig = model.GSLBConfig{
 	Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 	Port:       "80",
 	Datacenter: "dc1",
+	Views:      []string{config.DNS().DefaultView()},
 	Interval:   timesutil.Duration(30 * time.Second),
 	Priority:   1,
 	CheckType:  "TCP-FULL",
@@ -111,8 +113,8 @@ func TestServicesManager_updateService(t *testing.T) {
 	}{
 		{
 			name: "no-change",
-			old: genericGSLBConfig,
-			new: genericGSLBConfig,
+			old:  genericGSLBConfig,
+			new:  genericGSLBConfig,
 		},
 		{
 			name: "update-priority",
@@ -124,6 +126,7 @@ func TestServicesManager_updateService(t *testing.T) {
 				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "dc1",
+				Views:      []string{config.DNS().DefaultView()},
 				Interval:   timesutil.Duration(30 * time.Second),
 				Priority:   2,
 				CheckType:  "TCP-FULL",
@@ -139,6 +142,7 @@ func TestServicesManager_updateService(t *testing.T) {
 				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "dc2",
+				Views:      []string{config.DNS().DefaultView()},
 				Interval:   timesutil.Duration(30 * time.Second),
 				Priority:   1,
 				CheckType:  "TCP-FULL",
@@ -154,6 +158,7 @@ func TestServicesManager_updateService(t *testing.T) {
 				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "dc1",
+				Views:      []string{config.DNS().DefaultView()},
 				Interval:   timesutil.Duration(30 * time.Second),
 				Priority:   1,
 				CheckType:  "TCP-FULL",
@@ -169,6 +174,7 @@ func TestServicesManager_updateService(t *testing.T) {
 				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "dc1",
+				Views:      []string{config.DNS().DefaultView()},
 				Interval:   timesutil.Duration(30 * time.Second),
 				Priority:   1,
 				CheckType:  "TCP-HALF",
@@ -184,6 +190,7 @@ func TestServicesManager_updateService(t *testing.T) {
 				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "dc1",
+				Views:      []string{config.DNS().DefaultView()},
 				Interval:   timesutil.Duration(30 * time.Second),
 				Priority:   1,
 				CheckType:  "TCP-FULL",
@@ -199,6 +206,7 @@ func TestServicesManager_updateService(t *testing.T) {
 				Address:    &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:       "80",
 				Datacenter: "dc1",
+				Views:      []string{config.DNS().DefaultView()},
 				Interval:   timesutil.Duration(30 * time.Second),
 				Priority:   1,
 				CheckType:  "TCP-FULL",
@@ -229,7 +237,7 @@ func TestServicesManager_updateService(t *testing.T) {
 			sm.updateService(old, tt.new)
 
 			if old.ConfigChanged(tt.new) {
-				t.Fatal("still pending config changes after update")
+				t.Fatalf("still pending config changes after update, old: %v, new: %v", old.GSLBConfig(), new.GSLBConfig())
 			}
 
 			_, interval, svc := sm.scheduledServices.Search(old.GetID())

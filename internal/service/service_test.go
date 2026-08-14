@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/checks"
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/utils/ip"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
@@ -359,6 +360,7 @@ func TestService_ConfigChanged(t *testing.T) {
 		Address:          &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 		Port:             "443",
 		Datacenter:       "dc1",
+		Views:            []string{config.DNS().DefaultView()},
 		Interval:         timesutil.FromDuration(10 * time.Second),
 		Priority:         2,
 		FailureThreshold: 3,
@@ -381,6 +383,7 @@ func TestService_ConfigChanged(t *testing.T) {
 				Address:          &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr},
 				Port:             "443",
 				Datacenter:       "dc1",
+				Views:            []string{config.DNS().DefaultView()},
 				Interval:         timesutil.FromDuration(10 * time.Second),
 				Priority:         2,
 				FailureThreshold: 3,
@@ -398,6 +401,7 @@ func TestService_ConfigChanged(t *testing.T) {
 				Address:          &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr2},
 				Port:             "443",
 				Datacenter:       "dc1",
+				Views:            []string{config.DNS().DefaultView()},
 				Interval:         timesutil.FromDuration(10 * time.Second),
 				Priority:         2,
 				FailureThreshold: 3,
@@ -415,6 +419,7 @@ func TestService_ConfigChanged(t *testing.T) {
 				Address:          &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr2},
 				Port:             "443",
 				Datacenter:       "dc1",
+				Views:            []string{config.DNS().DefaultView()},
 				Interval:         timesutil.FromDuration(10 * time.Second),
 				Priority:         3,
 				FailureThreshold: 3,
@@ -432,6 +437,7 @@ func TestService_ConfigChanged(t *testing.T) {
 				Address:          &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr2},
 				Port:             "443",
 				Datacenter:       "dc1",
+				Views:            []string{config.DNS().DefaultView()},
 				Interval:         timesutil.FromDuration(11 * time.Second),
 				Priority:         2,
 				FailureThreshold: 3,
@@ -449,6 +455,7 @@ func TestService_ConfigChanged(t *testing.T) {
 				Address:          &ip.SingleStackAddr{Family: ip.SingleStack, IPv4: &localhostAddr2},
 				Port:             "8080",
 				Datacenter:       "dc1",
+				Views:            []string{config.DNS().DefaultView()},
 				Interval:         timesutil.FromDuration(10 * time.Second),
 				Priority:         2,
 				FailureThreshold: 3,
