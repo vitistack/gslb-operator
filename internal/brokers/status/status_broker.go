@@ -22,7 +22,7 @@ type StatusBroker struct {
 func Init(ctx context.Context, store persistence.Store[serviceModels.GSLBServiceStatus])
 
 func NewStatusBroker(ctx context.Context, store persistence.Store[serviceModels.GSLBServiceStatus]) *StatusBroker {
-
+	mqCfg := config.Webhooks().MQ()
 	broker := &StatusBroker{
 		statusRepo: status.NewStatusRepo(store),
 		client: rabbitmq.New(

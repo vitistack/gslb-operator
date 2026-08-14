@@ -1,6 +1,7 @@
 package status
 
 import (
+	"github.com/vitistack/gslb-operator/pkg/iter"
 	serviceModels "github.com/vitistack/gslb-operator/pkg/models/service"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
 )
@@ -23,8 +24,9 @@ func (sr *StatusRepo) Read(memberOf string) (serviceModels.GSLBServiceStatus, er
 	return sr.store.Load(memberOf)
 }
 
-func (sr *StatusRepo) ReadAll() ([]serviceModels.GSLBServiceStatus, error) {
-	return sr.store.LoadAll()
+func (sr *StatusRepo) ReadAll() (iter.Iterator[serviceModels.GSLBServiceStatus], func() error) {
+	it, finish := sr.store.LoadAll()
+	return iter.Iterator[serviceModels.GSLBServiceStatus](it), finish
 }
 
 func (sr *StatusRepo) Update(memberOf string, status serviceModels.GSLBServiceStatus) error {
