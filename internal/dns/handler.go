@@ -83,7 +83,9 @@ func (h *Handler) Stop(ctx context.Context) {
 }
 
 func (h *Handler) Create(rec update.Record) error { return h.updater.Create(rec) }
-func (h *Handler) Delete(id string) error         { return h.updater.Delete(id) }
+func (h *Handler) Delete(id string, views ...string) error {
+	return h.updater.Delete(id, views...)
+}
 
 //func (h *Handler) onServiceDown(rec update.Record) {
 //	h.wg.Go(func() {
