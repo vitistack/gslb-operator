@@ -41,6 +41,11 @@ update-deps: ## Update dependencies
 	@go mod tidy
 	@echo "Dependencies updated!"
 
+update-deps-safe: ## Update dependencies to versions at least DAYS old (default 14), guards against supply-chain attacks
+	@echo "Updating dependencies published more than $(or $(DAYS), 7) days ago..."
+	@go run ./cmd/dependencies/main.go -days $(or $(days), 7)
+	@echo "Dependencies updated!"
+
 ##@ Code Quality
 .PHONY: lint format security-scan bench
 lint: ## Run Go linters
