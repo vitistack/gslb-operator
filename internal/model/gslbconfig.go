@@ -42,6 +42,11 @@ func (c *GSLBConfig) UnmarshalJSON(b []byte) error {
 	if err != nil {
 		return fmt.Errorf("address: %w", err)
 	}
+
+	if addr == nil {
+		return fmt.Errorf("invalid GSLB-config: address field cannot be a nil value")
+	}
+
 	c.Address = addr
 
 	return nil

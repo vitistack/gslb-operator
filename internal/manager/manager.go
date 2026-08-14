@@ -714,15 +714,27 @@ func (sm *ServicesManager) CreateOverride(override spoofs.Override) error {
 		return fmt.Errorf("%w: %s", ErrServiceGroupNotFound, override.MemberOf)
 	}
 
-	if group.HasOverride(override.View) {
+	view := override.View
+	if view == "" {
+		view = config.DNS().DefaultView()
+	}
+
+	if override.Address == nil {
+		return fmt.Errorf("override address is required")
+	}
+
+	if group.HasOverride(view) {
 		return fmt.Errorf("group %s already has an active override", override.MemberOf)
 	}
 
-	group.SetOverride(override.View, override.Address)
-
-	err := sm.svcGroupRepo.Update(override.MemberOf, group.Group())
+	err := group.SetOverride(override.View, override.Address)
 	if err != nil {
-		group.ClearOverride(override.View)
+		return fmt.Errorf("%s: failed to set override: %w", group.Name(), err)
+	}
+
+	err = sm.svcGroupRepo.Update(override.MemberOf, group.Group())
+	if err != nil {
+		group.ClearOverride(view)
 		return fmt.Errorf("failed to update service group: %w", err)
 	}
 
@@ -730,6 +742,7 @@ func (sm *ServicesManager) CreateOverride(override spoofs.Override) error {
 		update.Record{
 			Name:    override.MemberOf,
 			Address: override.Address,
+			Views:   []string{view},
 			UUID:    group.ID(),
 		},
 	); err != nil {
