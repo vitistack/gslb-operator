@@ -67,18 +67,12 @@ func main() {
 		bslog.Fatal("failed to create valkey store for gslb service groups", slog.String("reason", err.Error()))
 	}
 
-	webhooksStore, _ := valkeyStore.NewStore[model.WebHook](valkeyClient, "gslb:webhooks", time.Minute*30)
+	webhooksStore, err := valkeyStore.NewStore[model.WebHook](valkeyClient, "gslb:webhooks", time.Minute*30)
+	if err != nil {
+		bslog.Fatal("failed to create valkey store for gslb webhooks", slog.String("reason", err.Error()))
+	}
 
-	//serviceFileStore, err := file.NewStore[model.GSLBServiceGroup]("./data/store.json")
-	//if err != nil {
-	//	bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
-	//}
 	svcGroupRepo := servicegroup.NewServiceGroupRepo(servicesStore)
-
-	//webhooksFileStore, err := file.NewStore[model.WebHook]("./data/webhooks.json")
-	//if err != nil {
-	//	bslog.Fatal("could not create persistent storage", slog.String("reason", err.Error()))
-	//}
 
 	// creating dns - handler objects
 	zoneFetcher := dns.NewZoneFetcherWithAutoPoll()
