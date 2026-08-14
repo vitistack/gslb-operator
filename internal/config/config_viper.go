@@ -70,7 +70,7 @@ func defaultConfig() *Config {
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.env", "prod")
 	v.SetDefault("server.lua_sandbox", "sandbox.lua")
-	v.SetDefault("server.log_level", "HEALTHCHECK")
+	v.SetDefault("server.log_level", "INFO")
 
 	v.SetDefault("api.port", ":8080")
 
