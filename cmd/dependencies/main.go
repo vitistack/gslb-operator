@@ -25,7 +25,7 @@ type module struct {
 func main() {
 	days := flag.Uint("days", 7, "minimum age in days a dependency must have before it is eligible for update")
 	dryRun := flag.Bool("dry-run", false, "report available updates without changing go.mod")
-
+	flag.Parse()
 	minAge := time.Duration(*days) * 24 * time.Hour
 
 	deps, err := directDependencies()
