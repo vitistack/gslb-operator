@@ -14,7 +14,7 @@ import (
 	"github.com/valkey-io/valkey-go"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
-	whBroker "github.com/vitistack/gslb-operator/internal/brokers/webhooks"
+	"github.com/vitistack/gslb-operator/internal/brokers"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
 	"github.com/vitistack/gslb-operator/internal/dns/update/dnsdist"
@@ -57,19 +57,9 @@ func main() {
 		bslog.Fatal("failed to establish valkey connection", slog.String("reason", err.Error()))
 	}
 
-	servicesStore, err := valkeyStore.NewStore[model.GSLBServiceGroup](
-		valkeyClient,
-		"gslb:service_groups",
-		time.Second*30,
-		//valkeyStore.WithMigrations[model.GSLBServiceGroup](servicegroup.MigrateActiveToMap(config.SplitDNS().DefaultView())),
-	)
+	servicesStore, err := valkeyStore.NewStore[model.GSLBServiceGroup](valkeyClient, "gslb:service_groups", time.Second*30)
 	if err != nil {
 		bslog.Fatal("failed to create valkey store for gslb service groups", slog.String("reason", err.Error()))
-	}
-
-	webhooksStore, err := valkeyStore.NewStore[model.WebHook](valkeyClient, "gslb:webhooks", time.Minute*30)
-	if err != nil {
-		bslog.Fatal("failed to create valkey store for gslb webhooks", slog.String("reason", err.Error()))
 	}
 
 	svcGroupRepo := servicegroup.NewServiceGroupRepo(servicesStore)
@@ -98,7 +88,7 @@ func main() {
 	ctx, cancel := context.WithCancel(background)
 
 	// mq brokers
-	whBroker.Init(ctx, webhooksStore)
+	brokers.Init(ctx, valkeyClient)
 
 	dnsHandler.Start(ctx, cancel)
 	updater.Synchronize(ctx)

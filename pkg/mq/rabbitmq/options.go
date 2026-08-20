@@ -2,7 +2,6 @@ package rabbitmq
 
 import (
 	"log/slog"
-	"time"
 )
 
 type brokerOption[T any] func(broker *Broker[T])
@@ -31,11 +30,17 @@ func WithPrefetch[T any](prefetch int) brokerOption[T] {
 	}
 }
 
-func WithRetryConnectionBackOff[T any](d time.Duration) brokerOption[T] {
+func WithRetryer[T any](retryer Retryer) brokerOption[T] {
 	return func(broker *Broker[T]) {
-		broker.retryConnectionBackoff = d
+		broker.retry = retryer
 	}
 }
+
+//func WithRetryConnectionBackOff[T any](d time.Duration) brokerOption[T] {
+//	return func(broker *Broker[T]) {
+//		broker.retryConnectionBackoff = d
+//	}
+//}
 
 func WithLogger[T any](l *slog.Logger) brokerOption[T] {
 	return func(broker *Broker[T]) {

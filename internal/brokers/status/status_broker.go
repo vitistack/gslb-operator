@@ -3,7 +3,6 @@ package status_broker
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/repositories/status"
@@ -22,7 +21,7 @@ type StatusBroker struct {
 func Init(ctx context.Context, store persistence.Store[serviceModels.GSLBServiceStatus])
 
 func NewStatusBroker(ctx context.Context, store persistence.Store[serviceModels.GSLBServiceStatus]) *StatusBroker {
-	mqCfg := config.Webhooks().MQ()
+	mqCfg := config.MQ()
 	broker := &StatusBroker{
 		statusRepo: status.NewStatusRepo(store),
 		client: rabbitmq.New(
@@ -35,7 +34,7 @@ func NewStatusBroker(ctx context.Context, store persistence.Store[serviceModels.
 				mqCfg.Port(),
 			),
 			rabbitmq.WithQueue[serviceModels.SiteGSLBServiceStatus]("webhooks"),
-			rabbitmq.WithRetryConnectionBackOff[serviceModels.SiteGSLBServiceStatus](time.Second*10),
+			//rabbitmq.WithRetryConnectionBackOff[serviceModels.SiteGSLBServiceStatus](time.Second*10),
 		),
 	}
 

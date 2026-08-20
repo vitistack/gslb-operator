@@ -22,13 +22,13 @@ type WebhooksBroker struct {
 }
 
 func Init(ctx context.Context, store persistence.Store[model.WebHook]) {
-	if config.Webhooks().Enable() {
+	if config.Webhooks().Enabled() {
 		New(ctx, store).Subscribe(ctx)
 	}
 }
 
 func New(ctx context.Context, store persistence.Store[model.WebHook]) *WebhooksBroker {
-	mqCfg := config.Webhooks().MQ()
+	mqCfg := config.MQ()
 	broker := &WebhooksBroker{
 		repo: webhooks.NewWebHooksRepo(store),
 		client: rabbitmq.New(
@@ -41,7 +41,7 @@ func New(ctx context.Context, store persistence.Store[model.WebHook]) *WebhooksB
 				mqCfg.Port(),
 			),
 			rabbitmq.WithQueue[model.WebHook]("webhooks"),
-			rabbitmq.WithRetryConnectionBackOff[model.WebHook](time.Second*10),
+			//rabbitmq.WithRetryConnectionBackOff[model.WebHook](time.Second*10),
 		),
 	}
 	webhooks, finish := broker.repo.ReadAll()

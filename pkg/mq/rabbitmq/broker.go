@@ -6,55 +6,183 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/mq"
+	"github.com/vitistack/gslb-operator/pkg/mq/rabbitmq/connection"
 )
+
+type Retryer interface {
+	Retry(func() error) error
+}
+
+type RetryFunc func(func() error) error
+
+func (rf RetryFunc) Retry(fn func() error) error {
+	return rf(fn)
+}
 
 // TODO: decide if generics is overkill or not, could just pass amqp.Publishing directly instead
 type Broker[T any] struct {
-	*connection
+	channel     *connection.Channel
 	queue       string
 	exchange    string
 	dlx         string
 	dlq         string
-	prefetch    int
-	retry       int
 	consumerTag string
+	prefetch    int
 	logger      *slog.Logger
+
+	lock      sync.Mutex
+	ready     chan struct{}
+	chanReady chan *connection.Channel
+
+	retry Retryer
 }
 
 func New[T any](ctx context.Context, ampqURL string, opts ...brokerOption[T]) mq.MessageBroker[T] {
-	broker := &Broker[T]{
-		connection: newConnection(ctx, ampqURL),
-		logger:     slog.Default(),
-		retry:      3,
-	}
-	broker.retryConnectionBackoff = connectionRetryBackoff * 15
+	conn := connection.NewConnection(ctx, ampqURL)
 
-	broker.connection.onNewConnection = broker.declareTopology
+	broker := &Broker[T]{
+		logger:    slog.Default(),
+		chanReady: make(chan *connection.Channel),
+		ready:     make(chan struct{}),
+		retry: RetryFunc(func(errFunc func() error) error {
+			err := errFunc()
+			for err != nil {
+				time.Sleep(connection.ConnectionRetryBackoff * 30)
+				err = errFunc()
+			}
+			return nil
+		}),
+	}
 
 	for _, opt := range opts {
 		opt(broker)
 	}
 
-	go func() {
-		err := broker.connection.connect(ctx)
-		for err != nil {
-			broker.logger.Error("mq: failed to connect",
-				slog.String("reason", err.Error()),
-				slog.String("retry", broker.retryConnectionBackoff.String()),
-			)
-			time.Sleep(broker.retryConnectionBackoff)
-			err = broker.connection.connect(ctx)
-		}
-	}()
+	conn.OnNewConnection(
+		func() error {
+			broker.logger.Debug("mq: received new connection declaring topology")
+			return broker.retry.Retry(func() error {
+				ch, err := conn.NewChannel(broker.prefetch, broker.declareTopology)
+				if err != nil {
+					broker.logger.Error("mq: broker failed to declare channel", slog.String("reason", err.Error()))
+					return err
+				}
+				broker.chanReady <- ch
+				return nil
+			})
+		},
+	)
+
+	go broker.handleChannel(ctx)
 
 	return broker
 }
 
-func (b *Broker[T]) declareTopology() error {
+func (b *Broker[T]) getChannel(ctx context.Context) (*connection.Channel, error) {
+	for {
+		b.lock.Lock()
+		ch := b.channel
+		ready := b.ready
+		b.lock.Unlock()
+
+		if ch != nil {
+			return ch, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("mq: waiting for channel: %w", ctx.Err())
+
+		case <-ready:
+		}
+	}
+}
+
+func (b *Broker[T]) handleChannel(ctx context.Context) {
+	var channel *connection.Channel
+
+	setChannel := func(ch *connection.Channel) {
+		channel = ch
+		b.lock.Lock()
+		b.channel = ch
+		if b.ready != nil {
+			close(b.ready)
+			b.ready = nil
+		}
+		b.lock.Unlock()
+	}
+
+	clearChannel := func() {
+		b.lock.Lock()
+		b.channel = nil
+		if b.ready == nil {
+			b.ready = make(chan struct{})
+		}
+		b.lock.Unlock()
+	}
+
+	redeclare := func() *connection.Channel {
+		var ch *connection.Channel
+		b.retry.Retry(func() error {
+			newCh, err := channel.GetConnection().NewChannel(b.prefetch, b.declareTopology)
+			if err != nil {
+				return err
+			}
+			ch = newCh
+			return nil
+		})
+		return ch
+	}
+
+	for channel == nil {
+		select {
+		case <-ctx.Done():
+			return
+		case ch := <-b.chanReady:
+			setChannel(ch)
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			channel.Close()
+			return
+
+		case ch := <-b.chanReady:
+			setChannel(ch)
+
+		case chanClosed, ok := <-channel.ChannelClosed:
+			if !ok {
+				continue
+			}
+			b.logger.Warn("mq: channel closed unexpectedly",
+				slog.String("reason", chanClosed.Reason),
+				slog.String("error", chanClosed.Error()),
+			)
+			clearChannel()
+			setChannel(redeclare())
+
+		case reason, ok := <-channel.ChannelCancelled:
+			if !ok {
+				continue
+			}
+			b.logger.Warn("mq: channel cancelled unexpectedly",
+				slog.String("reason", reason),
+			)
+			clearChannel()
+			setChannel(redeclare())
+		}
+	}
+}
+
+func (b *Broker[T]) declareTopology(channel *connection.Channel) error {
 	// Build dead-letter arguments for the main queue if DL is configured.
 	var mainQueueArgs amqp.Table
 	if b.dlx != "" {
@@ -73,7 +201,7 @@ func (b *Broker[T]) declareTopology() error {
 	}
 
 	if b.exchange != "" {
-		if err := b.connection.channel.ExchangeDeclare(
+		if err := channel.ExchangeDeclare(
 			b.exchange,
 			amqp.ExchangeDirect,
 			true,
@@ -85,7 +213,7 @@ func (b *Broker[T]) declareTopology() error {
 			return fmt.Errorf("mq: failed to declare exchange %q: %w", b.exchange, err)
 		}
 
-		if _, err := b.connection.channel.QueueDeclare(
+		if _, err := channel.QueueDeclare(
 			b.queue,
 			true,
 			false,
@@ -96,7 +224,7 @@ func (b *Broker[T]) declareTopology() error {
 			return fmt.Errorf("mq: failed to declare queue %q: %w", b.queue, err)
 		}
 
-		if err := b.channel.QueueBind(
+		if err := channel.QueueBind(
 			b.queue,
 			b.queue, // routing key equals queue name for a direct exchange
 			b.exchange,
@@ -106,7 +234,7 @@ func (b *Broker[T]) declareTopology() error {
 			return fmt.Errorf("mq: failed to bind queue %q to exchange %q: %w", b.queue, b.exchange, err)
 		}
 	} else {
-		if _, err := b.connection.channel.QueueDeclare(
+		if _, err := channel.QueueDeclare(
 			b.queue,
 			true,
 			false,
@@ -119,7 +247,7 @@ func (b *Broker[T]) declareTopology() error {
 	}
 
 	if b.dlx != "" {
-		if err := b.connection.channel.ExchangeDeclare(
+		if err := channel.ExchangeDeclare(
 			b.dlx,
 			amqp.ExchangeDirect,
 			true,
@@ -137,7 +265,7 @@ func (b *Broker[T]) declareTopology() error {
 			dlq = b.queue + ".dlq"
 		}
 
-		if _, err := b.connection.channel.QueueDeclare(
+		if _, err := channel.QueueDeclare(
 			dlq,
 			true,
 			false,
@@ -148,7 +276,7 @@ func (b *Broker[T]) declareTopology() error {
 			return fmt.Errorf("mq: failed to declare dead-letter queue %q: %w", dlq, err)
 		}
 
-		if err := b.connection.channel.QueueBind(
+		if err := channel.QueueBind(
 			dlq,
 			dlq, // routing key matches x-dead-letter-routing-key on the main queue
 			b.dlx,
@@ -159,7 +287,7 @@ func (b *Broker[T]) declareTopology() error {
 		}
 	} else if b.dlq != "" {
 		// No DLX: just ensure the dead-letter queue exists on the default exchange.
-		if _, err := b.connection.channel.QueueDeclare(
+		if _, err := channel.QueueDeclare(
 			b.dlq,
 			true,
 			false,
@@ -170,25 +298,36 @@ func (b *Broker[T]) declareTopology() error {
 			return fmt.Errorf("mq: failed to declare dead-letter queue %q: %w", b.dlq, err)
 		}
 	}
-
+	bslog.Debug("declared topology",
+		slog.Group(
+			"topology",
+			slog.String("dlx", b.dlx),
+			slog.String("dlq", b.dlq),
+			slog.String("exchange", b.exchange),
+			slog.String("queue", b.queue),
+			slog.String("consumerTag", b.consumerTag),
+		),
+	)
 	return nil
 }
 
 func (b *Broker[T]) Publish(ctx context.Context, msg T) error {
-	b.connection.Wait(ctx)
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("could not marshall message body: %w", err)
 	}
 
-	return b.channel.PublishWithContext(ctx,
+	channel, err := b.getChannel(ctx)
+	if err != nil {
+		return fmt.Errorf("mq: broker failed to retrieve channel: %w", err)
+	}
+	return channel.Publish(
+		ctx,
 		b.exchange,
 		b.queue,
-		false,
-		false,
 		amqp.Publishing{
 			ContentType:  "application/json",
-			DeliveryMode: amqp.Persistent,
+			DeliveryMode: amqp.Transient,
 			Body:         body,
 			Timestamp:    time.Now(),
 		},
@@ -196,26 +335,11 @@ func (b *Broker[T]) Publish(ctx context.Context, msg T) error {
 }
 
 func (b *Broker[T]) Subscribe(ctx context.Context, handler mq.MessageHandler[T]) error {
-	b.connection.Wait(ctx)
-	if ctx.Err() != nil {
-		return fmt.Errorf("mq: failed to subscribe: %w", ctx.Err())
+	channel, err := b.getChannel(ctx)
+	if err != nil {
+		return fmt.Errorf("mq: broker failed to retrieve channel: %w", err)
 	}
-
-	// Limit in-flight unACK'd messages — backpressure against slow handlers.
-	if err := b.channel.Qos(b.prefetch, 0, false); err != nil {
-		return fmt.Errorf("rabbitmq set QoS: %w", err)
-	}
-
-	messages, err := b.channel.ConsumeWithContext(ctx,
-		b.queue,
-		b.consumerTag,
-		false,
-		false,
-		false,
-		false,
-		nil,
-	)
-
+	messages, err := channel.Subscribe(ctx, b.queue, b.consumerTag)
 	if err != nil {
 		return fmt.Errorf("failed to start message consumption: %w", err)
 	}
@@ -229,7 +353,7 @@ func (b *Broker[T]) Subscribe(ctx context.Context, handler mq.MessageHandler[T])
 			b.handle(ctx, msg, handler)
 
 		case <-ctx.Done():
-			return b.connection.Close(ctx)
+			return b.Close(ctx)
 		}
 	}
 }
@@ -257,5 +381,9 @@ func (b *Broker[T]) handle(ctx context.Context, delivery amqp.Delivery, handler 
 }
 
 func (b *Broker[T]) Close(ctx context.Context) error {
-	return b.connection.Close(ctx)
+	channel, err := b.getChannel(ctx)
+	if err != nil {
+		return fmt.Errorf("mq: broker failed to retrieve channel: %w", err)
+	}
+	return channel.Close()
 }
