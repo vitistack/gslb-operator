@@ -33,7 +33,7 @@ func NewStatusBroker(ctx context.Context, store persistence.Store[serviceModels.
 				mqCfg.Endpoint(),
 				mqCfg.Port(),
 			),
-			rabbitmq.WithQueue[serviceModels.SiteGSLBServiceStatus]("webhooks"),
+			rabbitmq.WithQueue[serviceModels.SiteGSLBServiceStatus]("q.gslb.service-status"),
 			//rabbitmq.WithRetryConnectionBackOff[serviceModels.SiteGSLBServiceStatus](time.Second*10),
 		),
 	}
