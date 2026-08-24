@@ -12,6 +12,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/valkey-io/valkey-go"
+	"github.com/vitistack/gslb-operator/internal/api/handlers/service"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
 	"github.com/vitistack/gslb-operator/internal/brokers"
@@ -21,11 +22,13 @@ import (
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
+	"github.com/vitistack/gslb-operator/internal/repositories/status"
 	"github.com/vitistack/gslb-operator/pkg/auth"
 	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/lua"
+	serviceModels "github.com/vitistack/gslb-operator/pkg/models/service"
 	valkeyStore "github.com/vitistack/gslb-operator/pkg/persistence/store/valkey"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 )
@@ -62,6 +65,15 @@ func main() {
 		bslog.Fatal("failed to create valkey store for gslb service groups", slog.String("reason", err.Error()))
 	}
 
+	var statusRepo *status.StatusRepo
+	if config.GSLB().StatusEnabled() {
+		statusStore, err := valkeyStore.NewStore[serviceModels.GSLBServiceStatus](valkeyClient, "gslb:service_status", time.Minute*10)
+		if err != nil {
+			bslog.Fatal("failed to create valkey store for gslb service-status", slog.String("reason", err.Error()))
+		}
+		statusRepo = status.NewStatusRepo(statusStore)
+	}
+
 	svcGroupRepo := servicegroup.NewServiceGroupRepo(servicesStore)
 
 	// creating dns - handler objects
@@ -86,9 +98,8 @@ func main() {
 
 	background := context.Background()
 	ctx, cancel := context.WithCancel(background)
-
 	// mq brokers
-	brokers.Init(ctx, valkeyClient)
+	brokers.Init(ctx, valkeyClient, statusRepo)
 
 	dnsHandler.Start(ctx, cancel)
 	updater.Synchronize(ctx)
@@ -138,6 +149,11 @@ func main() {
 	api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),
 	)(spoofsApiService.DeleteOverride))
+
+	gslbServicesApiService := service.NewGSLBServiceHandler(statusRepo)
+	api.HandleFunc(routes.GET_SERVICE_STATUS, middleware.Chain(
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)(gslbServicesApiService.GetServiceStatus))
 
 	// metrics
 	api.Handle(routes.METRICS, promhttp.Handler())
