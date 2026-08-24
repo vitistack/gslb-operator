@@ -92,7 +92,7 @@ func ParseAddressJSON(b []byte) (Address, error) {
 func FromString(addressesStr string) (Address, error) {
 	addresses := strings.Split(addressesStr, ",")
 
-	if len(addresses) > 1 {
+	if len(addresses) == 1 {
 		ip, err := netip.ParseAddr(addresses[0])
 		if err != nil {
 			return nil, fmt.Errorf("unable to parse address: %w", err)

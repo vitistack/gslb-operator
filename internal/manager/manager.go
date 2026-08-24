@@ -430,7 +430,7 @@ func (sm *ServicesManager) handleServiceHealthChange(ctx context.Context) {
 // reconciles the current state of a group to reflect internal state of the manager
 // and external state
 func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
-	err := sm.svcGroupRepo.Update(group.Name(), group.Group())
+	err := sm.svcGroupRepo.Update(group.Name(), group.Group()) // TODO: is this write necessary as long as the only way to get here is through service-healthchange callback?
 	if err != nil {
 		bslog.Error("failed to reconcile service-group",
 			slog.String("reason", err.Error()),

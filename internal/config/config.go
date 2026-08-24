@@ -203,10 +203,22 @@ func (s *splitDns) DNSViews() []string {
 
 // gslb configuration
 type gslb struct {
+	Status struct {
+		Enabled bool `mapstructure:"enabled"`
+	} `mapstructure:"status"`
+	SITE         string `mapstructure:"site"`
 	ZONE         string `mapstructure:"zone"`
 	NS           string `mapstructure:"nameserver"`
 	PollInterval string `mapstructure:"poll_interval"`
 	SERVERS      string `mapstructure:"dnsdist_servers_file"`
+}
+
+func (g *gslb) Site() string {
+	return g.SITE
+}
+
+func (g *gslb) StatusEnabled() bool {
+	return g.Status.Enabled
 }
 
 func (g *gslb) Zone() string {
