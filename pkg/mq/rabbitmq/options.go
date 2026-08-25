@@ -6,9 +6,21 @@ import (
 
 type brokerOption[T any] func(broker *Broker[T])
 
+func WithExchange[T any](exchange string) brokerOption[T] {
+	return func(broker *Broker[T]) {
+		broker.exchange = exchange
+	}
+}
+
 func WithQueue[T any](queue string) brokerOption[T] {
 	return func(broker *Broker[T]) {
 		broker.queue = queue
+	}
+}
+
+func WithFanout[T any]() brokerOption[T] {
+	return func(broker *Broker[T]) {
+		broker.fanout = true
 	}
 }
 

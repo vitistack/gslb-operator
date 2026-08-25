@@ -32,6 +32,7 @@ type Broker[T any] struct {
 	exchange    string
 	dlx         string
 	dlq         string
+	fanout      bool
 	consumerTag string
 	prefetch    int
 	logger      *slog.Logger
@@ -201,9 +202,13 @@ func (b *Broker[T]) declareTopology(channel *connection.Channel) error {
 	}
 
 	if b.exchange != "" {
+		kind := amqp.ExchangeDirect
+		if b.fanout {
+			kind = amqp.ExchangeFanout
+		}
 		if err := channel.ExchangeDeclare(
 			b.exchange,
-			amqp.ExchangeDirect,
+			kind,
 			true,
 			false,
 			false,

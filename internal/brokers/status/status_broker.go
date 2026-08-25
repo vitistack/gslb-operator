@@ -26,16 +26,17 @@ type StatusBroker struct {
 	serviceGroupRepo *servicegroup.ServiceGroupRepo
 }
 
-func Init(ctx context.Context, repo *status.StatusRepo) {
+func Init(ctx context.Context, statusRepo *status.StatusRepo, groupRepo *servicegroup.ServiceGroupRepo) {
 	if config.GSLB().StatusEnabled() {
-		NewStatusBroker(ctx, repo).Subscribe(ctx)
+		NewStatusBroker(ctx, statusRepo, groupRepo).Subscribe(ctx)
 	}
 }
 
-func NewStatusBroker(ctx context.Context, repo *status.StatusRepo) *StatusBroker {
+func NewStatusBroker(ctx context.Context, statusRepo *status.StatusRepo, groupRepo *servicegroup.ServiceGroupRepo) *StatusBroker {
 	mqCfg := config.MQ()
 	broker := &StatusBroker{
-		statusRepo: repo,
+		statusRepo:       statusRepo,
+		serviceGroupRepo: groupRepo,
 		client: rabbitmq.New(
 			ctx,
 			fmt.Sprintf(
@@ -45,11 +46,14 @@ func NewStatusBroker(ctx context.Context, repo *status.StatusRepo) *StatusBroker
 				mqCfg.Endpoint(),
 				mqCfg.Port(),
 			),
+			rabbitmq.WithExchange[serviceModels.SiteGSLBServiceStatus]("ex.gslb.service-status"),
 			rabbitmq.WithQueue[serviceModels.SiteGSLBServiceStatus]("q.gslb.service-status"),
+			rabbitmq.WithFanout[serviceModels.SiteGSLBServiceStatus](),
 		),
 	}
 
 	events.On(domainEvents.EventTypeGSLBService, broker)
+	broker.Subscribe(ctx)
 
 	return broker
 }
@@ -74,14 +78,14 @@ func (s *StatusBroker) Subscribe(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				default:
-					bslog.Error("webhooks subscription stopped unexpectedly")
+					bslog.Error("status subscription stopped unexpectedly")
 				}
 			} else {
 				select {
 				case <-ctx.Done():
 					return
 				default:
-					bslog.Error("webhooks subscription failed", slog.String("reason", err.Error()))
+					bslog.Error("status subscription failed", slog.String("reason", err.Error()))
 				}
 			}
 			select {
@@ -96,10 +100,11 @@ func (s *StatusBroker) Subscribe(ctx context.Context) {
 func (s *StatusBroker) Handle(e *events.Event) {
 	event, ok := e.Payload.(domainEvents.GSLBServiceEvent)
 	if !ok {
-		bslog.Debug("skipping status event handle due to invalid type: %T", e.Payload)
+		bslog.Debug(fmt.Sprintf("skipping status event handle due to invalid type: %T", e.Payload))
 		return
 	}
 
+	bslog.Debug("handling status-update event")
 	siteStatus := service.SiteGSLBServiceStatus{
 		Service: event.GetMemberOf(),
 		Site:    config.GSLB().Site(),
@@ -126,8 +131,6 @@ func (s *StatusBroker) Handle(e *events.Event) {
 	for _, member := range serviceGroup.Members {
 		siteStatus.LocalGSLBServiceStatus.Members = append(siteStatus.LocalGSLBServiceStatus.Members, member.GSLBServiceMemberStatus())
 	}
-	
-	
 
 	err = s.Publish(context.Background(), siteStatus)
 	if err != nil {
@@ -144,9 +147,15 @@ func (s *StatusBroker) GetID() string {
 }
 
 func (s *StatusBroker) handleSiteStatus(ctx context.Context, status serviceModels.SiteGSLBServiceStatus) error {
+	bslog.Debug("received gslb site status", slog.Any("status", status))
 	gslbStatus, err := s.statusRepo.Read(status.Service)
 	if err != nil {
+		bslog.Error("failed to read gslb status", slog.String("reason", err.Error()))
 		return fmt.Errorf("failed to read gslb status: %w", err)
+	}
+
+	if gslbStatus.MemberOf == "" {
+		gslbStatus.MemberOf = status.Service
 	}
 
 	idx := slices.IndexFunc(
@@ -155,10 +164,10 @@ func (s *StatusBroker) handleSiteStatus(ctx context.Context, status serviceModel
 	)
 	if idx == -1 {
 		gslbStatus.Sites = append(gslbStatus.Sites, status)
-		return s.statusRepo.Update(gslbStatus.MemberOf, gslbStatus)
+		return s.statusRepo.Update(status.Service, gslbStatus)
 	}
 
 	gslbStatus.Sites[idx] = status
 
-	return s.statusRepo.Update(gslbStatus.MemberOf, gslbStatus)
+	return s.statusRepo.Update(status.Service, gslbStatus)
 }

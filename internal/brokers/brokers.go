@@ -10,13 +10,14 @@ import (
 	webhooks_broker "github.com/vitistack/gslb-operator/internal/brokers/webhooks"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
+	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
 	"github.com/vitistack/gslb-operator/internal/repositories/status"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/mq/rabbitmq/connection"
 	valkeyStore "github.com/vitistack/gslb-operator/pkg/persistence/store/valkey"
 )
 
-func Init(ctx context.Context, client valkey.Client, statusRepo *status.StatusRepo) {
+func Init(ctx context.Context, client valkey.Client, statusRepo *status.StatusRepo, serviceGroupRepo *servicegroup.ServiceGroupRepo) {
 	if config.MQ().Enabled() {
 		bslog.Debug("mq enabled configuring connection")
 		connection.Configure(
@@ -36,7 +37,7 @@ func Init(ctx context.Context, client valkey.Client, statusRepo *status.StatusRe
 
 		if config.GSLB().StatusEnabled() {
 			bslog.Debug("gslb site status enabled: initializing status broker")
-			status_broker.Init(ctx, statusRepo)
+			status_broker.Init(ctx, statusRepo, serviceGroupRepo)
 		}
 	}
 }
