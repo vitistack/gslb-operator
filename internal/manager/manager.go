@@ -174,10 +174,17 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	sm.serviceGroups.With(newService.MemberOf, func(sg group.ServiceGroup) {
 		sg.RegisterMember(newService)
 
-		bslog.Debug("creating/updating service-group", slog.Any("group", svcGroup))
-		// create/update service group
-		err = sm.svcGroupRepo.Create(serviceCfg.MemberOf, sg.Group())
 	})
+
+	// create/update service group
+	err = sm.svcGroupRepo.Mutate(serviceCfg.MemberOf,
+		func(sg *model.GSLBServiceGroup) {
+			if sg.Members == nil {
+				sg.Members = make(map[string]model.GSLBService)
+			}
+			sg.Members[serviceCfg.ServiceID] = *newService.GSLBService()
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new service: %w", err)
 	}
@@ -247,31 +254,16 @@ func (sm *ServicesManager) RemoveService(id string) error {
 	sm.scheduledServices.Delete(id)
 	sm.schedulers[interval].RemoveService(svc) // remove the service from its scheduler
 
+	if err := sm.svcGroupRepo.DeleteMember(svc.MemberOf, model.GSLBService{ID: id, MemberOf: svc.MemberOf}); err != nil {
+		return fmt.Errorf("failed to delete servicegroup member: %s: %w", svc.GetID(), err)
+	}
+
 	var empty bool
 	sm.serviceGroups.With(svc.MemberOf, func(sg group.ServiceGroup) { empty = sg.RemoveMember(id) })
 	if empty {
-		sm.deleteGroup(svc.MemberOf)
-
-		bslog.Debug("removed service", slog.Any("service", svc))
-		events.Emit(&events.Event{ // publish delete event for service
-			Type: domainEvents.EventTypeGSLBConfigDelete,
-			Payload: domainEvents.GSLBConfigDeleteEvent{
-				LastConfig: svc.GSLBConfig(),
-			},
-			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBConfigDelete, svc.GetID()),
-		})
-		return nil
+		sm.serviceGroups.Delete(svc.MemberOf)
+		serviceGroups.Dec()
 	}
-	var err error
-	sm.serviceGroups.With(
-		svc.MemberOf,
-		func(sg group.ServiceGroup) { err = sm.svcGroupRepo.Update(svc.MemberOf, sg.Group()) },
-	)
-	if err != nil {
-		return fmt.Errorf("failed to delete service: %w", err)
-	}
-
 	bslog.Debug("removed service", slog.Any("service", svc))
 	events.Emit(&events.Event{ // publish delete event for service
 		Type: domainEvents.EventTypeGSLBConfigDelete,
@@ -321,13 +313,26 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 	}
 
 	sm.serviceGroups.With(oldMemberOf, func(sg group.ServiceGroup) {
-		err = sm.svcGroupRepo.Update(oldMemberOf, sg.Group())
+		err = sm.svcGroupRepo.Mutate(oldMemberOf, func(g *model.GSLBServiceGroup) {
+			if g.Members == nil {
+				g.Members = make(map[string]model.GSLBService)
+			}
+			g.Members[old.GetID()] = *old.GSLBService()
+
+			if g.Active == nil {
+				g.Active = make(map[string]string)
+			}
+			for _, view := range views {
+				if active := sg.GetActive(view); active != nil {
+					g.Active[view] = active.GetID()
+				} else {
+					delete(g.Active, view)
+				}
+			}
+		})
 		if err != nil {
-			bslog.Error(
-				"failed to update servicegroup config persistently",
-				slog.String("reason", err.Error()),
-				slog.Any("group", sg),
-			)
+			bslog.Error("failed to update servicegroup config persistently",
+				slog.String("reason", err.Error()), slog.Any("group", sg))
 		}
 	})
 
@@ -357,51 +362,39 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc *service.Service) {
 	sm.newServiceGroup(newMemberOf)
 	sm.serviceGroups.With(newMemberOf, func(sg group.ServiceGroup) {
-		// Register in new group and persist its state
 		sg.RegisterMember(svc)
 
-		if err := sm.svcGroupRepo.Create(newMemberOf, sg.Group()); err != nil {
-			bslog.Error(
-				"failed to persist new service group membership",
-				slog.String("reason", err.Error()),
-				slog.String("newMemberOf", newMemberOf),
-				slog.Any("service", svc),
-			)
+		if err := sm.svcGroupRepo.Mutate(newMemberOf, func(g *model.GSLBServiceGroup) {
+			if g.Members == nil {
+				g.Members = make(map[string]model.GSLBService)
+			}
+			g.Members[svc.GetID()] = *svc.GSLBService()
+		}); err != nil {
+			bslog.Error("failed to persist new service group membership",
+				slog.String("reason", err.Error()), slog.String("newMemberOf", newMemberOf), slog.Any("service", svc))
 			return
 		}
 
 		events.Emit(&events.Event{
-			Type: domainEvents.EventTypeGSLBServiceMemberAdd,
-			Payload: domainEvents.GSLBServiceMemberAddEvent{
-				Service:   svc.MemberOf,
-				NewMember: *svc.GSLBService(),
-			},
+			Type:      domainEvents.EventTypeGSLBServiceMemberAdd,
+			Payload:   domainEvents.GSLBServiceMemberAddEvent{Service: svc.MemberOf, NewMember: *svc.GSLBService()},
 			Timestamp: time.Now(),
 			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, svc.MemberOf),
 		})
 	})
 
 	var empty bool
-	sm.serviceGroups.With(oldMemberOf, func(sg group.ServiceGroup) {
-		empty = sg.RemoveMember(svc.GetID())
-		if !empty {
-			if err := sm.svcGroupRepo.Update(oldMemberOf, sg.Group()); err != nil {
-				bslog.Error(
-					"failed to update old service group after member removal",
-					slog.String("reason", err.Error()),
-					slog.String("oldMemberOf", oldMemberOf),
-					slog.Any("service", svc),
-				)
-			}
-		}
-		bslog.Debug("updated service group membership",
-			slog.String("oldGroup", oldMemberOf),
-			slog.String("newGroup", newMemberOf),
-		)
-	})
+	sm.serviceGroups.With(oldMemberOf, func(sg group.ServiceGroup) { empty = sg.RemoveMember(svc.GetID()) })
+
+	if err := sm.svcGroupRepo.DeleteMember(oldMemberOf, model.GSLBService{ID: svc.GetID(), MemberOf: oldMemberOf}); err != nil {
+		bslog.Error("failed to update old service group after member removal",
+			slog.String("reason", err.Error()), slog.String("oldMemberOf", oldMemberOf), slog.Any("service", svc))
+	}
+	bslog.Debug("updated service group membership", slog.String("oldGroup", oldMemberOf), slog.String("newGroup", newMemberOf))
 
 	if empty {
-		sm.deleteGroup(oldMemberOf)
+		sm.serviceGroups.Delete(oldMemberOf)
+		serviceGroups.Dec()
 	}
 }
 
@@ -425,63 +418,47 @@ func (sm *ServicesManager) handleServiceHealthChange(ctx context.Context) {
 // reconciles the current state of a group to reflect internal state of the manager
 // and external state
 func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
-	err := sm.svcGroupRepo.Update(group.Name(), group.Group()) // TODO: is this write necessary as long as the only way to get here is through service-healthchange callback?
-	if err != nil {
-		bslog.Error("failed to reconcile service-group",
-			slog.String("reason", err.Error()),
-			slog.Any("group", group),
-		)
-		return
-	}
-
-	// remove all DNS reference for the group
-	/*
-	* conscious decision to leave out view here:
-	* because if the record is not created later then it should have not existed in the first place
-	* e.g. we clean it up here. (late non the less)
-	*
-	* or if all the sites are down, then it should be down from ALL views
-	 */
-	err = sm.DNSDelete(group.ID())
-	if err != nil {
-		bslog.Error("failed to reconcile gslb service-group",
-			slog.String("reason", fmt.Errorf("failed to delete DNS records: %w", err).Error()),
-			slog.Any("group", group))
-		return
-	}
-
 	active := group.GetActive(view)
-	if active == nil {
-		// all services for the group is unhealthy
-		bslog.Warn("gslb service group is down",
-			slog.String("service", group.Name()),
-			slog.String("view", view),
-			slog.String("status", "down"),
-			slog.String("reason", "all members are considered down"),
-		)
 
+	err := sm.svcGroupRepo.Mutate(group.Name(), func(g *model.GSLBServiceGroup) {
+		if g.Active == nil {
+			g.Active = make(map[string]string)
+		}
+		if active != nil {
+			g.Active[view] = active.GetID()
+		} else {
+			delete(g.Active, view)
+		}
+	})
+	if err != nil {
+		bslog.Error("failed to reconcile service-group", slog.String("reason", err.Error()), slog.Any("group", group))
+		return
+	}
+
+	if err := sm.DNSDelete(group.ID()); err != nil {
+		bslog.Error("failed to reconcile gslb service-group",
+			slog.String("reason", fmt.Errorf("failed to delete DNS records: %w", err).Error()), slog.Any("group", group))
+		return
+	}
+
+	if active == nil {
+		bslog.Warn("gslb service group is down",
+			slog.String("service", group.Name()), slog.String("view", view),
+			slog.String("status", "down"), slog.String("reason", "all members are considered down"))
 		events.Emit(&events.Event{
-			Type: domainEvents.EventTypeGSLBServiceDown,
-			Payload: domainEvents.GSLBServiceDownEvent{
-				MemberOf: group.Name(),
-			},
+			Type:      domainEvents.EventTypeGSLBServiceDown,
+			Payload:   domainEvents.GSLBServiceDownEvent{MemberOf: group.Name()},
 			Timestamp: time.Now(),
 			ID:        events.ID(domainEvents.EventTypeGSLBServiceDown, group.Name()),
 		})
 		return
 	}
 
-	if err := sm.DNSCreate(
-		update.Record{
-			Name:    active.MemberOf,
-			Address: active.GetAddress(),
-			Views:   active.Views,
-			UUID:    string(group.ID()),
-		}); err != nil {
+	if err := sm.DNSCreate(update.Record{
+		Name: active.MemberOf, Address: active.GetAddress(), Views: active.Views, UUID: string(group.ID()),
+	}); err != nil {
 		bslog.Error("failed to reconcile gslb service-group",
-			slog.String("reason", fmt.Errorf("failed to create DNS record: %w", err).Error()),
-			slog.Any("activeService", active),
-		)
+			slog.String("reason", fmt.Errorf("failed to create DNS record: %w", err).Error()), slog.Any("activeService", active))
 		return
 	}
 
@@ -626,7 +603,7 @@ func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig, optional
 	opts = append(opts, service.WithDryRunChecks(sm.dryrun))
 
 	var gslbServiceGroup *model.GSLBServiceGroup
-	if len(optionalGSLBServiceGroup) > 0 {
+	if optionalGSLBServiceGroup != nil {
 		gslbServiceGroup = optionalGSLBServiceGroup[0]
 	} else {
 		svcGroup, err := sm.svcGroupRepo.Read(config.MemberOf)
@@ -674,8 +651,7 @@ func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChan
 	bslog.Debug("received health-change", slog.Any("service", event.Svc), slog.Bool("healthy", event.Healthy))
 
 	sm.serviceGroups.With(event.Svc.MemberOf, func(sg group.ServiceGroup) {
-		err := sm.svcGroupRepo.Update(sg.Name(), sg.Group())
-		if err != nil {
+		if err := sm.svcGroupRepo.UpdateMember(event.Svc.MemberOf, *event.Svc.GSLBService()); err != nil {
 			bslog.Error(
 				"failed to update service health on health-change",
 				slog.String("reason", err.Error()),
@@ -684,15 +660,13 @@ func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChan
 		}
 
 		events.Emit(&events.Event{
-			Type: domainEvents.EventTypeGSLBServiceMemberHealthChange,
-			Payload: domainEvents.GSLBServiceMemberHealthChangeEvent{
-				Member: *event.Svc.GSLBService(),
-			},
+			Type:      domainEvents.EventTypeGSLBServiceMemberHealthChange,
+			Payload:   domainEvents.GSLBServiceMemberHealthChangeEvent{Member: *event.Svc.GSLBService()},
 			Timestamp: time.Now(),
 			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberHealthChange, event.Svc.MemberOf),
 		})
 
-		sg.OnServiceHealthChange(event.Svc, event.Healthy)
+		sg.OnServiceHealthChange(event.Svc, event.Healthy) // any resulting promotion persists its own view via reconcile
 	})
 }
 
@@ -720,7 +694,13 @@ func (sm *ServicesManager) CreateOverride(override spoofs.Override) error {
 			return
 		}
 
-		err = sm.svcGroupRepo.Update(override.MemberOf, sg.Group())
+		err = sm.svcGroupRepo.Mutate(override.MemberOf, func(g *model.GSLBServiceGroup) {
+			if g.Active == nil {
+				g.Active = make(map[string]string)
+			}
+			g.Active[view] = override.Address.String()
+			g.HasOverride = true
+		})
 		if err != nil {
 			sg.ClearOverride(view)
 			createErr = fmt.Errorf("failed to update service group: %w", err)

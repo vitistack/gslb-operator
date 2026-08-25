@@ -32,6 +32,16 @@ func (sr *ServiceGroupRepo) Read(memberOf string) (model.GSLBServiceGroup, error
 	}
 }
 
+func (sr *ServiceGroupRepo) Mutate(memberOf string, mut func(*model.GSLBServiceGroup)) error {
+	group, err := sr.Read(memberOf)
+	if err != nil {
+		return err
+	}
+
+	mut(&group)
+	return sr.Update(memberOf, &group)
+}
+
 func (sr *ServiceGroupRepo) Update(memberOf string, group *model.GSLBServiceGroup) error {
 	if err := sr.store.Save(memberOf, *group); err != nil {
 		return fmt.Errorf("could not update group: %s: %w", memberOf, err)
@@ -45,7 +55,7 @@ func (sr *ServiceGroupRepo) UpdateMember(memberOf string, svc model.GSLBService)
 		return fmt.Errorf("failed to read from storage: %w", err)
 	}
 	group.Members[svc.ID] = svc
-	
+
 	return sr.store.Save(memberOf, group)
 }
 
