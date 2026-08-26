@@ -164,27 +164,30 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	}
 
 	_, exists := svcGroup.Members[serviceCfg.ServiceID]
-	if svcGroup.Members == nil {
-		svcGroup.Members = make(map[string]model.GSLBService)
-	}
-	svcGroup.Members[serviceCfg.ServiceID] = *newService.GSLBService()
 
 	// create new service group if needed, and register service in group
 	sm.newServiceGroup(newService.MemberOf)
 	sm.serviceGroups.With(newService.MemberOf, func(sg group.ServiceGroup) {
 		sg.RegisterMember(newService)
 
+		inMemGroup := sg.Group()
+
+		// create/update service group
+		err = sm.svcGroupRepo.Mutate(
+			serviceCfg.MemberOf,
+			func(persistedGroup *model.GSLBServiceGroup) {
+				if persistedGroup.Members == nil {
+					persistedGroup.Members = make(map[string]model.GSLBService)
+				}
+				persistedGroup.Active = inMemGroup.Active
+				persistedGroup.HasOverride = inMemGroup.HasOverride
+				persistedGroup.Views = inMemGroup.Views
+				persistedGroup.UUID = inMemGroup.UUID
+				persistedGroup.Members[serviceCfg.ServiceID] = *newService.GSLBService()
+			},
+		)
 	})
 
-	// create/update service group
-	err = sm.svcGroupRepo.Mutate(serviceCfg.MemberOf,
-		func(sg *model.GSLBServiceGroup) {
-			if sg.Members == nil {
-				sg.Members = make(map[string]model.GSLBService)
-			}
-			sg.Members[serviceCfg.ServiceID] = *newService.GSLBService()
-		},
-	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new service: %w", err)
 	}
