@@ -44,22 +44,12 @@ func (h *Handler) Start(ctx context.Context, cancel func()) {
 		close(h.stop)
 	}
 
-	// function to update DNS
-	//h.svcManager.DNSUpdate = func(record update.Record, healthy bool) {
-	//	if healthy {
-	//		h.onServiceUp(record)
-	//	} else {
-	//		h.onServiceDown(record)
-	//	}
-	//}
-
 	h.svcManager.DNSCreate = h.updater.Create
 	h.svcManager.DNSDelete = h.updater.Delete
 
 	h.svcManager.Start(ctx)
 
 	zoneBatches, pollErrors := h.fetcher.StartAutoPoll(ctx)
-
 	h.wg.Go(func() {
 		h.handleZoneUpdates(zoneBatches, pollErrors)
 	})
@@ -82,28 +72,8 @@ func (h *Handler) Stop(ctx context.Context) {
 	}
 }
 
-func (h *Handler) Create(rec update.Record) error { return h.updater.Create(rec) }
-func (h *Handler) Delete(id string, views ...string) error {
-	return h.updater.Delete(id, views...)
-}
-
-//func (h *Handler) onServiceDown(rec update.Record) {
-//	h.wg.Go(func() {
-//		err := h.updater.OnServiceDown(rec)
-//		if err != nil {
-//			bslog.Error("error while updating service on service down", slog.String("error", err.Error()))
-//		}
-//	})
-//}
-//
-//func (h *Handler) onServiceUp(rec update.Record) {
-//	h.wg.Go(func() {
-//		err := h.updater.OnServiceUp(rec)
-//		if err != nil {
-//			bslog.Error("error while updating service state on service up", slog.String("error", err.Error()))
-//		}
-//	})
-//}
+func (h *Handler) Create(rec update.Record) error          { return h.updater.Create(rec) }
+func (h *Handler) Delete(id string, views ...string) error { return h.updater.Delete(id, views...) }
 
 func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan error) {
 	for {
@@ -112,25 +82,30 @@ func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan erro
 			if !ok { // chan is closed
 				return
 			}
-			servicesInBatch := make(map[string]struct{}, 0)
-			for _, record := range records { // registers every service in the current batch
-				svc := h.handleRecord(record)
-				if svc != nil {
-					servicesInBatch[svc.GetID()] = struct{}{}
-				}
-			}
 
-			for key := range h.knownServices { // remove any services that dont exist in the current batch
-				if _, exists := servicesInBatch[key]; !exists {
-					bslog.Info("service no longer exists in GSLB - config zone", slog.String("action", "removing"), slog.String("serviceID", key))
-					err := h.svcManager.RemoveService(key)
-					if err != nil {
-						bslog.Error("failed to remove service", slog.Any("serviceID", key), slog.String("reason", err.Error()))
+			if len(h.knownServices) == 0 {
+				h.bulkHandleRecords(records)
+			} else {
+				servicesInBatch := make(map[string]struct{}, 0)
+				for _, record := range records { // registers every service in the current batch
+					svc := h.handleRecord(record)
+					if svc != nil {
+						servicesInBatch[svc.GetID()] = struct{}{}
 					}
 				}
-			}
 
-			h.knownServices = servicesInBatch
+				for key := range h.knownServices { // remove any services that dont exist in the current batch
+					if _, exists := servicesInBatch[key]; !exists {
+						bslog.Info("service no longer exists in GSLB - config zone", slog.String("action", "removing"), slog.String("serviceID", key))
+						err := h.svcManager.RemoveService(key)
+						if err != nil {
+							bslog.Error("failed to remove service", slog.Any("serviceID", key), slog.String("reason", err.Error()))
+						}
+					}
+				}
+
+				h.knownServices = servicesInBatch
+			}
 
 		case err, ok := <-pollErrors:
 			if !ok {
@@ -143,6 +118,34 @@ func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan erro
 			return
 		}
 	}
+}
+
+func (h *Handler) bulkHandleRecords(records []dns.RR) {
+	configs := make([]model.GSLBConfig, 0)
+	for _, record := range records {
+		txt, ok := record.(*dns.TXT)
+		if !ok {
+			continue
+		}
+
+		rawData := strings.Join(txt.Txt, "")
+		data := strings.ReplaceAll(rawData, "\\", "")
+		gslbConfig := model.GSLBConfig{
+			MemberOf:         txt.Hdr.Name,
+			FailureThreshold: service.DEFAULT_FAILURE_THRESHOLD,
+			Views:            []string{config.DNS().DefaultView()},
+		}
+
+		if err := json.NewDecoder(strings.NewReader(data)).Decode(&gslbConfig); err != nil {
+			bslog.Error("failed to parse GSLB config", slog.String("reason", err.Error()))
+			continue
+		}
+
+		configs = append(configs, gslbConfig)
+		h.knownServices[gslbConfig.ServiceID] = struct{}{}
+	}
+
+	h.svcManager.ColdStart(configs)
 }
 
 func (h *Handler) handleRecord(record dns.RR) *service.Service {
@@ -159,7 +162,7 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 		Views:            []string{config.DNS().DefaultView()},
 	}
 
-	err := json.Unmarshal([]byte(data), &svcConfig)
+	err := json.NewDecoder(strings.NewReader(data)).Decode(&svcConfig)
 	if err != nil {
 		bslog.Error("failed to parse GSLB entry", slog.String("reason", err.Error()))
 		return nil

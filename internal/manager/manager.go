@@ -140,6 +140,78 @@ func (sm *ServicesManager) OnShutdown() error {
 	return nil
 }
 
+func (sm *ServicesManager) ColdStart(configs []model.GSLBConfig) {
+	type touchedView struct {
+		sg   group.ServiceGroup
+		view string
+	}
+	touched := make(map[string]touchedView)
+
+	sm.mutex.Lock()
+
+	bslog.Info("cold start sequence initialized")
+	coldStartTime := time.Now()
+	for _, cfg := range configs {
+		svcGroup, err := sm.svcGroupRepo.Read(cfg.MemberOf)
+		if err != nil {
+			bslog.Error("could not read persisted service group during hot load", slog.String("reason", err.Error()))
+		}
+
+		newService, err := service.NewServiceFromGSLBConfig(cfg, sm.BuildServiceOptions(cfg, &svcGroup)...)
+		if err != nil {
+			bslog.Error("failed to build service from config during bulk load", slog.String("reason", err.Error()), slog.Any("config", cfg))
+			continue
+		}
+
+		sm.serviceGroups.Create(cfg.MemberOf, func(sg group.ServiceGroup) {
+			for view, activeID := range svcGroup.Active {
+				sg.Seed(view, activeID)
+				sg.SetOnPromotion(func(sg group.ServiceGroup, view string) {
+					touched[cfg.MemberOf+"|"+view] = touchedView{sg, view}
+				})
+			}
+		})
+
+		sm.serviceGroups.With(cfg.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+			sg.RegisterMember(newService)
+			unlock.Unlock()
+		})
+		sm.newScheduler(newService.ScheduledInterval).ScheduleService(newService)
+		sm.scheduledServices.Add(newService)
+
+		// initialize service callbacks
+		newService.SetHealthChangeCallback(func(event *service.HealthChangeEvent) { sm.healthChangeEvents <- event })
+		newService.SetFailureCountCallback(func(svc *model.GSLBService) {
+			sm.wg.Go(func() {
+				if err := sm.svcGroupRepo.UpdateMember(svc.MemberOf, *svc); err != nil {
+					bslog.Error("failed to update service failurecount",
+						slog.String("reason", err.Error()),
+						slog.Any("service", svc),
+					)
+				}
+			})
+		})
+	}
+	sm.mutex.Unlock()
+
+	for _, t := range touched {
+		sm.reconcile(t.sg, t.view)
+	}
+
+	// reset every group to have correct onpromotion logic after coldstart
+	for memberOf, svcGroup := range sm.serviceGroups.Groups() {
+		svcGroup.SetOnPromotion(func(_ group.ServiceGroup, view string) {
+			sm.wg.Go(func() {
+				sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+					sm.reconcile(sg, view)
+					unlock.Unlock()
+				})
+			})
+		})
+	}
+	bslog.Info("cold start sequence finished", slog.Float64("took", time.Since(coldStartTime).Seconds()))
+}
+
 func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*service.Service, error) {
 	sm.mutex.RLock()
 	_, _, oldSvc := sm.scheduledServices.Search(serviceCfg.ServiceID)
@@ -167,10 +239,11 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 
 	// create new service group if needed, and register service in group
 	sm.newServiceGroup(newService.MemberOf)
-	sm.serviceGroups.With(newService.MemberOf, func(sg group.ServiceGroup) {
+	sm.serviceGroups.With(newService.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
 		sg.RegisterMember(newService)
 
 		inMemGroup := sg.Group()
+		unlock.Unlock()
 
 		// create/update service group
 		err = sm.svcGroupRepo.Mutate(
@@ -262,7 +335,10 @@ func (sm *ServicesManager) RemoveService(id string) error {
 	}
 
 	var empty bool
-	sm.serviceGroups.With(svc.MemberOf, func(sg group.ServiceGroup) { empty = sg.RemoveMember(id) })
+	sm.serviceGroups.With(svc.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+		empty = sg.RemoveMember(id)
+		unlock.Unlock()
+	})
 	if empty {
 		sm.serviceGroups.Delete(svc.MemberOf)
 		serviceGroups.Dec()
@@ -303,11 +379,12 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 	if oldMemberOf != newMemberOf {
 		sm.memberOfChanged(oldMemberOf, newMemberOf, old)
 	} else {
-		ok := sm.serviceGroups.With(oldMemberOf, func(sg group.ServiceGroup) {
+		ok := sm.serviceGroups.With(oldMemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
 			views = append(views, old.Views...)
 			slices.Sort(views)
 			// update all views that may have had an effect
 			sg.Refresh(slices.Compact(views)...)
+			unlock.Unlock()
 		})
 
 		if !ok {
@@ -315,7 +392,7 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 		}
 	}
 
-	sm.serviceGroups.With(oldMemberOf, func(sg group.ServiceGroup) {
+	sm.serviceGroups.With(oldMemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
 		err = sm.svcGroupRepo.Mutate(oldMemberOf, func(g *model.GSLBServiceGroup) {
 			if g.Members == nil {
 				g.Members = make(map[string]model.GSLBService)
@@ -337,6 +414,7 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 			bslog.Error("failed to update servicegroup config persistently",
 				slog.String("reason", err.Error()), slog.Any("group", sg))
 		}
+		unlock.Unlock()
 	})
 
 	sm.mutex.Lock()
@@ -364,8 +442,9 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 
 func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc *service.Service) {
 	sm.newServiceGroup(newMemberOf)
-	sm.serviceGroups.With(newMemberOf, func(sg group.ServiceGroup) {
+	sm.serviceGroups.With(newMemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
 		sg.RegisterMember(svc)
+		unlock.Unlock()
 
 		if err := sm.svcGroupRepo.Mutate(newMemberOf, func(g *model.GSLBServiceGroup) {
 			if g.Members == nil {
@@ -387,7 +466,10 @@ func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc 
 	})
 
 	var empty bool
-	sm.serviceGroups.With(oldMemberOf, func(sg group.ServiceGroup) { empty = sg.RemoveMember(svc.GetID()) })
+	sm.serviceGroups.With(oldMemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+		empty = sg.RemoveMember(svc.GetID())
+		unlock.Unlock()
+	})
 
 	if err := sm.svcGroupRepo.DeleteMember(oldMemberOf, model.GSLBService{ID: svc.GetID(), MemberOf: oldMemberOf}); err != nil {
 		bslog.Error("failed to update old service group after member removal",
@@ -422,6 +504,13 @@ func (sm *ServicesManager) handleServiceHealthChange(ctx context.Context) {
 // and external state
 func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
 	active := group.GetActive(view)
+
+	if seeded, ok := group.SeededActive(view); ok {
+		group.ClearSeed(view)
+		if active != nil && active.GetID() == seeded {
+			return
+		}
+	}
 
 	err := sm.svcGroupRepo.Mutate(group.Name(), func(g *model.GSLBServiceGroup) {
 		if g.Active == nil {
@@ -520,8 +609,9 @@ func (sm *ServicesManager) newServiceGroup(memberOf string) {
 	created := sm.serviceGroups.Create(memberOf, func(sg group.ServiceGroup) {
 		sg.SetOnPromotion(func(_ group.ServiceGroup, view string) {
 			sm.wg.Go(func() {
-				sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup) {
+				sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
 					sm.reconcile(sg, view)
+					unlock.Unlock()
 				})
 			})
 		})
@@ -597,7 +687,10 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 
 func (sm *ServicesManager) GetActiveForMemberOf(memberOf string) *service.Service {
 	var active *service.Service
-	sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup) { active = sg.GetActive() })
+	sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+		active = sg.GetActive()
+		unlock.Unlock()
+	})
 	return active
 }
 
@@ -653,7 +746,7 @@ func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig, optional
 func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChangeEvent) {
 	bslog.Debug("received health-change", slog.Any("service", event.Svc), slog.Bool("healthy", event.Healthy))
 
-	sm.serviceGroups.With(event.Svc.MemberOf, func(sg group.ServiceGroup) {
+	sm.serviceGroups.With(event.Svc.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
 		if err := sm.svcGroupRepo.UpdateMember(event.Svc.MemberOf, *event.Svc.GSLBService()); err != nil {
 			bslog.Error(
 				"failed to update service health on health-change",
@@ -670,12 +763,13 @@ func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChan
 		})
 
 		sg.OnServiceHealthChange(event.Svc, event.Healthy) // any resulting promotion persists its own view via reconcile
+		unlock.Unlock()
 	})
 }
 
 func (sm *ServicesManager) CreateOverride(override spoofs.Override) error {
 	var createErr error
-	ok := sm.serviceGroups.With(override.MemberOf, func(sg group.ServiceGroup) {
+	ok := sm.serviceGroups.With(override.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
 		view := override.View
 		if view == "" {
 			view = config.DNS().DefaultView()
@@ -721,6 +815,7 @@ func (sm *ServicesManager) CreateOverride(override spoofs.Override) error {
 			createErr = fmt.Errorf("failed to create DNS spoof: %w", err)
 			return
 		}
+		unlock.Unlock()
 	})
 
 	if !ok {
@@ -736,7 +831,7 @@ func (sm *ServicesManager) CreateOverride(override spoofs.Override) error {
 
 func (sm *ServicesManager) RemoveOverride(memberOf string, views ...string) error {
 	var removeErr error
-	ok := sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup) {
+	ok := sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
 		overridenViews := make(map[string]struct{})
 		for _, view := range views {
 			if sg.HasOverride(view) {
@@ -788,7 +883,7 @@ func (sm *ServicesManager) RemoveOverride(memberOf string, views ...string) erro
 				}
 			}
 		}
-
+		unlock.Unlock()
 	})
 
 	if !ok {

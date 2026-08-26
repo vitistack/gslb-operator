@@ -6,6 +6,10 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/iter"
 )
 
+type GroupUnlocker interface {
+	Unlock()
+}
+
 type lockedGroup struct {
 	lock  *sync.Mutex // per group access control
 	group *ServiceGroupV2
@@ -46,9 +50,9 @@ func NewServiceGroups() *ServiceGroups {
 //	lGroup.lock.Unlock()
 //}
 
-// With locks the group for key, invokes fn, and always unlocks afterwards
+// With locks the group for key, and invokes fn which is responsible for unlocking the group once it is finished
 // returns false if there are no group for key
-func (g *ServiceGroups) With(key string, fn func(ServiceGroup)) bool {
+func (g *ServiceGroups) With(key string, fn func(ServiceGroup, GroupUnlocker)) bool {
 	g.lock.Lock()
 	lGroup, ok := g.groups[key]
 	g.lock.Unlock()
@@ -58,9 +62,8 @@ func (g *ServiceGroups) With(key string, fn func(ServiceGroup)) bool {
 	}
 
 	lGroup.lock.Lock()
-	defer lGroup.lock.Unlock()
 
-	fn(lGroup.group)
+	fn(lGroup.group, lGroup.lock)
 	return true
 }
 
@@ -89,7 +92,9 @@ func (g *ServiceGroups) Create(key string, init func(ServiceGroup)) bool {
 	}
 
 	newGroup := NewServiceGroup(key)
-	init(newGroup)
+	if init != nil {
+		init(newGroup)
+	}
 
 	g.groups[key] = lockedGroup{
 		lock:  &sync.Mutex{},
