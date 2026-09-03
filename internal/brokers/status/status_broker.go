@@ -34,17 +34,26 @@ func Init(ctx context.Context, statusRepo *status.StatusRepo, groupRepo *service
 
 func NewStatusBroker(ctx context.Context, statusRepo *status.StatusRepo, groupRepo *servicegroup.ServiceGroupRepo) *StatusBroker {
 	mqCfg := config.MQ()
+	var amqpUrlPrefix string
+
+	switch config.Server().Environment() {
+	case "local", "LOCAL":
+		amqpUrlPrefix = "amqp://"
+	default:
+		amqpUrlPrefix = "amqps://"
+	}
+
 	broker := &StatusBroker{
 		statusRepo:       statusRepo,
 		serviceGroupRepo: groupRepo,
 		client: rabbitmq.New(
 			ctx,
 			fmt.Sprintf(
-				"amqp://%s:%s@%s:%s",
+				"%s%s:%s@%s",
+				amqpUrlPrefix,
 				mqCfg.User(),
 				mqCfg.Pass(),
 				mqCfg.Endpoint(),
-				mqCfg.Port(),
 			),
 			rabbitmq.WithExchange[serviceModels.SiteGSLBServiceStatus]("ex.gslb.service-status"),
 			rabbitmq.WithQueue[serviceModels.SiteGSLBServiceStatus]("q.gslb.service-status"),

@@ -42,7 +42,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("gslb_poll_interval", c.Gslb.PollInterval),
 
 		slog.Bool("mq_enabled", c.Mq.Enable),
-		slog.String("mq_url", fmt.Sprintf("%s:%s", c.Mq.EndPoint, c.Mq.PORT)),
+		slog.String("mq_url", fmt.Sprintf("%s", c.Mq.EndPoint)),
 
 		slog.Bool("webhooks_enabled", c.Webhooks.Enable),
 		slog.Bool("slack_enabled", c.Webhooks.Notices.SlackNotifier.Enable),
@@ -112,7 +112,7 @@ func init() {
 	}
 
 	switch cfg.Server.Env {
-	case "dev", "development", "DEV", "DEVELOPMENT":
+	case "dev", "development", "DEV", "DEVELOPMENT", "local", "LOCAL":
 		handler = bslog.NewHandler(
 			os.Stdout, // log output
 			// slog handler factory
@@ -313,7 +313,6 @@ type mq struct {
 	Usr      string `mapstructure:"user"`
 	Passwd   string `mapstructure:"pass"`
 	EndPoint string `mapstructure:"endpoint"`
-	PORT     string `mapstructure:"port"`
 }
 
 func (mq *mq) Enabled() bool {
@@ -330,10 +329,6 @@ func (mq *mq) Pass() string {
 
 func (mq *mq) Endpoint() string {
 	return mq.EndPoint
-}
-
-func (mq *mq) Port() string {
-	return mq.PORT
 }
 
 type valkey struct {

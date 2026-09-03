@@ -95,9 +95,13 @@ func loadSecrets(v *viper.Viper, flags FeatureFlags, dir string) (loaded, total 
 		secretsKeyMap["VK_USER"] = "valkey.user"
 	}
 
-	if flags.WebHooks.Enabled {
+	if flags.MQ.Enabled {
+		secretsKeyMap["MQ_ENDPOINT"] = "mq.endpoint"
 		secretsKeyMap["MQ_PASS"] = "mq.pass"
 		secretsKeyMap["MQ_USER"] = "mq.user"
+	}
+
+	if flags.WebHooks.Enabled {
 		if flags.WebHooks.Notifications.Slack.Enabled {
 			secretsKeyMap["SLACK_APP_TOKEN"] = "webhooks.notifications.slack.app_token"
 			secretsKeyMap["SLACK_BOT_TOKEN"] = "webhooks.notifications.slack.bot_token"
