@@ -2,43 +2,43 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: gslb-operator-config
+data:
+  config.yaml: |
+    server:
+      env: {{ .Values.env }}
+      lua_sandbox: sandbox.lua
+      log_level: {{ .Values.logLevel }}
 
-config.yaml: |
-  server:
-    env: {{ .Values.env }}
-    lua_sandbox: sandbox.lua
-    log_level: {{ .Values.logLevel }}
+    api:
+      port: {{ .Values.settings.port }}
 
-  api:
-    port: {{ .Values.settings.port }}
-
-  split_dns:
-    enabled: {{ .Values.split_dns.enabled }}
-    defaultView: {{ .Values.split_dns.defaultView }}
-    views: {{ .Values.split_dns.views }}
-
-
-  gslb:
-    status:
-      enable: false
-    site: {{ .Values.datacenter }}
-    poll_interval: 1m
-    dnsdist_servers_file: ./secrets/GSLB_DNSDIST_SERVERS
-
-  valkey:
-    enabled: true
-    addr: {{ .Values.settings.vk_addr }}
+    split_dns:
+      enabled: {{ .Values.split_dns.enabled }}
+      defaultView: {{ .Values.split_dns.defaultView }}
+      views: {{ .Values.split_dns.views }}
 
 
-  {{- if .Values.mq.enabled }}
-  mq:
-    enabled: true
-  {{- end }}
+    gslb:
+      status:
+        enable: false
+      site: {{ .Values.datacenter }}
+      poll_interval: 1m
+      dnsdist_servers_file: ./secrets/GSLB_DNSDIST_SERVERS
 
-  {{- if .Values.webhooks.enabled }}
-  webhooks:
-    enabled: true
-    notifications:
-      slack:
-        enabled: false
-  {{- end }}
+    valkey:
+      enabled: true
+      addr: {{ .Values.settings.vk_addr }}
+
+
+    {{- if .Values.mq.enabled }}
+    mq:
+      enabled: true
+    {{- end }}
+
+    {{- if .Values.webhooks.enabled }}
+    webhooks:
+      enabled: true
+      notifications:
+        slack:
+          enabled: false
+    {{- end }}
