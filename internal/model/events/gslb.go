@@ -7,9 +7,17 @@ import (
 	"github.com/vitistack/gslb-operator/internal/model"
 )
 
+type GSLBServiceEvent interface {
+	GetMemberOf() string
+}
+
 // gslb:service:up
 type GSLBServiceUpEvent struct {
 	NewActive model.GSLBService
+}
+
+func (e GSLBServiceUpEvent) GetMemberOf() string {
+	return e.NewActive.MemberOf
 }
 
 func (e GSLBServiceUpEvent) SlackValue() slack.MsgOption {
@@ -28,6 +36,10 @@ type GSLBServiceDownEvent struct {
 	MemberOf string
 }
 
+func (e GSLBServiceDownEvent) GetMemberOf() string {
+	return e.MemberOf
+}
+
 func (e GSLBServiceDownEvent) SlackValue() slack.MsgOption {
 	return slack.MsgOptionBlocks(
 		slack.NewHeaderBlock(slack.NewTextBlockObject(slack.PlainTextType, ":skull: Service Down", true, false)),
@@ -43,6 +55,10 @@ type GSLBServiceFailoverEvent struct {
 	MemberOf   string
 	LastActive model.GSLBService
 	NewActive  model.GSLBService
+}
+
+func (e GSLBServiceFailoverEvent) GetMemberOf() string {
+	return e.MemberOf
 }
 
 func (e GSLBServiceFailoverEvent) SlackValue() slack.MsgOption {
@@ -70,6 +86,10 @@ type GSLBServiceMemberHealthChangeEvent struct {
 	Member model.GSLBService
 }
 
+func (e GSLBServiceMemberHealthChangeEvent) GetMemberOf() string {
+	return e.Member.MemberOf
+}
+
 func (e GSLBServiceMemberHealthChangeEvent) SlackValue() slack.MsgOption {
 	status := ":large_green_circle: Healthy"
 	if !e.Member.IsHealthy {
@@ -91,6 +111,10 @@ type GSLBServiceMemberAddEvent struct {
 	NewMember model.GSLBService
 }
 
+func (e GSLBServiceMemberAddEvent) GetMemberOf() string {
+	return e.Service
+}
+
 func (e GSLBServiceMemberAddEvent) SlackValue() slack.MsgOption {
 	return slack.MsgOptionBlocks(
 		slack.NewHeaderBlock(slack.NewTextBlockObject(slack.PlainTextType, "Member Added to Service", true, false)),
@@ -106,6 +130,10 @@ func (e GSLBServiceMemberAddEvent) SlackValue() slack.MsgOption {
 type GSLBServiceMemberRemoveEvent struct {
 	Service string
 	Removed model.GSLBService
+}
+
+func (e GSLBServiceMemberRemoveEvent) GetMemberOf() string {
+	return e.Service
 }
 
 func (e GSLBServiceMemberRemoveEvent) SlackValue() slack.MsgOption {

@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"net/netip"
+	"sync"
 	"testing"
 	"time"
 
@@ -49,6 +50,7 @@ func TestCalculateInterval(t *testing.T) {
 
 func TestOnSuccess(t *testing.T) {
 	svc0 := Service{
+		mu: &sync.Mutex{},
 		failureCount: 0,
 		onHealthChange: func(event *HealthChangeEvent) {
 
@@ -58,6 +60,7 @@ func TestOnSuccess(t *testing.T) {
 		isHealthy:            false,
 	}
 	svc1 := Service{
+		mu: &sync.Mutex{},
 		failureCount: 1,
 		onHealthChange: func(event *HealthChangeEvent) {
 
@@ -67,6 +70,7 @@ func TestOnSuccess(t *testing.T) {
 		isHealthy:            false,
 	}
 	svc2 := Service{
+		mu: &sync.Mutex{},
 		failureCount: 2,
 		onHealthChange: func(event *HealthChangeEvent) {
 
@@ -76,6 +80,7 @@ func TestOnSuccess(t *testing.T) {
 		isHealthy:            false,
 	}
 	svc3 := Service{
+		mu: &sync.Mutex{},
 		failureCount: 3,
 		onHealthChange: func(event *HealthChangeEvent) {
 
@@ -85,6 +90,7 @@ func TestOnSuccess(t *testing.T) {
 		isHealthy:            false,
 	}
 	svc4 := Service{
+		mu: &sync.Mutex{},
 		failureCount: 0,
 		onHealthChange: func(event *HealthChangeEvent) {
 
@@ -157,6 +163,7 @@ func TestOnSuccess(t *testing.T) {
 
 func TestOnFailure(t *testing.T) {
 	svc0 := Service{
+		mu: &sync.Mutex{},
 		failureCount: 0,
 		onHealthChange: func(event *HealthChangeEvent) {
 
@@ -166,6 +173,7 @@ func TestOnFailure(t *testing.T) {
 		isHealthy:            true,
 	}
 	svc1 := Service{
+		mu: &sync.Mutex{},
 		failureCount: 1,
 		onHealthChange: func(event *HealthChangeEvent) {
 
@@ -175,6 +183,7 @@ func TestOnFailure(t *testing.T) {
 		isHealthy:            true,
 	}
 	svc2 := Service{
+		mu: &sync.Mutex{},
 		failureCount: 2,
 		onHealthChange: func(event *HealthChangeEvent) {
 
@@ -184,6 +193,7 @@ func TestOnFailure(t *testing.T) {
 		isHealthy:            true,
 	}
 	svc3 := Service{
+		mu: &sync.Mutex{},
 		failureCount: 3,
 		onHealthChange: func(event *HealthChangeEvent) {
 
@@ -193,6 +203,7 @@ func TestOnFailure(t *testing.T) {
 		isHealthy:            true,
 	}
 	svc4 := Service{
+		mu: &sync.Mutex{},
 		failureCount: 0,
 		onHealthChange: func(event *HealthChangeEvent) {
 

@@ -22,26 +22,37 @@ type WebhooksBroker struct {
 }
 
 func Init(ctx context.Context, store persistence.Store[model.WebHook]) {
-	if config.Webhooks().Enable() {
+	if config.Webhooks().Enabled() {
 		New(ctx, store).Subscribe(ctx)
 	}
 }
 
 func New(ctx context.Context, store persistence.Store[model.WebHook]) *WebhooksBroker {
-	mqCfg := config.Webhooks().MQ()
+	mqCfg := config.MQ()
+	var amqpUrlPrefix string
+
+	switch config.Server().Environment() {
+	case "local", "LOCAL":
+		amqpUrlPrefix = "amqp://"
+	default:
+		amqpUrlPrefix = "amqps://"
+	}
+
 	broker := &WebhooksBroker{
 		repo: webhooks.NewWebHooksRepo(store),
 		client: rabbitmq.New(
 			ctx,
 			fmt.Sprintf(
-				"amqp://%s:%s@%s:%s",
+				"%s%s:%s@%s",
+				amqpUrlPrefix,
 				mqCfg.User(),
 				mqCfg.Pass(),
 				mqCfg.Endpoint(),
-				mqCfg.Port(),
 			),
-			rabbitmq.WithQueue[model.WebHook]("webhooks"),
-			rabbitmq.WithRetryConnectionBackOff[model.WebHook](time.Second*10),
+			rabbitmq.WithExchange[model.WebHook]("ex.gslb.webhooks-registration"),
+			rabbitmq.WithQueue[model.WebHook]("q.gslb.webhooks-registration"),
+			rabbitmq.WithFanout[model.WebHook](),
+			//rabbitmq.WithRetryConnectionBackOff[model.WebHook](time.Second*10),
 		),
 	}
 	webhooks, finish := broker.repo.ReadAll()

@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/utils/ip"
+	"github.com/vitistack/gslb-operator/pkg/models/service"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 )
 
@@ -76,6 +77,14 @@ type GSLBService struct {
 	Address      ip.Address `json:"address"`
 	IsHealthy    bool       `json:"isHealthy"`
 	FailureCount int        `json:"failureCount"`
+}
+
+func (g *GSLBService) GSLBServiceMemberStatus() service.ShortGSLBServiceMemberStatus {
+	return service.ShortGSLBServiceMemberStatus{
+		ID:      g.ID,
+		Site:    g.Datacenter,
+		Healthy: g.IsHealthy,
+	}
 }
 
 func (s *GSLBService) UnmarshalJSON(b []byte) error {

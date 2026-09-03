@@ -17,7 +17,7 @@ type HTTPChecker struct {
 }
 
 func NewHTTPChecker(url string, timeout time.Duration, validationScripts ...*model.LuaScript) Checker {
-	transport := http.DefaultTransport.(*http.Transport)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
 	var validator *LuaValidator
