@@ -81,9 +81,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("gslb.poll_interval", "1m")
 	v.SetDefault("gslb.dnsdist_servers_file", "./secrets/GSLB_DNSDIST_SERVERS")
 
+	v.SetDefault("mq.enabled", false)
+
 	v.SetDefault("webhooks.enabled", false)
-	v.SetDefault("webhooks.mq.endpoint", "localhost")
-	v.SetDefault("webhooks.mq.port", "5672")
 
 	v.SetDefault("valkey.enabled", true)
 	v.SetDefault("valkey.addr", "localhost:6379")
