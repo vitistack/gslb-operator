@@ -190,5 +190,8 @@ vault:
     - secretKey: MQ_USER
       property: mq-user
 
+split_dns:
+  enabled: true
+
 webhooks:
   enable: false
