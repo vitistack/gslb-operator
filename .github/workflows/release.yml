@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+      - "chart-v*"
 
 permissions:
   contents: read
@@ -11,6 +12,7 @@ permissions:
 
 jobs:
   create-oci-image:
+    if: ${{ !startsWith(github.ref_name, 'chart-v') }}
     runs-on: ubuntu-latest
     steps:
       - name: checkout code
@@ -26,7 +28,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/vitistack/gslb-operator
+          images: ghcr.io/norskhelsenett/gslb-event-bot
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -57,7 +59,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
   build-and-publish-helm-chart:
+    if: ${{ !startsWith(github.ref_name, 'chart-v') }}
     needs:
       - create-oci-image
     runs-on: ubuntu-latest
@@ -78,12 +82,57 @@ jobs:
           wget https://github.com/mikefarah/yq/releases/download/${VERSION}/${BINARY}.tar.gz -O - | tar xz && mv ${BINARY} yq && chmod +x yq
 
       - name: build and push chart
-        env: 
+        env:
           VERSION: ${{ github.ref_name }}
         run: |
           export HELM_VERSION=${VERSION#v*}
-          ./yq e -i '.version = strenv(HELM_VERSION),.appVersion = strenv(VERSION)' charts/gslb-operator/Chart.yaml
-          ./yq e -i '.image.tag = strenv(HELM_VERSION),.image.repository = "ncr.sky.nhn.no/ghcr/vitistack/gslb-operator"' charts/gslb-operator/values.yaml
-          helm package charts/gslb-operator
+          ./yq e -i '.version = strenv(HELM_VERSION),.appVersion = strenv(VERSION)' charts/event-bot/Chart.yaml
+          ./yq e -i '.image.tag = strenv(HELM_VERSION),.image.repository = "ncr.sky.nhn.no/ghcr/norskhelsenett/gslb-event-bot"' charts/event-bot/values.yaml
+          helm package charts/event-bot
           echo  ${{ secrets.GITHUB_TOKEN }} | helm registry login -u ${{ github.actor }} ghcr.io --password-stdin
-          helm push gslb-operator-${HELM_VERSION}.tgz oci://ghcr.io/vitistack/helm/
+          helm push gslb-event-bot-${HELM_VERSION}.tgz oci://ghcr.io/norskhelsenett/helm/
+
+  build-and-publish-chart-only:
+    if: ${{ startsWith(github.ref_name, 'chart-v') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install helm
+        uses: azure/setup-helm@v1
+        with:
+          version: v3.16.4
+
+      - name: install-yq
+        env:
+          VERSION: v4.44.5
+          BINARY: yq_linux_amd64
+        run: |
+          wget https://github.com/mikefarah/yq/releases/download/${VERSION}/${BINARY}.tar.gz -O - | tar xz && mv ${BINARY} yq && chmod +x yq
+
+      - name: Determine last released app version
+        id: appver
+        run: |
+          APP_TAG=$(git tag --list 'v*' | grep -v '^chart-' | sort -V | tail -n1)
+          if [ -z "$APP_TAG" ]; then
+            echo "No app release tag (v*) found; cannot determine app version." >&2
+            exit 1
+          fi
+          echo "APP_TAG=$APP_TAG" >> "$GITHUB_OUTPUT"
+          echo "APP_VERSION=${APP_TAG#v*}" >> "$GITHUB_OUTPUT"
+
+      - name: build and push chart
+        env:
+          CHART_TAG: ${{ github.ref_name }}
+          APP_TAG: ${{ steps.appver.outputs.APP_TAG }}
+          APP_VERSION: ${{ steps.appver.outputs.APP_VERSION }}
+        run: |
+          export CHART_VERSION=${CHART_TAG#chart-v*}
+          ./yq e -i '.version = strenv(CHART_VERSION),.appVersion = strenv(APP_TAG)' charts/event-bot/Chart.yaml
+          ./yq e -i '.image.tag = strenv(APP_VERSION),.image.repository = "ncr.sky.nhn.no/ghcr/norskhelsenett/gslb-event-bot"' charts/event-bot/values.yaml
+          helm package charts/event-bot
+          echo  ${{ secrets.GITHUB_TOKEN }} | helm registry login -u ${{ github.actor }} ghcr.io --password-stdin
+          helm push gslb-event-bot-${CHART_VERSION}.tgz oci://ghcr.io/norskhelsenett/helm/

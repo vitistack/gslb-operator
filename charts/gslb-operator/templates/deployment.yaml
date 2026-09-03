@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "gslb-operator.fullname" . }}
-  namespace: {{ .Values.namespace }}
+  
   labels:
     {{- include "gslb-operator.labels" . | nindent 4 }}
 spec:
