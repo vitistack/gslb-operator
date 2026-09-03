@@ -58,6 +58,15 @@ func Server() *server {
 	return &cfg.Server
 }
 
+func DevMode() bool {
+	switch cfg.Server.Env {
+	case "dev", "DEV", "development", "DEVELOPMENT":
+		return true
+	default:
+		return false
+	}
+}
+
 func API() *api {
 	return &cfg.Api
 }

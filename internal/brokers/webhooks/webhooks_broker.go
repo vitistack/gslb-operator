@@ -40,7 +40,9 @@ func New(ctx context.Context, store persistence.Store[model.WebHook]) *WebhooksB
 				mqCfg.Endpoint(),
 				mqCfg.Port(),
 			),
+			rabbitmq.WithExchange[model.WebHook]("ex.gslb.webhooks-registration"),
 			rabbitmq.WithQueue[model.WebHook]("q.gslb.webhooks-registration"),
+			rabbitmq.WithFanout[model.WebHook](),
 			//rabbitmq.WithRetryConnectionBackOff[model.WebHook](time.Second*10),
 		),
 	}
