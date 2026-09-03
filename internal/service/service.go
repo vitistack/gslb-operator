@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vitistack/gslb-operator/internal/checks"
@@ -45,6 +46,7 @@ type Service struct {
 	onFailureCountUpdate FailureCountCallback
 	isHealthy            bool
 	dryRun               bool
+	mu                   *sync.Mutex
 }
 
 func NewServiceFromGSLBConfig(cfg model.GSLBConfig, opts ...ServiceOption) (*Service, error) {
@@ -88,6 +90,7 @@ func NewServiceFromGSLBConfig(cfg model.GSLBConfig, opts ...ServiceOption) (*Ser
 		failureCount:      cfg.FailureThreshold, // need to succeed check N times before healthy!
 		isHealthy:         false,
 		dryRun:            false,
+		mu:                &sync.Mutex{},
 	}
 
 	for _, opt := range opts {
@@ -193,8 +196,10 @@ OnFailure : count = 3, healthy = false -> update DNS
 
 // called when healthcheck is successful
 func (s *Service) OnSuccess() {
+	s.mu.Lock()
 	if s.isHealthy { // already healthy
 		s.failureCount = 0
+		s.mu.Unlock()
 		return
 	}
 
@@ -202,8 +207,13 @@ func (s *Service) OnSuccess() {
 		s.failureCount--
 	}
 
-	if s.failureCount == 0 {
+	becameHealthy := s.failureCount == 0
+	if becameHealthy {
 		s.isHealthy = true
+	}
+	s.mu.Unlock()
+
+	if s.failureCount == 0 {
 		s.onHealthChange(&HealthChangeEvent{
 			Svc:     s,
 			Healthy: true,
@@ -215,8 +225,10 @@ func (s *Service) OnSuccess() {
 
 // called when healthcheck fails
 func (s *Service) OnFailure(err error) {
+	s.mu.Lock()
 	if !s.isHealthy { // already unhealthy
 		s.failureCount = s.FailureThreshold
+		s.mu.Unlock()
 		return
 	}
 
@@ -224,8 +236,13 @@ func (s *Service) OnFailure(err error) {
 		s.failureCount++
 	}
 
-	if s.failureCount == s.FailureThreshold { // threshold reached, service is considered down
+	becameUnHalthy := s.failureCount == s.FailureThreshold
+	if becameUnHalthy {
 		s.isHealthy = false
+	}
+	s.mu.Unlock()
+
+	if becameUnHalthy { // threshold reached, service is considered down
 		s.onHealthChange(&HealthChangeEvent{
 			Svc:     s,
 			Healthy: false,
@@ -244,6 +261,8 @@ func (s *Service) SetFailureCountCallback(callback FailureCountCallback) {
 }
 
 func (s *Service) IsHealthy() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.isHealthy
 }
 
@@ -322,6 +341,8 @@ func (s *Service) String() string {
 }
 
 func (s *Service) GSLBService() *model.GSLBService {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	out := &model.GSLBService{
 		ID:           s.id,
 		MemberOf:     s.MemberOf,

@@ -42,6 +42,10 @@ type ServiceGroup interface {
 	SetOverride(view string, addr ip.Address) error
 	ClearOverride(view string) *service.Service
 
+	Seed(view, id string)
+	SeededActive(view string) (string, bool)
+	ClearSeed(view string)
+
 	// returns active member for an optional view, if one exists
 	// if no view is provided the default view is used
 	GetActive(...string) *service.Service
@@ -69,6 +73,7 @@ type ServiceGroupV2 struct {
 
 	members []*service.Service
 
+	seededActive     map[string]string
 	activeByView     map[string]*service.Service
 	lastActiveByView map[string]*service.Service
 
@@ -90,6 +95,7 @@ func NewServiceGroup(name string) *ServiceGroupV2 {
 		uuid:               id,
 		members:            make([]*service.Service, 0),
 		modeByView:         make(map[string]ServiceGroupMode),
+		seededActive:       make(map[string]string),
 		activeByView:       make(map[string]*service.Service),
 		lastActiveByView:   make(map[string]*service.Service),
 		hasOverrideByView:  make(map[string]bool),
@@ -194,6 +200,19 @@ func (sg *ServiceGroupV2) onServiceHealthChangeForView(view string, changedServi
 			sg.promote(view, firstHealthyOf(sg.Members(view))) // nil if all members are down
 		}
 	}
+}
+
+func (sg *ServiceGroupV2) Seed(view, activeID string) {
+	sg.seededActive[view] = activeID
+}
+
+func (sg *ServiceGroupV2) SeededActive(view string) (string, bool) {
+	id, ok := sg.seededActive[view]
+	return id, ok
+}
+
+func (sg *ServiceGroupV2) ClearSeed(view string) {
+	delete(sg.seededActive, view)
 }
 
 func (sg *ServiceGroupV2) GetActive(views ...string) *service.Service {

@@ -21,6 +21,7 @@ type Config struct {
 	Gslb          gslb     `mapstructure:"gslb"`
 	Jwt           jwt      `mapstructure:"jwt"`
 	Webhooks      webhooks `mapstructure:"webhooks"`
+	Mq            mq       `mapstructure:"mq"`
 	Valkey        valkey   `mapstructure:"valkey"`
 	secretsLoaded int
 	secretsTotal  int
@@ -31,24 +32,39 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("env", c.Server.Env),
 		slog.String("log_level", c.Server.LOG_LEVEL),
 		slog.String("api_port", c.Api.PORT),
+
 		slog.Bool("dns_enabled", c.Dns.Enabled),
 		slog.Any("dns_views", c.Dns.Views),
 		slog.String("dns_default_view", c.Dns.Default),
+
 		slog.String("gslb_zone", c.Gslb.ZONE),
 		slog.String("gslb_nameserver", c.Gslb.NS),
 		slog.String("gslb_poll_interval", c.Gslb.PollInterval),
-		slog.Bool("webhooks_enabled", c.Webhooks.Enabled),
-		slog.Bool("slack_enabled", c.Webhooks.Notices.SlackNotifier.Enabled),
-		slog.String("mq_endpoint", c.Webhooks.Mq.EndPoint),
-		slog.String("mq_port", c.Webhooks.Mq.PORT),
+
+		slog.Bool("mq_enabled", c.Mq.Enable),
+		slog.String("mq_url", fmt.Sprintf("%s", c.Mq.EndPoint)),
+
+		slog.Bool("webhooks_enabled", c.Webhooks.Enable),
+		slog.Bool("slack_enabled", c.Webhooks.Notices.SlackNotifier.Enable),
+
 		slog.Bool("valkey_enabled", c.Valkey.Enabled),
 		slog.String("valkey_addr", c.Valkey.Addr),
+
 		slog.String("secrets_loaded", fmt.Sprintf("%d/%d", c.secretsLoaded, c.secretsTotal)),
 	)
 }
 
 func Server() *server {
 	return &cfg.Server
+}
+
+func DevMode() bool {
+	switch cfg.Server.Env {
+	case "dev", "DEV", "development", "DEVELOPMENT":
+		return true
+	default:
+		return false
+	}
 }
 
 func API() *api {
@@ -69,6 +85,10 @@ func JWT() *jwt {
 
 func Webhooks() *webhooks {
 	return &cfg.Webhooks
+}
+
+func MQ() *mq {
+	return &cfg.Mq
 }
 
 func Valkey() *valkey {
@@ -92,7 +112,7 @@ func init() {
 	}
 
 	switch cfg.Server.Env {
-	case "dev", "development", "DEV", "DEVELOPMENT":
+	case "dev", "development", "DEV", "DEVELOPMENT", "local", "LOCAL":
 		handler = bslog.NewHandler(
 			os.Stdout, // log output
 			// slog handler factory
@@ -192,10 +212,22 @@ func (s *splitDns) DNSViews() []string {
 
 // gslb configuration
 type gslb struct {
+	Status struct {
+		Enabled bool `mapstructure:"enabled"`
+	} `mapstructure:"status"`
+	SITE         string `mapstructure:"site"`
 	ZONE         string `mapstructure:"zone"`
 	NS           string `mapstructure:"nameserver"`
 	PollInterval string `mapstructure:"poll_interval"`
 	SERVERS      string `mapstructure:"dnsdist_servers_file"`
+}
+
+func (g *gslb) Site() string {
+	return g.SITE
+}
+
+func (g *gslb) StatusEnabled() bool {
+	return g.Status.Enabled
 }
 
 func (g *gslb) Zone() string {
@@ -233,21 +265,16 @@ func (jwt *jwt) User() string {
 }
 
 type webhooks struct {
-	Enabled bool
+	Enable  bool          `mapstructure:"enabled"`
 	Notices notifications `mapstructure:"notifications"`
-	Mq      mq            `mapstructure:"mq"`
 }
 
-func (w *webhooks) Enable() bool {
-	return w.Enabled
+func (w *webhooks) Enabled() bool {
+	return w.Enable
 }
 
 func (w *webhooks) Notifications() *notifications {
 	return &w.Notices
-}
-
-func (w *webhooks) MQ() *mq {
-	return &w.Mq
 }
 
 type notifications struct {
@@ -259,14 +286,14 @@ func (n *notifications) Slack() *slack {
 }
 
 type slack struct {
-	Enabled        bool
+	Enable         bool   `mapstructure:"enabled"`
 	APP_TOKEN      string `mapstructure:"app_token"`
 	BOT_TOKEN      string `mapstructure:"bot_token"`
 	SIGNING_SECRET string `mapstructure:"signing_secret"`
 }
 
-func (s *slack) Enable() bool {
-	return s.Enabled
+func (s *slack) Enabled() bool {
+	return s.Enable
 }
 
 func (s *slack) AppToken() string {
@@ -282,10 +309,14 @@ func (s *slack) SigningSecret() string {
 }
 
 type mq struct {
+	Enable   bool   `mapstructure:"enabled"`
 	Usr      string `mapstructure:"user"`
 	Passwd   string `mapstructure:"pass"`
 	EndPoint string `mapstructure:"endpoint"`
-	PORT     string `mapstructure:"port"`
+}
+
+func (mq *mq) Enabled() bool {
+	return mq.Enable
 }
 
 func (mq *mq) User() string {
@@ -298,10 +329,6 @@ func (mq *mq) Pass() string {
 
 func (mq *mq) Endpoint() string {
 	return mq.EndPoint
-}
-
-func (mq *mq) Port() string {
-	return mq.PORT
 }
 
 type valkey struct {

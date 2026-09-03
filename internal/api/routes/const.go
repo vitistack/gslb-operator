@@ -20,9 +20,6 @@ const (
 	POST_OVERRIDE   = http.MethodPost + " " + OVERRIDE                           // Route POST
 	DELETE_OVERRIDE = http.MethodDelete + " " + OVERRIDE + "/{" + MemberOf + "}" // Route DELETE
 
-	FAILOVER      = ROOT + "failover"
-	POST_FAILOVER = http.MethodPost + " " + FAILOVER + "/{fqdn}"
-
 	AUTH            = ROOT + "auth"
 	AUTH_LOGIN      = AUTH + "/login"
 	POST_AUTH_LOGIN = http.MethodPost + " " + AUTH_LOGIN
@@ -35,6 +32,10 @@ const (
 	POST_WEBHOOKS   = http.MethodPost + " " + WEBHOOKS
 	PUT_WEBHOOKS    = http.MethodPut + " " + WEBHOOKS + "/{id}"
 	DELETE_WEBHOOKS = http.MethodDelete + " " + WEBHOOKS + "/{id}"
+
+	SERVICE            = ROOT + "service/{fqdn}"
+	SERVICE_STATUS     = SERVICE + "/status"
+	GET_SERVICE_STATUS = http.MethodGet + " " + SERVICE_STATUS
 )
 
 const (

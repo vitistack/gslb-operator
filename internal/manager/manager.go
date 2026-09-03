@@ -31,7 +31,7 @@ type ServicesManager struct {
 	// servicesHealthCheck maps check intervals to services that should be checked at that interval.
 	scheduledServices  ScheduledServices                           // services that are scheduled on an interval
 	schedulers         map[timesutil.Duration]*scheduler.Scheduler // schedulers for health-checks
-	serviceGroups      group.ServiceGroups
+	serviceGroups      *group.ServiceGroups
 	healthChangeEvents chan *service.HealthChangeEvent
 
 	svcGroupRepo *servicegroup.ServiceGroupRepo
@@ -77,7 +77,7 @@ func NewManager(opts ...serviceManagerOption) *ServicesManager {
 	mgr := &ServicesManager{
 		scheduledServices:  make(ScheduledServices),
 		schedulers:         make(map[timesutil.Duration]*scheduler.Scheduler),
-		serviceGroups:      make(group.ServiceGroups),
+		serviceGroups:      group.NewServiceGroups(),
 		healthChangeEvents: make(chan *service.HealthChangeEvent, cfg.MinRunningWorkers),
 		svcGroupRepo:       cfg.repo,
 		mutex:              sync.RWMutex{},
@@ -123,19 +123,93 @@ func (sm *ServicesManager) OnShutdown() error {
 	defer sm.mutex.Unlock()
 	bslog.Debug("executing manager.OnShutdown()")
 
-	updateErrors := make([]error, 0, len(sm.serviceGroups))
-	for _, group := range sm.serviceGroups {
-		updateErr := sm.svcGroupRepo.Update(group.Name(), group.Group())
-		if updateErr != nil {
-			updateErrors = append(updateErrors, fmt.Errorf("failed to update service group: %s: %w", group.Name(), updateErr))
-		}
-	}
+	updateErrors := make([]error, 0)
+	sm.serviceGroups.Groups().Each(
+		func(name string, sg group.ServiceGroup) {
+			updateErr := sm.svcGroupRepo.Update(name, sg.Group())
+			if updateErr != nil {
+				updateErrors = append(updateErrors, updateErr)
+			}
+		},
+	)
 
 	if len(updateErrors) > 0 {
 		return errors.Join(updateErrors...)
 	}
 
 	return nil
+}
+
+func (sm *ServicesManager) ColdStart(configs []model.GSLBConfig) {
+	type touchedView struct {
+		sg   group.ServiceGroup
+		view string
+	}
+	touched := make(map[string]touchedView)
+
+	sm.mutex.Lock()
+
+	bslog.Info("cold start sequence initialized")
+	coldStartTime := time.Now()
+	for _, cfg := range configs {
+		svcGroup, err := sm.svcGroupRepo.Read(cfg.MemberOf)
+		if err != nil {
+			bslog.Error("could not read persisted service group during hot load", slog.String("reason", err.Error()))
+		}
+
+		newService, err := service.NewServiceFromGSLBConfig(cfg, sm.BuildServiceOptions(cfg, &svcGroup)...)
+		if err != nil {
+			bslog.Error("failed to build service from config during bulk load", slog.String("reason", err.Error()), slog.Any("config", cfg))
+			continue
+		}
+
+		sm.serviceGroups.Create(cfg.MemberOf, func(sg group.ServiceGroup) {
+			for view, activeID := range svcGroup.Active {
+				sg.Seed(view, activeID)
+				sg.SetOnPromotion(func(sg group.ServiceGroup, view string) {
+					touched[cfg.MemberOf+"|"+view] = touchedView{sg, view}
+				})
+			}
+		})
+
+		sm.serviceGroups.With(cfg.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+			sg.RegisterMember(newService)
+			unlock.Unlock()
+		})
+		sm.newScheduler(newService.ScheduledInterval).ScheduleService(newService)
+		sm.scheduledServices.Add(newService)
+
+		// initialize service callbacks
+		newService.SetHealthChangeCallback(func(event *service.HealthChangeEvent) { sm.healthChangeEvents <- event })
+		newService.SetFailureCountCallback(func(svc *model.GSLBService) {
+			sm.wg.Go(func() {
+				if err := sm.svcGroupRepo.UpdateMember(svc.MemberOf, *svc); err != nil {
+					bslog.Error("failed to update service failurecount",
+						slog.String("reason", err.Error()),
+						slog.Any("service", svc),
+					)
+				}
+			})
+		})
+	}
+	sm.mutex.Unlock()
+
+	for _, t := range touched {
+		sm.reconcile(t.sg, t.view)
+	}
+
+	// reset every group to have correct onpromotion logic after coldstart
+	for memberOf, svcGroup := range sm.serviceGroups.Groups() {
+		svcGroup.SetOnPromotion(func(_ group.ServiceGroup, view string) {
+			sm.wg.Go(func() {
+				sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+					sm.reconcile(sg, view)
+					unlock.Unlock()
+				})
+			})
+		})
+	}
+	bslog.Info("cold start sequence finished", slog.Float64("took", time.Since(coldStartTime).Seconds()))
 }
 
 func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*service.Service, error) {
@@ -151,26 +225,42 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
-	newService, err := service.NewServiceFromGSLBConfig(serviceCfg, sm.BuildServiceOptions(serviceCfg)...)
+	svcGroup, err := sm.svcGroupRepo.Read(serviceCfg.MemberOf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register config: could not read storage: %w", err)
+	}
+
+	newService, err := service.NewServiceFromGSLBConfig(serviceCfg, sm.BuildServiceOptions(serviceCfg, &svcGroup)...)
 	if err != nil {
 		return nil, fmt.Errorf("unable to register service: %s", err.Error())
 	}
 
-	svcGroup, err := sm.svcGroupRepo.Read(serviceCfg.MemberOf)
-	if err != nil {
-		return nil, fmt.Errorf("failed to register config: %w", err)
-	}
 	_, exists := svcGroup.Members[serviceCfg.ServiceID]
-	if svcGroup.Members == nil {
-		svcGroup.Members = make(map[string]model.GSLBService)
-	}
-	svcGroup.Members[serviceCfg.ServiceID] = *newService.GSLBService()
 
 	// create new service group if needed, and register service in group
-	sm.newServiceGroup(newService.MemberOf).RegisterMember(newService)
+	sm.newServiceGroup(newService.MemberOf)
+	sm.serviceGroups.With(newService.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+		sg.RegisterMember(newService)
 
-	// create/update service group
-	err = sm.svcGroupRepo.Create(serviceCfg.MemberOf, &svcGroup)
+		inMemGroup := sg.Group()
+		unlock.Unlock()
+
+		// create/update service group
+		err = sm.svcGroupRepo.Mutate(
+			serviceCfg.MemberOf,
+			func(persistedGroup *model.GSLBServiceGroup) {
+				if persistedGroup.Members == nil {
+					persistedGroup.Members = make(map[string]model.GSLBService)
+				}
+				persistedGroup.Active = inMemGroup.Active
+				persistedGroup.HasOverride = inMemGroup.HasOverride
+				persistedGroup.Views = inMemGroup.Views
+				persistedGroup.UUID = inMemGroup.UUID
+				persistedGroup.Members[serviceCfg.ServiceID] = *newService.GSLBService()
+			},
+		)
+	})
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new service: %w", err)
 	}
@@ -234,37 +324,25 @@ func (sm *ServicesManager) RemoveService(id string) error {
 		return ErrServiceNotFound
 	}
 
-	sm.scheduledServices.Delete(id)
-	sm.schedulers[interval].RemoveService(svc) // remove the service from its scheduler
-
-	sm.mutex.RLock()
-	group := sm.serviceGroups[svc.MemberOf]
-	sm.mutex.RUnlock()
-
-	empty := group.RemoveMember(svc.GetID()) // registered in group
-	if empty {
-		sm.deleteGroup(svc.MemberOf)
-
-		bslog.Debug("removed service", slog.Any("service", svc))
-		events.Emit(&events.Event{ // publish delete event for service
-			Type: domainEvents.EventTypeGSLBConfigDelete,
-			Payload: domainEvents.GSLBConfigDeleteEvent{
-				LastConfig: svc.GSLBConfig(),
-			},
-			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBConfigDelete, svc.GetID()),
-		})
-		return nil
-	}
-
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
-	err := sm.svcGroupRepo.Update(svc.MemberOf, group.Group())
-	if err != nil {
-		return fmt.Errorf("failed to delete service: %w", err)
+	sm.scheduledServices.Delete(id)
+	sm.schedulers[interval].RemoveService(svc) // remove the service from its scheduler
+
+	if err := sm.svcGroupRepo.DeleteMember(svc.MemberOf, model.GSLBService{ID: id, MemberOf: svc.MemberOf}); err != nil {
+		return fmt.Errorf("failed to delete servicegroup member: %s: %w", svc.GetID(), err)
 	}
 
+	var empty bool
+	sm.serviceGroups.With(svc.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+		empty = sg.RemoveMember(id)
+		unlock.Unlock()
+	})
+	if empty {
+		sm.serviceGroups.Delete(svc.MemberOf)
+		serviceGroups.Dec()
+	}
 	bslog.Debug("removed service", slog.Any("service", svc))
 	events.Emit(&events.Event{ // publish delete event for service
 		Type: domainEvents.EventTypeGSLBConfigDelete,
@@ -286,10 +364,8 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 		return
 	}
 
-	sm.mutex.Lock()
 	if !old.ConfigChanged(cfg) { // nothing to do
 		bslog.Debug("skipping update due to unchanged config", slog.Any("service", old))
-		sm.mutex.Unlock()
 		return
 	}
 
@@ -299,39 +375,50 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 	lastConfig := old.GSLBConfig()
 	views := old.Views
 	old.Assign(new) // assigning changed config variables to the registered service
-	sm.mutex.Unlock()
 
 	if oldMemberOf != newMemberOf {
 		sm.memberOfChanged(oldMemberOf, newMemberOf, old)
 	} else {
-		sm.mutex.RLock()
-		oldGroup, ok := sm.serviceGroups[oldMemberOf]
-		sm.mutex.RUnlock()
-		if ok {
+		ok := sm.serviceGroups.With(oldMemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
 			views = append(views, old.Views...)
 			slices.Sort(views)
 			// update all views that may have had an effect
-			oldGroup.Refresh(slices.Compact(views)...)
-		} else { // this will probably never run, but you never know in concurrency!
+			sg.Refresh(slices.Compact(views)...)
+			unlock.Unlock()
+		})
+
+		if !ok {
 			sm.deleteGroup(oldMemberOf)
 		}
 	}
 
+	sm.serviceGroups.With(oldMemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+		err = sm.svcGroupRepo.Mutate(oldMemberOf, func(g *model.GSLBServiceGroup) {
+			if g.Members == nil {
+				g.Members = make(map[string]model.GSLBService)
+			}
+			g.Members[old.GetID()] = *old.GSLBService()
+
+			if g.Active == nil {
+				g.Active = make(map[string]string)
+			}
+			for _, view := range views {
+				if active := sg.GetActive(view); active != nil {
+					g.Active[view] = active.GetID()
+				} else {
+					delete(g.Active, view)
+				}
+			}
+		})
+		if err != nil {
+			bslog.Error("failed to update servicegroup config persistently",
+				slog.String("reason", err.Error()), slog.Any("group", sg))
+		}
+		unlock.Unlock()
+	})
+
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
-
-	oldGroup, ok := sm.serviceGroups[oldMemberOf]
-	if ok {
-		err = sm.svcGroupRepo.Update(oldMemberOf, oldGroup.Group())
-		if err != nil {
-			bslog.Error(
-				"failed to update servicegroup config persistently",
-				slog.String("reason", err.Error()),
-				slog.Any("group", oldGroup),
-			)
-		}
-	}
-
 	// important that this checked AFTER the service groups have ran their update
 	// this is because the group may trigger a promotion event that needs to be handled first
 	// if the promotion event does not happen, we just simply move it to a new interval
@@ -354,60 +441,46 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 }
 
 func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc *service.Service) {
-	sm.mutex.Lock()
-	oldGroup, oldOk := sm.serviceGroups[oldMemberOf]
-	newGroup := sm.newServiceGroup(newMemberOf)
-	sm.mutex.Unlock()
+	sm.newServiceGroup(newMemberOf)
+	sm.serviceGroups.With(newMemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+		sg.RegisterMember(svc)
+		unlock.Unlock()
 
-	// Register in new group and persist its state
-	newGroup.RegisterMember(svc)
-	if err := sm.svcGroupRepo.Create(newMemberOf, newGroup.Group()); err != nil {
-		bslog.Error(
-			"failed to persist new service group membership",
-			slog.String("reason", err.Error()),
-			slog.String("newMemberOf", newMemberOf),
-			slog.Any("service", svc),
-		)
-		return
-	}
+		if err := sm.svcGroupRepo.Mutate(newMemberOf, func(g *model.GSLBServiceGroup) {
+			if g.Members == nil {
+				g.Members = make(map[string]model.GSLBService)
+			}
+			g.Members[svc.GetID()] = *svc.GSLBService()
+		}); err != nil {
+			bslog.Error("failed to persist new service group membership",
+				slog.String("reason", err.Error()), slog.String("newMemberOf", newMemberOf), slog.Any("service", svc))
+			return
+		}
 
-	events.Emit(&events.Event{
-		Type: domainEvents.EventTypeGSLBServiceMemberAdd,
-		Payload: domainEvents.GSLBServiceMemberAddEvent{
-			Service:   svc.MemberOf,
-			NewMember: *svc.GSLBService(),
-		},
-		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, svc.MemberOf),
+		events.Emit(&events.Event{
+			Type:      domainEvents.EventTypeGSLBServiceMemberAdd,
+			Payload:   domainEvents.GSLBServiceMemberAddEvent{Service: svc.MemberOf, NewMember: *svc.GSLBService()},
+			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, svc.MemberOf),
+		})
 	})
 
-	// Clean up old group
-	if !oldOk {
-		bslog.Debug("updated service group membership",
-			slog.String("oldGroup", oldMemberOf),
-			slog.String("newGroup", newMemberOf),
-		)
-		return
-	}
+	var empty bool
+	sm.serviceGroups.With(oldMemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+		empty = sg.RemoveMember(svc.GetID())
+		unlock.Unlock()
+	})
 
-	empty := oldGroup.RemoveMember(svc.GetID())
+	if err := sm.svcGroupRepo.DeleteMember(oldMemberOf, model.GSLBService{ID: svc.GetID(), MemberOf: oldMemberOf}); err != nil {
+		bslog.Error("failed to update old service group after member removal",
+			slog.String("reason", err.Error()), slog.String("oldMemberOf", oldMemberOf), slog.Any("service", svc))
+	}
+	bslog.Debug("updated service group membership", slog.String("oldGroup", oldMemberOf), slog.String("newGroup", newMemberOf))
+
 	if empty {
-		sm.deleteGroup(oldMemberOf)
-	} else {
-		if err := sm.svcGroupRepo.Update(oldMemberOf, oldGroup.Group()); err != nil {
-			bslog.Error(
-				"failed to update old service group after member removal",
-				slog.String("reason", err.Error()),
-				slog.String("oldMemberOf", oldMemberOf),
-				slog.Any("service", svc),
-			)
-		}
+		sm.serviceGroups.Delete(oldMemberOf)
+		serviceGroups.Dec()
 	}
-
-	bslog.Debug("updated service group membership",
-		slog.String("oldGroup", oldMemberOf),
-		slog.String("newGroup", newMemberOf),
-	)
 }
 
 func (sm *ServicesManager) handleServiceHealthChange(ctx context.Context) {
@@ -430,63 +503,54 @@ func (sm *ServicesManager) handleServiceHealthChange(ctx context.Context) {
 // reconciles the current state of a group to reflect internal state of the manager
 // and external state
 func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
-	err := sm.svcGroupRepo.Update(group.Name(), group.Group())
-	if err != nil {
-		bslog.Error("failed to reconcile service-group",
-			slog.String("reason", err.Error()),
-			slog.Any("group", group),
-		)
-		return
-	}
-
-	// remove all DNS reference for the group
-	/*
-	* conscious decision to leave out view here:
-	* because if the record is not created later then it should have not existed in the first place
-	* e.g. we clean it up here. (late non the less)
-	*
-	* or if all the sites are down, then it should be down from ALL views
-	 */
-	err = sm.DNSDelete(group.ID())
-	if err != nil {
-		bslog.Error("failed to reconcile gslb service-group",
-			slog.String("reason", fmt.Errorf("failed to delete DNS records: %w", err).Error()),
-			slog.Any("group", group))
-		return
-	}
-
 	active := group.GetActive(view)
-	if active == nil {
-		// all services for the group is unhealthy
-		bslog.Warn("gslb service group is down",
-			slog.String("service", group.Name()),
-			slog.String("view", view),
-			slog.String("status", "down"),
-			slog.String("reason", "all members are considered down"),
-		)
 
+	if seeded, ok := group.SeededActive(view); ok {
+		group.ClearSeed(view)
+		if active != nil && active.GetID() == seeded {
+			return
+		}
+	}
+
+	err := sm.svcGroupRepo.Mutate(group.Name(), func(g *model.GSLBServiceGroup) {
+		if g.Active == nil {
+			g.Active = make(map[string]string)
+		}
+		if active != nil {
+			g.Active[view] = active.GetID()
+		} else {
+			delete(g.Active, view)
+		}
+	})
+	if err != nil {
+		bslog.Error("failed to reconcile service-group", slog.String("reason", err.Error()), slog.Any("group", group))
+		return
+	}
+
+	if err := sm.DNSDelete(group.ID()); err != nil {
+		bslog.Error("failed to reconcile gslb service-group",
+			slog.String("reason", fmt.Errorf("failed to delete DNS records: %w", err).Error()), slog.Any("group", group))
+		return
+	}
+
+	if active == nil {
+		bslog.Warn("gslb service group is down",
+			slog.String("service", group.Name()), slog.String("view", view),
+			slog.String("status", "down"), slog.String("reason", "all members are considered down"))
 		events.Emit(&events.Event{
-			Type: domainEvents.EventTypeGSLBServiceDown,
-			Payload: domainEvents.GSLBServiceDownEvent{
-				MemberOf: group.Name(),
-			},
+			Type:      domainEvents.EventTypeGSLBServiceDown,
+			Payload:   domainEvents.GSLBServiceDownEvent{MemberOf: group.Name()},
 			Timestamp: time.Now(),
 			ID:        events.ID(domainEvents.EventTypeGSLBServiceDown, group.Name()),
 		})
 		return
 	}
 
-	if err := sm.DNSCreate(
-		update.Record{
-			Name:    active.MemberOf,
-			Address: active.GetAddress(),
-			Views:   active.Views,
-			UUID:    string(group.ID()),
-		}); err != nil {
+	if err := sm.DNSCreate(update.Record{
+		Name: active.MemberOf, Address: active.GetAddress(), Views: active.Views, UUID: string(group.ID()),
+	}); err != nil {
 		bslog.Error("failed to reconcile gslb service-group",
-			slog.String("reason", fmt.Errorf("failed to create DNS record: %w", err).Error()),
-			slog.Any("activeService", active),
-		)
+			slog.String("reason", fmt.Errorf("failed to create DNS record: %w", err).Error()), slog.Any("activeService", active))
 		return
 	}
 
@@ -541,32 +605,26 @@ func (sm *ServicesManager) reconcileHealthCheckIntervals(group group.ServiceGrou
 	}
 }
 
-func (sm *ServicesManager) newServiceGroup(memberOf string) group.ServiceGroup {
-	serviceGroup, ok := sm.serviceGroups[memberOf]
-	if ok {
-		return serviceGroup
-	}
-	newGroup := group.NewServiceGroup(memberOf)
-	newGroup.SetOnPromotion(
-		func(group group.ServiceGroup, view string) {
+func (sm *ServicesManager) newServiceGroup(memberOf string) {
+	created := sm.serviceGroups.Create(memberOf, func(sg group.ServiceGroup) {
+		sg.SetOnPromotion(func(_ group.ServiceGroup, view string) {
 			sm.wg.Go(func() {
-				sm.reconcile(group, view)
+				sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+					sm.reconcile(sg, view)
+					unlock.Unlock()
+				})
 			})
-		},
-	)
+		})
+	})
 
-	sm.serviceGroups[memberOf] = newGroup
-
-	serviceGroups.Inc()
-	return newGroup
+	if created {
+		serviceGroups.Inc()
+	}
 }
 
 // only called when we know it is safe to delete a group
 func (sm *ServicesManager) deleteGroup(memberOf string) {
-	sm.mutex.Lock()
-	delete(sm.serviceGroups, memberOf)
-	sm.mutex.Unlock()
-
+	sm.serviceGroups.Delete(memberOf)
 	err := sm.svcGroupRepo.Delete(memberOf)
 	if err != nil {
 		bslog.Error("failed to delete service group", slog.String("reason", err.Error()))
@@ -628,35 +686,43 @@ func (sm *ServicesManager) moveServiceToInterval(svc *service.Service, newInterv
 }
 
 func (sm *ServicesManager) GetActiveForMemberOf(memberOf string) *service.Service {
-	sm.mutex.RLock()
-	defer sm.mutex.RUnlock()
-	if group, ok := sm.serviceGroups[memberOf]; ok {
-		return group.GetActive()
-	}
-	return nil
+	var active *service.Service
+	sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+		active = sg.GetActive()
+		unlock.Unlock()
+	})
+	return active
 }
 
-func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig) []service.ServiceOption {
+func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig, optionalGSLBServiceGroup ...*model.GSLBServiceGroup) []service.ServiceOption {
 	opts := make([]service.ServiceOption, 0, 5)
 	opts = append(opts, service.WithDryRunChecks(sm.dryrun))
 
-	gslbServiceGroup, err := sm.svcGroupRepo.Read(config.MemberOf)
-	if err != nil {
-		//if errors.Is(err, svcRepo.ErrServiceInGroupNotFound) {
-		//	bslog.Debug("could not find member in group",
-		//		slog.String("group", config.MemberOf),
-		//		slog.String("member", config.ServiceID),
-		//	)
-		//}
+	var gslbServiceGroup *model.GSLBServiceGroup
+	if optionalGSLBServiceGroup != nil {
+		gslbServiceGroup = optionalGSLBServiceGroup[0]
+	} else {
+		svcGroup, err := sm.svcGroupRepo.Read(config.MemberOf)
+		if err != nil {
+			opts = append(opts, service.WithFailureCount(config.FailureThreshold))
+			bslog.Error("could not fetch service group from storage",
+				slog.String("reason", err.Error()),
+				slog.String("action", "potential failurecount reset"),
+				slog.String("service", config.MemberOf),
+				slog.Int("failureCount", config.FailureThreshold),
+			)
+			return opts
+		}
+
+		if svcGroup.Members != nil {
+			gslbServiceGroup = &svcGroup
+		}
+	}
+
+	if gslbServiceGroup == nil {
 		// max out the failure count
 		// means a long time before service will be considered healthy
 		opts = append(opts, service.WithFailureCount(config.FailureThreshold))
-		bslog.Error("could not fetch service group from storage",
-			slog.String("reason", err.Error()),
-			slog.String("action", "potential failurecount reset"),
-			slog.String("service", config.MemberOf),
-			slog.Int("failureCount", config.FailureThreshold),
-		)
 		return opts
 	}
 
@@ -680,135 +746,152 @@ func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig) []servic
 func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChangeEvent) {
 	bslog.Debug("received health-change", slog.Any("service", event.Svc), slog.Bool("healthy", event.Healthy))
 
-	sm.mutex.Lock()
-	group := sm.serviceGroups[event.Svc.MemberOf]
-	sm.mutex.Unlock()
+	sm.serviceGroups.With(event.Svc.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+		if err := sm.svcGroupRepo.UpdateMember(event.Svc.MemberOf, *event.Svc.GSLBService()); err != nil {
+			bslog.Error(
+				"failed to update service health on health-change",
+				slog.String("reason", err.Error()),
+				slog.Any("service", event.Svc),
+			)
+		}
 
-	err := sm.svcGroupRepo.Update(group.Name(), group.Group())
-	if err != nil {
-		bslog.Error(
-			"failed to update service health on health-change",
-			slog.String("reason", err.Error()),
-			slog.Any("service", event.Svc),
-		)
-	}
+		events.Emit(&events.Event{
+			Type:      domainEvents.EventTypeGSLBServiceMemberHealthChange,
+			Payload:   domainEvents.GSLBServiceMemberHealthChangeEvent{Member: *event.Svc.GSLBService()},
+			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberHealthChange, event.Svc.MemberOf),
+		})
 
-	events.Emit(&events.Event{
-		Type: domainEvents.EventTypeGSLBServiceMemberHealthChange,
-		Payload: domainEvents.GSLBServiceMemberHealthChangeEvent{
-			Member: *event.Svc.GSLBService(),
-		},
-		Timestamp: time.Now(),
-		ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberHealthChange, event.Svc.MemberOf),
+		sg.OnServiceHealthChange(event.Svc, event.Healthy) // any resulting promotion persists its own view via reconcile
+		unlock.Unlock()
 	})
-
-	group.OnServiceHealthChange(event.Svc, event.Healthy)
 }
 
 func (sm *ServicesManager) CreateOverride(override spoofs.Override) error {
-	sm.mutex.Lock()
-	defer sm.mutex.Unlock()
-	group, ok := sm.serviceGroups[override.MemberOf]
+	var createErr error
+	ok := sm.serviceGroups.With(override.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+		view := override.View
+		if view == "" {
+			view = config.DNS().DefaultView()
+		}
+
+		if override.Address == nil {
+			createErr = fmt.Errorf("override address is required")
+			return
+		}
+
+		if sg.HasOverride(view) {
+			createErr = fmt.Errorf("group %s already has an active override", override.MemberOf)
+			return
+		}
+
+		err := sg.SetOverride(override.View, override.Address)
+		if err != nil {
+			createErr = fmt.Errorf("%s: failed to set override: %w", sg.Name(), err)
+			return
+		}
+
+		err = sm.svcGroupRepo.Mutate(override.MemberOf, func(g *model.GSLBServiceGroup) {
+			if g.Active == nil {
+				g.Active = make(map[string]string)
+			}
+			g.Active[view] = override.Address.String()
+			g.HasOverride = true
+		})
+		if err != nil {
+			sg.ClearOverride(view)
+			createErr = fmt.Errorf("failed to update service group: %w", err)
+			return
+		}
+
+		if err := sm.DNSCreate(
+			update.Record{
+				Name:    override.MemberOf,
+				Address: override.Address,
+				Views:   []string{view},
+				UUID:    sg.ID(),
+			},
+		); err != nil {
+			createErr = fmt.Errorf("failed to create DNS spoof: %w", err)
+			return
+		}
+		unlock.Unlock()
+	})
 
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrServiceGroupNotFound, override.MemberOf)
 	}
 
-	view := override.View
-	if view == "" {
-		view = config.DNS().DefaultView()
-	}
-
-	if override.Address == nil {
-		return fmt.Errorf("override address is required")
-	}
-
-	if group.HasOverride(view) {
-		return fmt.Errorf("group %s already has an active override", override.MemberOf)
-	}
-
-	err := group.SetOverride(override.View, override.Address)
-	if err != nil {
-		return fmt.Errorf("%s: failed to set override: %w", group.Name(), err)
-	}
-
-	err = sm.svcGroupRepo.Update(override.MemberOf, group.Group())
-	if err != nil {
-		group.ClearOverride(view)
-		return fmt.Errorf("failed to update service group: %w", err)
-	}
-
-	if err := sm.DNSCreate(
-		update.Record{
-			Name:    override.MemberOf,
-			Address: override.Address,
-			Views:   []string{view},
-			UUID:    group.ID(),
-		},
-	); err != nil {
-		return fmt.Errorf("failed to create DNS spoof: %w", err)
+	if createErr != nil {
+		return createErr
 	}
 
 	return nil
 }
 
 func (sm *ServicesManager) RemoveOverride(memberOf string, views ...string) error {
-	sm.mutex.Lock()
-	defer sm.mutex.Unlock()
-	group, ok := sm.serviceGroups[memberOf]
+	var removeErr error
+	ok := sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+		overridenViews := make(map[string]struct{})
+		for _, view := range views {
+			if sg.HasOverride(view) {
+				overridenViews[view] = struct{}{}
+			}
+		}
+
+		if config.DNS().Enable() {
+			for _, view := range config.DNS().DNSViews() {
+				if sg.HasOverride(view) {
+					overridenViews[view] = struct{}{}
+				}
+			}
+		}
+
+		// ensure idempotency
+		if !(len(overridenViews) > 0) {
+			return
+		}
+
+		deleteViews := make([]string, 0, len(overridenViews))
+		for view := range overridenViews {
+			sg.ClearOverride(view)
+			deleteViews = append(deleteViews, view)
+		}
+
+		err := sm.svcGroupRepo.Update(memberOf, sg.Group())
+		if err != nil {
+			removeErr = fmt.Errorf("failed to update service group: %w", err)
+			return
+		}
+
+		// delete override spoof
+		if err := sm.DNSDelete(sg.ID(), deleteViews...); err != nil {
+			removeErr = fmt.Errorf("failed to delete override: %w", err)
+			return
+		}
+
+		for _, view := range deleteViews {
+			active := sg.GetActive(view)
+			if active != nil && active.IsHealthy() {
+				if err := sm.DNSCreate(update.Record{
+					Name:    active.MemberOf,
+					Address: active.GetAddress(),
+					UUID:    sg.ID(),
+				}); err != nil {
+					removeErr = fmt.Errorf("failed to create DNS spoof: %w", err)
+					return
+				}
+			}
+		}
+		unlock.Unlock()
+	})
 
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrServiceGroupNotFound, memberOf)
 	}
 
-	overridenViews := make(map[string]struct{})
-	for _, view := range views {
-		if group.HasOverride(view) {
-			overridenViews[view] = struct{}{}
-		}
+	if removeErr != nil {
+		return removeErr
 	}
-
-	if config.DNS().Enable() {
-		for _, view := range config.DNS().DNSViews() {
-			if group.HasOverride(view) {
-				overridenViews[view] = struct{}{}
-			}
-		}
-	}
-
-	// ensure idempotency
-	if !(len(overridenViews) > 0) {
-		return nil
-	}
-
-	deleteViews := make([]string, 0, len(overridenViews))
-	for view := range overridenViews {
-		group.ClearOverride(view)
-		deleteViews = append(deleteViews, view)
-	}
-
-	err := sm.svcGroupRepo.Update(memberOf, group.Group())
-	if err != nil {
-		return fmt.Errorf("failed to update service group: %w", err)
-	}
-
-	// delete override spoof
-	if err := sm.DNSDelete(group.ID(), deleteViews...); err != nil {
-		return fmt.Errorf("failed to delete override: %w", err)
-	}
-
-	for _, view := range deleteViews {
-		active := group.GetActive(view)
-		if active != nil && active.IsHealthy() {
-			if err := sm.DNSCreate(update.Record{
-				Name:    active.MemberOf,
-				Address: active.GetAddress(),
-				UUID:    group.ID(),
-			}); err != nil {
-				return fmt.Errorf("failed to create DNS spoof: %w", err)
-			}
-		}
-	}
-
 	return nil
 }
