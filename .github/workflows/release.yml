@@ -86,9 +86,9 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           export HELM_VERSION=${VERSION#v*}
-          ./yq e -i '.version = strenv(HELM_VERSION),.appVersion = strenv(VERSION)' charts/event-bot/Chart.yaml
+          ./yq e -i '.version = strenv(HELM_VERSION),.appVersion = strenv(VERSION)' charts/gslb-operator/Chart.yaml
           ./yq e -i '.image.tag = strenv(HELM_VERSION),.image.repository = "ncr.sky.nhn.no/ghcr/vitistack/gslb-operator"' charts/gslb-operator/values.yaml
-          helm package charts/event-bot
+          helm package charts/gslb-operator
           echo  ${{ secrets.GITHUB_TOKEN }} | helm registry login -u ${{ github.actor }} ghcr.io --password-stdin
           helm push gslb-operator-${HELM_VERSION}.tgz oci://ghcr.io/vitistack/helm/
 
@@ -131,8 +131,8 @@ jobs:
           APP_VERSION: ${{ steps.appver.outputs.APP_VERSION }}
         run: |
           export CHART_VERSION=${CHART_TAG#chart-v*}
-          ./yq e -i '.version = strenv(CHART_VERSION),.appVersion = strenv(APP_TAG)' charts/event-bot/Chart.yaml
+          ./yq e -i '.version = strenv(CHART_VERSION),.appVersion = strenv(APP_TAG)' charts/gslb-operator/Chart.yaml
           ./yq e -i '.image.tag = strenv(APP_VERSION),.image.repository = "ncr.sky.nhn.no/ghcr/vitistack/gslb-operator"' charts/gslb-operator/values.yaml
-          helm package charts/event-bot
+          helm package charts/gslb-operator
           echo  ${{ secrets.GITHUB_TOKEN }} | helm registry login -u ${{ github.actor }} ghcr.io --password-stdin
           helm push gslb-operator-${CHART_VERSION}.tgz oci://ghcr.io/vitistack/helm/
