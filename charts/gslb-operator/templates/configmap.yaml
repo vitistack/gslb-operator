@@ -2,17 +2,43 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: gslb-operator-config
-  
 data:
-  SRV_ENV: {{ .Values.settings.env }}
-  SRV_LUA_SANDBOX: {{ .Values.settings.sandbox }}
-  SRV_LOG_LEVEL: {{ .Values.settings.log_level }}
-  API_PORT: {{ .Values.settings.port }}
-  GSLB_POLL_INTERVAL: {{ .Values.settings.poll_interval }}
-  GSLB_DNSDIST_SERVERS_FILE: {{ .Values.settings.dnsdist_servers }}
-  {{- if .Values.webhooks.enable }}
-  MQ_ENABLED: true
-  MQ_ENDPOINT: {{ .Values.settings.mq_endpoint }}
-  MQ_PORT: {{ .Values.settings.mq_port }}
-  {{- end}}
-  VK_ADDR: {{ .Values.settings.vk_addr }}
+  config.yaml: |
+    server:
+      env: {{ .Values.env }}
+      lua_sandbox: sandbox.lua
+      log_level: {{ .Values.logLevel }}
+
+    api:
+      port: {{ .Values.settings.port }}
+
+    split_dns:
+      enabled: {{ .Values.split_dns.enabled }}
+      defaultView: {{ .Values.split_dns.defaultView }}
+      views: {{- toYaml .Values.split_dns.views | nindent 8 }}
+
+
+    gslb:
+      status:
+        enable: false
+      site: {{ .Values.datacenter }}
+      poll_interval: 1m
+      dnsdist_servers_file: ./secrets/GSLB_DNSDIST_SERVERS
+
+    valkey:
+      enabled: true
+      addr: {{ .Values.settings.vk_addr }}
+
+
+    {{- if .Values.mq.enabled }}
+    mq:
+      enabled: true
+    {{- end }}
+
+    {{- if .Values.webhooks.enabled }}
+    webhooks:
+      enabled: true
+      notifications:
+        slack:
+          enabled: false
+    {{- end }}

@@ -19,7 +19,7 @@ image:
 imagePullSecrets: []
 # This is to override the chart name.
 nameOverride: ""
-fullnameOverride: ""
+fullnameOverride: "gslb-operator"
 
 # This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
 serviceAccount:
@@ -135,22 +135,29 @@ autoscaling:
   targetMemoryUtilizationPercentage: 60
 
 # Additional volumes on the output Deployment definition.
+# Additional volumes on the output Deployment definition.
 volumes:
   - name: secrets
     secret:
-      secretName: gslb-operator-secrets
+      secretName: gslb-operator-external-secret
       optional: false
-  - name: data
-    emptyDir: {}
+  - name: config
+    configMap:
+      name: gslb-operator-config
+      items:
+        - key: config.yaml
+          path: config.yaml
 
+# Additional volumeMounts on the output Deployment definition.
 # Additional volumeMounts on the output Deployment definition.
 volumeMounts:
   - name: secrets
     mountPath: "/app/secrets"
     readOnly: true
-  - name: data
-    mountPath: "/app/data"
-    readOnly: false
+  - name: config
+    mountPath: "/app/config.yaml"
+    subPath: config.yaml
+    readOnly: true
 
 nodeSelector: {}
 
@@ -189,6 +196,9 @@ vault:
       property: mq-pass
     - secretKey: MQ_USER
       property: mq-user
+
+split_dns:
+  enabled: true
 
 webhooks:
   enable: false
