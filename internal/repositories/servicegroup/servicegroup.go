@@ -54,6 +54,9 @@ func (sr *ServiceGroupRepo) UpdateMember(memberOf string, svc model.GSLBService)
 	if err != nil {
 		return fmt.Errorf("failed to read from storage: %w", err)
 	}
+	if group.Members == nil {
+		group.Members = make(map[string]model.GSLBService)
+	}
 	group.Members[svc.ID] = svc
 
 	return sr.store.Save(memberOf, group)
