@@ -174,8 +174,29 @@ func (sm *ServicesManager) ColdStart(configs []model.GSLBConfig) {
 
 		sm.serviceGroups.With(cfg.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
 			sg.RegisterMember(newService)
+
+			inMemGroup := sg.Group()
 			unlock.Unlock()
+
+			// persist group metadata immediately so first-time registrations aren't lost before the next reconcile/shutdown
+			if err := sm.svcGroupRepo.Mutate(
+				cfg.MemberOf,
+				func(persistedGroup *model.GSLBServiceGroup) {
+					if persistedGroup.Members == nil {
+						persistedGroup.Members = make(map[string]model.GSLBService)
+					}
+					persistedGroup.Active = inMemGroup.Active
+					persistedGroup.HasOverride = inMemGroup.HasOverride
+					persistedGroup.Views = inMemGroup.Views
+					persistedGroup.UUID = inMemGroup.UUID
+					persistedGroup.Members[cfg.ServiceID] = *newService.GSLBService()
+				},
+			); err != nil {
+				bslog.Error("failed to persist service group during cold start",
+					slog.String("reason", err.Error()), slog.String("service", cfg.MemberOf))
+			}
 		})
+
 		sm.newScheduler(newService.ScheduledInterval).ScheduleService(newService)
 		sm.scheduledServices.Add(newService)
 
