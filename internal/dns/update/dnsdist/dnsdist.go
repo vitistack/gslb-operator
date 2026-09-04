@@ -207,6 +207,11 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 
 	hashesByView := make(map[string]string)
 	lock := sync.Mutex{}
+	
+	if d.servers == nil {
+		return errors.New("no registered dnsdist servers")
+	}
+
 	for _, server := range d.servers {
 		wg.Go(func() error {
 			lock.Lock()
