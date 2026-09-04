@@ -15,7 +15,7 @@ data:
     split_dns:
       enabled: {{ .Values.split_dns.enabled }}
       defaultView: {{ .Values.split_dns.defaultView }}
-      views: {{ .Values.split_dns.views }}
+      views: {{- toYaml .Values.split_dns.views | nindent 8 }}
 
 
     gslb:
