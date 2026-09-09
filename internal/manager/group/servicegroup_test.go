@@ -147,13 +147,13 @@ func TestServiceGroup_OnServiceHealthChange(t *testing.T) {
 }
 
 func makeServiceHealthy(service *service.Service) {
-	for range service.FailureThreshold {
+	for range service.GetFailureThreshold() {
 		service.OnSuccess()
 	}
 }
 
 func makeServiceUnHealthy(service *service.Service) {
-	for range service.FailureThreshold {
+	for range service.GetFailureThreshold() {
 		service.OnFailure(errors.New("test"))
 	}
 }
@@ -167,12 +167,9 @@ func TestServiceGroup_memberExists(t *testing.T) {
 		want   bool
 	}{
 		{
-			name: "exists",
-			member: &service.Service{
-				Fqdn:       "test.example.com",
-				Datacenter: "JK",
-			},
-			want: true,
+			name:   "exists",
+			member: active,
+			want:   true,
 		},
 		{
 			name:   "does-not-exist",

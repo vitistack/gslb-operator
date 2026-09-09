@@ -29,17 +29,17 @@ type HealthChangeEvent struct {
 type Service struct {
 	id                   string
 	address              ip.Address
-	Fqdn                 string
-	MemberOf             string
-	Port                 string
-	Datacenter           string
-	Views                []string
+	fqdn                 string
+	memberOf             string
+	port                 string
+	datacenter           string
+	views                []string
 	checkType            string
 	checkScript          *model.LuaScript // lua script for HTTPS response validation
 	ScheduledInterval    timesutil.Duration
 	defaultInterval      timesutil.Duration
 	priority             int
-	FailureThreshold     int
+	failureThreshold     int
 	failureCount         int
 	checker              checks.Checker
 	onHealthChange       HealthChangeCallback
@@ -59,34 +59,34 @@ func NewServiceFromGSLBConfig(cfg model.GSLBConfig, opts ...ServiceOption) (*Ser
 		port = fmt.Sprintf(":%s", cfg.Port)
 	}
 
-	validViews := make([]string, 0, len(cfg.Views))
+	validviews := make([]string, 0, len(cfg.Views))
 	if config.DNS().Enable() {
 		for _, view := range cfg.Views {
 			if dnsviews.Valid(view) {
-				validViews = append(validViews, view)
+				validviews = append(validviews, view)
 			}
 		}
 	}
 
-	if len(validViews) == 0 {
-		validViews = append(validViews, config.DNS().DefaultView())
+	if len(validviews) == 0 {
+		validviews = append(validviews, config.DNS().DefaultView())
 	}
 
 	interval := CalculateInterval(cfg.Priority, cfg.Interval)
 	svc := &Service{
 		id:                cfg.ServiceID,
 		address:           cfg.Address,
-		Fqdn:              cfg.Fqdn,
-		MemberOf:          cfg.MemberOf,
-		Port:              port,
-		Datacenter:        cfg.Datacenter,
-		Views:             validViews,
+		fqdn:              cfg.Fqdn,
+		memberOf:          cfg.MemberOf,
+		port:              port,
+		datacenter:        cfg.Datacenter,
+		views:             validviews,
 		checkType:         cfg.CheckType,
 		checkScript:       cfg.Script,
 		ScheduledInterval: interval,
 		defaultInterval:   interval,
 		priority:          cfg.Priority,
-		FailureThreshold:  cfg.FailureThreshold,
+		failureThreshold:  cfg.FailureThreshold,
 		failureCount:      cfg.FailureThreshold, // need to succeed check N times before healthy!
 		isHealthy:         false,
 		dryRun:            false,
@@ -102,19 +102,19 @@ func NewServiceFromGSLBConfig(cfg model.GSLBConfig, opts ...ServiceOption) (*Ser
 		svc.checker = &checks.DryRun{}
 
 	case cfg.CheckType == checks.HTTPS:
-		svc.checker = checks.NewHTTPChecker("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, cfg.Script)
+		svc.checker = checks.NewHTTPChecker("https://"+svc.fqdn, checks.DEFAULT_TIMEOUT, cfg.Script)
 
 	case cfg.CheckType == checks.HTTP:
-		svc.checker = checks.NewHTTPChecker("http://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, cfg.Script)
+		svc.checker = checks.NewHTTPChecker("http://"+svc.fqdn, checks.DEFAULT_TIMEOUT, cfg.Script)
 
 	case cfg.CheckType == checks.TCP_FULL:
-		svc.checker = checks.NewTCPFullChecker(svc.address.PrimaryTCPAddr(svc.Port), checks.DEFAULT_TIMEOUT)
+		svc.checker = checks.NewTCPFullChecker(svc.address.PrimaryTCPAddr(svc.port), checks.DEFAULT_TIMEOUT)
 
 	case cfg.CheckType == checks.TCP_HALF:
-		svc.checker = checks.NewTCPHalfChecker(svc.address.PrimaryTCPAddr(svc.Port), checks.DEFAULT_TIMEOUT)
+		svc.checker = checks.NewTCPHalfChecker(svc.address.PrimaryTCPAddr(svc.port), checks.DEFAULT_TIMEOUT)
 
 	default:
-		svc.checker = checks.NewTCPFullChecker(svc.address.PrimaryTCPAddr(svc.Port), checks.DEFAULT_TIMEOUT)
+		svc.checker = checks.NewTCPFullChecker(svc.address.PrimaryTCPAddr(svc.port), checks.DEFAULT_TIMEOUT)
 	}
 
 	return svc, nil
@@ -159,7 +159,10 @@ func (s *Service) GetBaseInterval() timesutil.Duration {
 
 // checks health of service
 func (s *Service) Execute() error {
-	return s.checker.Check()
+	s.mu.Lock()
+	checker := s.checker
+	s.mu.Unlock()
+	return checker.Check()
 }
 
 /*
@@ -198,8 +201,14 @@ OnFailure : count = 3, healthy = false -> update DNS
 func (s *Service) OnSuccess() {
 	s.mu.Lock()
 	if s.isHealthy { // already healthy
+		previousFailureCount := s.failureCount
 		s.failureCount = 0
+
 		s.mu.Unlock()
+		if previousFailureCount > 0 {
+			s.onFailureCountUpdate(s.GSLBService())
+		}
+
 		return
 	}
 
@@ -227,16 +236,16 @@ func (s *Service) OnSuccess() {
 func (s *Service) OnFailure(err error) {
 	s.mu.Lock()
 	if !s.isHealthy { // already unhealthy
-		s.failureCount = s.FailureThreshold
+		s.failureCount = s.failureThreshold
 		s.mu.Unlock()
 		return
 	}
 
-	if s.failureCount < s.FailureThreshold {
+	if s.failureCount < s.failureThreshold {
 		s.failureCount++
 	}
 
-	becameUnHalthy := s.failureCount == s.FailureThreshold
+	becameUnHalthy := s.failureCount == s.failureThreshold
 	if becameUnHalthy {
 		s.isHealthy = false
 	}
@@ -253,10 +262,14 @@ func (s *Service) OnFailure(err error) {
 }
 
 func (s *Service) SetHealthChangeCallback(callback HealthChangeCallback) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.onHealthChange = callback
 }
 
 func (s *Service) SetFailureCountCallback(callback FailureCountCallback) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.onFailureCountUpdate = callback
 }
 
@@ -266,27 +279,75 @@ func (s *Service) IsHealthy() bool {
 	return s.isHealthy
 }
 
+func (s *Service) GetFqdn() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fqdn
+}
+
+func (s *Service) GetMemberOf() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.memberOf
+}
+
+func (s *Service) GetPort() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.port
+}
+
+func (s *Service) GetDatacenter() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.datacenter
+}
+
+func (s *Service) GetViews() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.views
+}
+
 func (s *Service) GetPriority() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.priority
 }
 
 func (s *Service) GetAddress() ip.Address {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.address
 }
 
 func (s *Service) GetDefaultInterval() timesutil.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.defaultInterval
 }
 
 func (s *Service) GetID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.id
 }
 
 func (s *Service) GetFailureCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.failureCount
 }
 
+func (s *Service) GetFailureThreshold() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failureThreshold
+}
+
 func (s *Service) GetAverageRoundtrip() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.checker.Roundtrip()
 }
 
@@ -294,9 +355,9 @@ func (s *Service) ConfigChanged(other model.GSLBConfig) bool {
 	cfgSelf := s.GSLBConfig()
 	other.Interval = CalculateInterval(other.Priority, other.Interval)
 	return !reflect.DeepEqual(cfgSelf, other)
-	//if s.Fqdn != other.Fqdn ||
+	//if s.fqdn != other.fqdn ||
 	//	s.addr.String() != other.addr.String() ||
-	//	s.Datacenter != other.Datacenter ||
+	//	s.datacenter != other.datacenter ||
 	//	s.FailureThreshold != other.FailureThreshold ||
 	//	s.priority != other.priority ||
 	//	s.checkType != other.checkType ||
@@ -308,36 +369,42 @@ func (s *Service) ConfigChanged(other model.GSLBConfig) bool {
 
 // updates the cfguration values of s with the values of new
 func (s *Service) Assign(new *Service) {
-	s.Fqdn = new.Fqdn
-	s.Port = new.Port
-	s.Views = new.Views
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fqdn = new.fqdn
+	s.port = new.port
+	s.views = new.views
 	s.checker = new.checker
-	s.MemberOf = new.MemberOf
+	s.memberOf = new.memberOf
 	s.priority = new.priority
 	s.checkType = new.checkType
 	s.checkScript = new.checkScript
-	s.Datacenter = new.Datacenter
+	s.datacenter = new.datacenter
 	s.defaultInterval = new.defaultInterval
-	s.FailureThreshold = new.FailureThreshold
+	s.failureThreshold = new.failureThreshold
 }
 
 func (s *Service) LogValue() slog.Value {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s == nil {
 		return slog.StringValue("nil")
 	}
 
 	return slog.GroupValue(
 		slog.String("id", s.id),
-		slog.String("memberOf", s.MemberOf),
-		slog.String("fqdn", s.Fqdn),
-		slog.String("datacenter", s.Datacenter),
+		slog.String("memberOf", s.memberOf),
+		slog.String("fqdn", s.fqdn),
+		slog.String("datacenter", s.datacenter),
 		slog.String("address", s.address.String()),
 	)
 }
 
 // satisfies the stringer interface to allow passing s for %v in formatted strings
 func (s *Service) String() string {
-	return fmt.Sprintf("%s:%s:%s:%s:%s", s.id, s.MemberOf, s.Fqdn, s.Datacenter, s.address.String())
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return fmt.Sprintf("%s:%s:%s:%s:%s", s.id, s.memberOf, s.fqdn, s.datacenter, s.address.String())
 }
 
 func (s *Service) GSLBService() *model.GSLBService {
@@ -345,11 +412,11 @@ func (s *Service) GSLBService() *model.GSLBService {
 	defer s.mu.Unlock()
 	out := &model.GSLBService{
 		ID:           s.id,
-		MemberOf:     s.MemberOf,
-		Fqdn:         s.Fqdn,
-		Port:         s.Port,
-		Datacenter:   s.Datacenter,
-		Views:        s.Views,
+		MemberOf:     s.memberOf,
+		Fqdn:         s.fqdn,
+		Port:         s.port,
+		Datacenter:   s.datacenter,
+		Views:        s.views,
 		Address:      s.address,
 		IsHealthy:    s.isHealthy,
 		FailureCount: s.failureCount,
@@ -359,17 +426,19 @@ func (s *Service) GSLBService() *model.GSLBService {
 }
 
 func (s *Service) GSLBConfig() model.GSLBConfig {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return model.GSLBConfig{
 		ServiceID:        s.id,
-		MemberOf:         s.MemberOf,
-		Fqdn:             s.Fqdn,
+		MemberOf:         s.memberOf,
+		Fqdn:             s.fqdn,
 		Address:          s.address,
-		Port:             strings.Trim(s.Port, ":"),
-		Datacenter:       s.Datacenter,
-		Views:            s.Views,
+		Port:             strings.Trim(s.port, ":"),
+		Datacenter:       s.datacenter,
+		Views:            s.views,
 		Interval:         s.defaultInterval,
 		Priority:         s.priority,
-		FailureThreshold: s.FailureThreshold,
+		FailureThreshold: s.failureThreshold,
 		CheckType:        s.checkType,
 		Script:           s.checkScript,
 	}

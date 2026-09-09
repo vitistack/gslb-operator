@@ -259,8 +259,8 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 	_, exists := svcGroup.Members[serviceCfg.ServiceID]
 
 	// create new service group if needed, and register service in group
-	sm.newServiceGroup(newService.MemberOf)
-	sm.serviceGroups.With(newService.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+	sm.newServiceGroup(newService.GetMemberOf())
+	sm.serviceGroups.With(newService.GetMemberOf(), func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
 		sg.RegisterMember(newService)
 
 		inMemGroup := sg.Group()
@@ -324,11 +324,11 @@ func (sm *ServicesManager) RegisterService(serviceCfg model.GSLBConfig) (*servic
 			&events.Event{
 				Type: domainEvents.EventTypeGSLBServiceMemberAdd,
 				Payload: domainEvents.GSLBServiceMemberAddEvent{
-					Service:   newService.MemberOf,
+					Service:   newService.GetMemberOf(),
 					NewMember: *newService.GSLBService(),
 				},
 				Timestamp: time.Now(),
-				ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, newService.MemberOf),
+				ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, newService.GetMemberOf()),
 			},
 		)
 	}
@@ -351,17 +351,17 @@ func (sm *ServicesManager) RemoveService(id string) error {
 	sm.scheduledServices.Delete(id)
 	sm.schedulers[interval].RemoveService(svc) // remove the service from its scheduler
 
-	if err := sm.svcGroupRepo.DeleteMember(svc.MemberOf, model.GSLBService{ID: id, MemberOf: svc.MemberOf}); err != nil {
+	if err := sm.svcGroupRepo.DeleteMember(svc.GetMemberOf(), model.GSLBService{ID: id, MemberOf: svc.GetMemberOf()}); err != nil {
 		return fmt.Errorf("failed to delete servicegroup member: %s: %w", svc.GetID(), err)
 	}
 
 	var empty bool
-	sm.serviceGroups.With(svc.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+	sm.serviceGroups.With(svc.GetMemberOf(), func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
 		empty = sg.RemoveMember(id)
 		unlock.Unlock()
 	})
 	if empty {
-		sm.serviceGroups.Delete(svc.MemberOf)
+		sm.serviceGroups.Delete(svc.GetMemberOf())
 		serviceGroups.Dec()
 	}
 	bslog.Debug("removed service", slog.Any("service", svc))
@@ -391,17 +391,17 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 	}
 
 	oldDefaultInterval, newDefaultInterval := old.GetDefaultInterval(), new.GetDefaultInterval()
-	oldMemberOf, newMemberOf := old.MemberOf, new.MemberOf
+	oldMemberOf, newMemberOf := old.GetMemberOf(), new.GetMemberOf()
 
 	lastConfig := old.GSLBConfig()
-	views := old.Views
+	views := old.GetViews()
 	old.Assign(new) // assigning changed config variables to the registered service
 
 	if oldMemberOf != newMemberOf {
 		sm.memberOfChanged(oldMemberOf, newMemberOf, old)
 	} else {
 		ok := sm.serviceGroups.With(oldMemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
-			views = append(views, old.Views...)
+			views = append(views, old.GetViews()...)
 			slices.Sort(views)
 			// update all views that may have had an effect
 			sg.Refresh(slices.Compact(views)...)
@@ -480,9 +480,9 @@ func (sm *ServicesManager) memberOfChanged(oldMemberOf, newMemberOf string, svc 
 
 		events.Emit(&events.Event{
 			Type:      domainEvents.EventTypeGSLBServiceMemberAdd,
-			Payload:   domainEvents.GSLBServiceMemberAddEvent{Service: svc.MemberOf, NewMember: *svc.GSLBService()},
+			Payload:   domainEvents.GSLBServiceMemberAddEvent{Service: svc.GetMemberOf(), NewMember: *svc.GSLBService()},
 			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, svc.MemberOf),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, svc.GetMemberOf()),
 		})
 	})
 
@@ -568,7 +568,7 @@ func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
 	}
 
 	if err := sm.DNSCreate(update.Record{
-		Name: active.MemberOf, Address: active.GetAddress(), Views: active.Views, UUID: string(group.ID()),
+		Name: active.GetMemberOf(), Address: active.GetAddress(), Views: active.GetViews(), UUID: string(group.ID()),
 	}); err != nil {
 		bslog.Error("failed to reconcile gslb service-group",
 			slog.String("reason", fmt.Errorf("failed to create DNS record: %w", err).Error()), slog.Any("activeService", active))
@@ -767,8 +767,8 @@ func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig, optional
 func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChangeEvent) {
 	bslog.Debug("received health-change", slog.Any("service", event.Svc), slog.Bool("healthy", event.Healthy))
 
-	sm.serviceGroups.With(event.Svc.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
-		if err := sm.svcGroupRepo.UpdateMember(event.Svc.MemberOf, *event.Svc.GSLBService()); err != nil {
+	sm.serviceGroups.With(event.Svc.GetMemberOf(), func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+		if err := sm.svcGroupRepo.UpdateMember(event.Svc.GetMemberOf(), *event.Svc.GSLBService()); err != nil {
 			bslog.Error(
 				"failed to update service health on health-change",
 				slog.String("reason", err.Error()),
@@ -776,15 +776,14 @@ func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChan
 			)
 		}
 
+		sg.OnServiceHealthChange(event.Svc, event.Healthy) // any resulting promotion persists its own view via reconcile
+		unlock.Unlock()
 		events.Emit(&events.Event{
 			Type:      domainEvents.EventTypeGSLBServiceMemberHealthChange,
 			Payload:   domainEvents.GSLBServiceMemberHealthChangeEvent{Member: *event.Svc.GSLBService()},
 			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberHealthChange, event.Svc.MemberOf),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberHealthChange, event.Svc.GetMemberOf()),
 		})
-
-		sg.OnServiceHealthChange(event.Svc, event.Healthy) // any resulting promotion persists its own view via reconcile
-		unlock.Unlock()
 	})
 }
 
@@ -895,7 +894,7 @@ func (sm *ServicesManager) RemoveOverride(memberOf string, views ...string) erro
 			active := sg.GetActive(view)
 			if active != nil && active.IsHealthy() {
 				if err := sm.DNSCreate(update.Record{
-					Name:    active.MemberOf,
+					Name:    active.GetMemberOf(),
 					Address: active.GetAddress(),
 					UUID:    sg.ID(),
 				}); err != nil {
