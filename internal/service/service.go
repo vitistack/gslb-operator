@@ -32,6 +32,7 @@ type Service struct {
 	Fqdn                 string
 	MemberOf             string
 	Port                 string
+	healthPath           string
 	Datacenter           string
 	Views                []string
 	checkType            string
@@ -79,6 +80,7 @@ func NewServiceFromGSLBConfig(cfg model.GSLBConfig, opts ...ServiceOption) (*Ser
 		Fqdn:              cfg.Fqdn,
 		MemberOf:          cfg.MemberOf,
 		Port:              port,
+		healthPath:        cfg.Path,
 		Datacenter:        cfg.Datacenter,
 		Views:             validViews,
 		checkType:         cfg.CheckType,
@@ -102,10 +104,10 @@ func NewServiceFromGSLBConfig(cfg model.GSLBConfig, opts ...ServiceOption) (*Ser
 		svc.checker = &checks.DryRun{}
 
 	case cfg.CheckType == checks.HTTPS:
-		svc.checker = checks.NewHTTPChecker("https://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, cfg.Script)
+		svc.checker = checks.NewHTTPChecker("https://"+svc.Fqdn+svc.healthPath, checks.DEFAULT_TIMEOUT, cfg.Script)
 
 	case cfg.CheckType == checks.HTTP:
-		svc.checker = checks.NewHTTPChecker("http://"+svc.Fqdn, checks.DEFAULT_TIMEOUT, cfg.Script)
+		svc.checker = checks.NewHTTPChecker("http://"+svc.Fqdn+svc.healthPath, checks.DEFAULT_TIMEOUT, cfg.Script)
 
 	case cfg.CheckType == checks.TCP_FULL:
 		svc.checker = checks.NewTCPFullChecker(svc.address.PrimaryTCPAddr(svc.Port), checks.DEFAULT_TIMEOUT)
@@ -315,6 +317,7 @@ func (s *Service) Assign(new *Service) {
 	s.MemberOf = new.MemberOf
 	s.priority = new.priority
 	s.checkType = new.checkType
+	s.healthPath = new.healthPath
 	s.checkScript = new.checkScript
 	s.Datacenter = new.Datacenter
 	s.defaultInterval = new.defaultInterval
