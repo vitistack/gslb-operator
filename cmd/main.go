@@ -99,7 +99,7 @@ func main() {
 	background := context.Background()
 	ctx, cancel := context.WithCancel(background)
 	// mq brokers
-	brokers.Init(ctx, valkeyClient, statusRepo, svcGroupRepo)
+	brokers.Init(ctx, valkeyClient, statusRepo, svcGroupRepo, updater)
 
 	dnsHandler.Start(ctx, cancel)
 	updater.Synchronize(ctx)

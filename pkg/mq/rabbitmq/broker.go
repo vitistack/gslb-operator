@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+	"uuid"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
@@ -316,26 +317,30 @@ func (b *Broker[T]) declareTopology(channel *connection.Channel) error {
 	return nil
 }
 
-func (b *Broker[T]) Publish(ctx context.Context, msg T) error {
-	body, err := json.Marshal(msg)
+func (b *Broker[T]) Publish(ctx context.Context, payload T) error {
+	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("could not marshall message body: %w", err)
+		return fmt.Errorf("mq: failed to marshall message: %w", err)
+	}
+
+	msg := amqp.Publishing{
+		MessageId:   uuid.NewV7().String(),
+		ContentType: "application/json",
+		Body:        body,
 	}
 
 	channel, err := b.getChannel(ctx)
 	if err != nil {
 		return fmt.Errorf("mq: broker failed to retrieve channel: %w", err)
 	}
+
+	b.logger.Info("mq: publishing message", slog.String("message_id", msg.MessageId))
+
 	return channel.Publish(
 		ctx,
 		b.exchange,
 		b.queue,
-		amqp.Publishing{
-			ContentType:  "application/json",
-			DeliveryMode: amqp.Transient,
-			Body:         body,
-			Timestamp:    time.Now(),
-		},
+		msg,
 	)
 }
 
@@ -369,6 +374,8 @@ func (b *Broker[T]) handle(ctx context.Context, delivery amqp.Delivery, handler 
 		delivery.Nack(false, false)
 		return
 	}
+
+	b.logger.Info("mq: received new message", slog.String("message_id", delivery.MessageId))
 
 	err := handler(ctx, msg)
 	if err != nil {

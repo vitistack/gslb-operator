@@ -2,22 +2,28 @@ package servicegroup
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/vitistack/gslb-operator/internal/model"
+	"github.com/vitistack/gslb-operator/pkg/iter"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
 )
 
 type ServiceGroupRepo struct {
+	lock  *sync.Mutex
 	store persistence.Store[model.GSLBServiceGroup]
 }
 
 func NewServiceGroupRepo(store persistence.Store[model.GSLBServiceGroup]) *ServiceGroupRepo {
 	return &ServiceGroupRepo{
+		lock:  &sync.Mutex{},
 		store: store,
 	}
 }
 
 func (sr *ServiceGroupRepo) Create(memberOf string, group *model.GSLBServiceGroup) error {
+	sr.lock.Lock()
+	defer sr.lock.Unlock()
 	if err := sr.store.Save(memberOf, *group); err != nil {
 		return fmt.Errorf("failed to create service group: %w", err)
 	}
@@ -25,6 +31,8 @@ func (sr *ServiceGroupRepo) Create(memberOf string, group *model.GSLBServiceGrou
 }
 
 func (sr *ServiceGroupRepo) Read(memberOf string) (model.GSLBServiceGroup, error) {
+	sr.lock.Lock()
+	defer sr.lock.Unlock()
 	if group, err := sr.store.Load(memberOf); err != nil {
 		return model.GSLBServiceGroup{}, fmt.Errorf("failed to read from storage: %w", err)
 	} else {
@@ -32,17 +40,34 @@ func (sr *ServiceGroupRepo) Read(memberOf string) (model.GSLBServiceGroup, error
 	}
 }
 
+func (sr *ServiceGroupRepo) ReadAll() (iter.Iterator[model.GSLBServiceGroup], func() error) {
+	sr.lock.Lock()
+	defer sr.lock.Unlock()
+	it, finish := sr.store.LoadAll()
+	return iter.FromSeq(it), finish
+}
+
 func (sr *ServiceGroupRepo) Mutate(memberOf string, mut func(*model.GSLBServiceGroup)) error {
-	group, err := sr.Read(memberOf)
+	sr.lock.Lock()
+	defer sr.lock.Unlock()
+
+	group, err := sr.store.Load(memberOf)
 	if err != nil {
 		return err
 	}
 
 	mut(&group)
-	return sr.Update(memberOf, &group)
+
+	if err := sr.store.Save(memberOf, group); err != nil {
+		return fmt.Errorf("could not update group: %w", err)
+	}
+
+	return nil
 }
 
 func (sr *ServiceGroupRepo) Update(memberOf string, group *model.GSLBServiceGroup) error {
+	sr.lock.Lock()
+	defer sr.lock.Unlock()
 	if err := sr.store.Save(memberOf, *group); err != nil {
 		return fmt.Errorf("could not update group: %s: %w", memberOf, err)
 	}
@@ -50,6 +75,8 @@ func (sr *ServiceGroupRepo) Update(memberOf string, group *model.GSLBServiceGrou
 }
 
 func (sr *ServiceGroupRepo) UpdateMember(memberOf string, svc model.GSLBService) error {
+	sr.lock.Lock()
+	defer sr.lock.Unlock()
 	group, err := sr.store.Load(memberOf)
 	if err != nil {
 		return fmt.Errorf("failed to read from storage: %w", err)
@@ -63,6 +90,8 @@ func (sr *ServiceGroupRepo) UpdateMember(memberOf string, svc model.GSLBService)
 }
 
 func (sr *ServiceGroupRepo) Delete(memberOf string) error {
+	sr.lock.Lock()
+	defer sr.lock.Unlock()
 	if err := sr.store.Delete(memberOf); err != nil {
 		return fmt.Errorf("failed to delete servicegroup: %s: %w", memberOf, err)
 	}
@@ -70,7 +99,9 @@ func (sr *ServiceGroupRepo) Delete(memberOf string) error {
 }
 
 func (sr *ServiceGroupRepo) DeleteMember(memberOf string, member model.GSLBService) error {
-	group, err := sr.Read(member.MemberOf)
+	sr.lock.Lock()
+	defer sr.lock.Unlock()
+	group, err := sr.store.Load(member.MemberOf)
 	if err != nil {
 		return fmt.Errorf("failed to fetch service group: %w", err)
 	}

@@ -548,13 +548,13 @@ func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
 		return
 	}
 
-	if err := sm.DNSDelete(group.ID()); err != nil {
-		bslog.Error("failed to reconcile gslb service-group",
-			slog.String("reason", fmt.Errorf("failed to delete DNS records: %w", err).Error()), slog.Any("group", group))
-		return
-	}
-
 	if active == nil {
+		if err := sm.DNSDelete(group.ID()); err != nil {
+			bslog.Error("failed to reconcile gslb service-group",
+				slog.String("reason", fmt.Errorf("failed to delete DNS records: %w", err).Error()), slog.Any("group", group))
+			return
+		}
+
 		bslog.Warn("gslb service group is down",
 			slog.String("service", group.Name()), slog.String("view", view),
 			slog.String("status", "down"), slog.String("reason", "all members are considered down"))
