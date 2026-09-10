@@ -220,12 +220,9 @@ func (sm *ServicesManager) ColdStart(configs []model.GSLBConfig) {
 	}
 
 	// reset every group to have correct onpromotion logic after coldstart
-	for memberOf, svcGroup := range sm.serviceGroups.Groups() {
+	for _, svcGroup := range sm.serviceGroups.Groups() {
 		svcGroup.SetOnPromotion(func(_ group.ServiceGroup, view string) {
-			sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
-				sm.reconcile(sg, view)
-				unlock.Unlock()
-			})
+			sm.reconcile(svcGroup, view)
 		})
 	}
 	bslog.Info("cold start sequence finished", slog.Float64("took", time.Since(coldStartTime).Seconds()))
@@ -524,7 +521,9 @@ func (sm *ServicesManager) handleServiceHealthChange(ctx context.Context) {
 func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
 	active := group.GetActive(view)
 
+	wasPreviouslyActive := false
 	if seeded, ok := group.SeededActive(view); ok {
+		wasPreviouslyActive = true
 		group.ClearSeed(view)
 		if active != nil && active.GetID() == seeded {
 			return
@@ -573,10 +572,10 @@ func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
 		return
 	}
 
-	sm.reconcileHealthCheckIntervals(group, view)
+	sm.reconcileHealthCheckIntervals(group, view, wasPreviouslyActive)
 }
 
-func (sm *ServicesManager) reconcileHealthCheckIntervals(group group.ServiceGroup, view string) {
+func (sm *ServicesManager) reconcileHealthCheckIntervals(group group.ServiceGroup, view string, wasPreviouslyActive bool) {
 	active := group.GetActive(view)
 	baseInterval := active.GetBaseInterval()
 
@@ -613,7 +612,7 @@ func (sm *ServicesManager) reconcileHealthCheckIntervals(group group.ServiceGrou
 		}
 	}
 
-	if group.GetLastActive(view) == nil {
+	if group.GetLastActive(view) == nil && !wasPreviouslyActive {
 		events.Emit(&events.Event{
 			Type:      domainEvents.EventTypeGSLBServiceUp,
 			Payload:   domainEvents.GSLBServiceUpEvent{NewActive: *active.GSLBService()},

@@ -76,7 +76,7 @@ func (l *LuaValidator) Validate(resp *http.Response) (err error) {
 
 	vm.SetFEnv(l.compiled, sandbox)
 	vm.Push(l.compiled)
-	if err := vm.PCall(0, 1, nil); err != nil {
+	if err := vm.PCall(0, 2, nil); err != nil {
 		// Clean up before returning
 		sandbox.RawSetString("status_code", glua.LNil)
 		sandbox.RawSetString("body", glua.LNil)
