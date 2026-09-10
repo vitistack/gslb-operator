@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/vitistack/gslb-operator/pkg/bslog"
@@ -19,6 +20,7 @@ var ErrBodyTooBig = errors.New("response body too big")
 const maxBodySize = 1 * 1024 * 1024 // 1MB
 
 type LuaValidator struct {
+	mu       sync.Mutex
 	script   string
 	compiled *glua.LFunction
 }
@@ -26,6 +28,8 @@ type LuaValidator struct {
 // sets global lua values for the script
 // executes validation script, and returns the validation result
 func (l *LuaValidator) Validate(resp *http.Response) (err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	defer func() { // makes sure we recover from any panics caused by the lua execution
 		if r := recover(); r != nil {
 			err = fmt.Errorf("recovered from lua script validation error: %v", r)
@@ -34,7 +38,7 @@ func (l *LuaValidator) Validate(resp *http.Response) (err error) {
 	vm := lua.Get()
 	defer lua.Put(vm)
 
-	sandbox := lua.GetSandBox(vm)
+	sandbox := lua.NewRequestEnv(vm)
 
 	if l.compiled == nil {
 		// compile user script

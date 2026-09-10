@@ -2,6 +2,7 @@ package lua
 
 import (
 	"fmt"
+	"sync"
 
 	glua "github.com/yuin/gopher-lua"
 )
@@ -9,9 +10,12 @@ import (
 type SandboxConfig glua.LTable
 
 var sandBox *SandboxConfig
+var vmPool = sync.Pool{
+	New: func() any { return newLuaState() },
+}
 
 func LoadSandboxConfig(filename string) error {
-	vm := glua.NewState()
+	vm := glua.NewState() // lua state used to build the sandbox
 	defer vm.Close()
 
 	if err := vm.DoFile(filename); err != nil {
@@ -26,31 +30,32 @@ func LoadSandboxConfig(filename string) error {
 
 	sandBox = (*SandboxConfig)(envValue.(*glua.LTable))
 
-	for range bucket.max {
-		bucket.vms <- bucket.new()
-	}
-
 	return nil
 }
 
-// get sandbox environment for VM
-func GetSandBox(vm *glua.LState) *glua.LTable {
-	env := vm.GetGlobal("sandbox")
-
-	if sandbox, ok := env.(*glua.LTable); ok {
-		return sandbox
-	}
-	return nil
+func NewRequestEnv(vm *glua.LState) *glua.LTable {
+	env := vm.NewTable()
+	mt := vm.NewTable()
+	mt.RawSetString("__index", (*glua.LTable)(sandBox))
+	vm.SetMetatable(env, mt)
+	return env
 }
 
 func Get() *glua.LState {
-	return bucket.get()
+	return vmPool.Get().(*glua.LState)
 }
 
-func Put(L *glua.LState) {
-	bucket.put(L)
+func Put(luaState *glua.LState) {
+	vmPool.Put(luaState)
 }
 
-func Shutdown() {
-	bucket.shutdown()
+func newLuaState() *glua.LState {
+	L := glua.NewState(glua.Options{
+		SkipOpenLibs:        true,
+		IncludeGoStackTrace: true,
+		MinimizeStackMemory: true,
+		CallStackSize:       64,
+	})
+	L.SetGlobal("sandbox", (*glua.LTable)(sandBox))
+	return L
 }
