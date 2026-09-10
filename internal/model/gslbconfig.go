@@ -16,6 +16,7 @@ type GSLBConfig struct {
 	MemberOf         string             `json:"memberOf"`
 	Address          ip.Address         `json:"address"`
 	Port             string             `json:"port"`
+	Path             string             `json:"path"`
 	Datacenter       string             `json:"dc"`
 	Views            []string           `json:"views,omitempty"`
 	Interval         timesutil.Duration `json:"interval"`
