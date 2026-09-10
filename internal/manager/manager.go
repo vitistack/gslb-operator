@@ -222,11 +222,9 @@ func (sm *ServicesManager) ColdStart(configs []model.GSLBConfig) {
 	// reset every group to have correct onpromotion logic after coldstart
 	for memberOf, svcGroup := range sm.serviceGroups.Groups() {
 		svcGroup.SetOnPromotion(func(_ group.ServiceGroup, view string) {
-			sm.wg.Go(func() {
-				sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
-					sm.reconcile(sg, view)
-					unlock.Unlock()
-				})
+			sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+				sm.reconcile(sg, view)
+				unlock.Unlock()
 			})
 		})
 	}
@@ -629,11 +627,9 @@ func (sm *ServicesManager) reconcileHealthCheckIntervals(group group.ServiceGrou
 func (sm *ServicesManager) newServiceGroup(memberOf string) {
 	created := sm.serviceGroups.Create(memberOf, func(sg group.ServiceGroup) {
 		sg.SetOnPromotion(func(_ group.ServiceGroup, view string) {
-			sm.wg.Go(func() {
-				sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
-					sm.reconcile(sg, view)
-					unlock.Unlock()
-				})
+			sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+				sm.reconcile(sg, view)
+				unlock.Unlock()
 			})
 		})
 	})

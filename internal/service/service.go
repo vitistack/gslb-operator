@@ -27,12 +27,12 @@ type HealthChangeEvent struct {
 }
 
 type Service struct {
-	id       string
-	address  ip.Address
-	fqdn     string
-	memberOf string
-	port     string
-	healthPath
+	id                   string
+	address              ip.Address
+	fqdn                 string
+	memberOf             string
+	port                 string
+	healthPath           string
 	datacenter           string
 	views                []string
 	checkType            string
