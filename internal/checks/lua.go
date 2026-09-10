@@ -85,8 +85,11 @@ func (l *LuaValidator) Validate(resp *http.Response) (err error) {
 	}
 
 	// Get the return value
-	ret := vm.Get(-1)
-	vm.Pop(1)
+	ret := vm.Get(-2)
+	reason := vm.Get(-1)
+	vm.Pop(2)
+
+	reasonStr, _ := reason.(glua.LString)
 
 	// Clean up sandbox
 	sandbox.RawSetString("status_code", glua.LNil)
@@ -94,11 +97,17 @@ func (l *LuaValidator) Validate(resp *http.Response) (err error) {
 	sandbox.RawSetString("headers", glua.LNil)
 
 	if ret == glua.LNil {
-		return fmt.Errorf("script returned a nil value")
+		if reasonStr != "" {
+			return fmt.Errorf("lua script returned a nil value: %s", reasonStr)
+		}
+		return fmt.Errorf("lua script returned a nil value")
 	}
 
 	if ret == glua.LFalse {
-		return fmt.Errorf("health-check validation returned a false value")
+		if reasonStr != "" {
+			return fmt.Errorf("lua script health-check validation returned false: %s", reasonStr)
+		}
+		return fmt.Errorf("lua script health-check validation returned false")
 	}
 
 	return err

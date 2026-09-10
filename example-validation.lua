@@ -7,6 +7,7 @@
     this allows the users to customize what a healthy response from the service looks like:
     NOTE: the script must return true/false 
     NOTE: the script is stored in the GSLB - config
+    NOTE: the script may optionally return a second string value explaining why it failed
 */
 
 -- Check status code only
@@ -22,4 +23,4 @@ return status_code == 200 and headers["Content-Type"] == "application/json"
 local status_ok = status_code >= 200 and status_code < 300
 local has_json = headers["Content-Type"] == "application/json"
 local valid_body = string.find(body, '"status":"ok"') ~= nil
-return status_ok and has_json and valid_body
+return status_ok and has_json and valid_body, "this is the reason why healthcheck failed: skill-issue"
