@@ -70,6 +70,7 @@ func NewStatusBroker(ctx context.Context, statusRepo *status.StatusRepo, groupRe
 			rabbitmq.WithExchange[serviceModels.SiteGSLBServiceStatus]("ex.gslb.service-status"),
 			rabbitmq.WithQueue[serviceModels.SiteGSLBServiceStatus]("q.gslb.service-status"),
 			rabbitmq.WithFanout[serviceModels.SiteGSLBServiceStatus](),
+			rabbitmq.WithPrefetch[serviceModels.SiteGSLBServiceStatus](150),
 		),
 	}
 	broker.scheduler.OnTick(func(memberOf string) {
