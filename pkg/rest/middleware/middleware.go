@@ -4,8 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-
-	"github.com/google/uuid"
+	"uuid"
 )
 
 type MiddlewareFunc func(next http.HandlerFunc) http.HandlerFunc
@@ -24,12 +23,7 @@ func WithIncomingRequestLogging(logger *slog.Logger) MiddlewareFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			parent := r.Context() // re-use request context
 
-			id, err := uuid.NewV7()
-			if err != nil {
-				r = r.WithContext(context.WithValue(parent, "id", "N/A"))
-			} else {
-				r = r.WithContext(context.WithValue(parent, "id", id.String()))
-			}
+			r = r.WithContext(context.WithValue(parent, "id", uuid.NewV7().String()))
 
 			logger.Info("incoming request",
 				slog.GroupAttrs(
