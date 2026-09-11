@@ -1,5 +1,22 @@
 package group
 
+import (
+	"cmp"
+	"crypto/md5"
+	"errors"
+	"slices"
+	"time"
+	"uuid"
+
+	"github.com/vitistack/gslb-operator/internal/config"
+	"github.com/vitistack/gslb-operator/internal/model"
+	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
+	"github.com/vitistack/gslb-operator/internal/service"
+	"github.com/vitistack/gslb-operator/internal/utils/ip"
+	"github.com/vitistack/gslb-operator/pkg/events"
+	"github.com/vitistack/gslb-operator/pkg/iter"
+)
+
 type ServiceGroupMode int
 
 const (
@@ -20,318 +37,395 @@ func (m *ServiceGroupMode) String() string {
 	}
 }
 
-/*
-type ServiceGroup struct {
-	Name string
+
+var (
+	ErrOverrideAlreadyActive = errors.New("group already has an active override for view")
+)
+
+type ServiceGroup interface {
+	ID() string
+	Name() string
+	// register new member of group
+	RegisterMember(*service.Service)
+
+	// returns wether the group is empty or not after remove
+	RemoveMember(string) bool
+
+	// action to take when a members health changed
+	OnServiceHealthChange(changedService *service.Service, healthy bool)
+
+	// sets the action to take when a promotion in the group has happened
+	SetOnPromotion(fn func(ServiceGroup, string))
+
+	HasOverride(view string) bool
+	SetOverride(view string, addr ip.Address) error
+	ClearOverride(view string) *service.Service
+
+	Seed(view, id string)
+	SeededActive(view string) (string, bool)
+	ClearSeed(view string)
+
+	// returns active member for an optional view, if one exists
+	// if no view is provided the default view is used
+	GetActive(...string) *service.Service
+
+	// returns the last active member for an optional view, if one exists
+	// if no view is provided the default view is used
+	GetLastActive(...string) *service.Service
+
+	Members(view string) iter.Iterator[*service.Service]
+
+	// Refresh re-sorts membership and recomputes mode/active for the given views;
+	// call after an in-place config change (e.g. priority) that doesn't add or remove a member
+	Refresh(...string)
+
+	// builds and returns the service group for persistence layer
+	Group() *model.GSLBServiceGroup
+}
+
+type ServiceGroupV2 struct {
+	name string
+
 	uuid uuid.UUID
 
-	mode ServiceGroupMode
+	modeByView map[string]ServiceGroupMode
 
-	// sorted by priority.
-	// if two services have the same priority, then the prioritizedDatacenter will decide who gets sorted into what index.
-	Members []*service.Service
+	members []*service.Service
 
-	// active is the service that currently holds the active role in a group.
-	// In ActivePassive this is straightforward.
-	// In ActiveActive it is the service that currently has the lowest roundtrip time
-	active *service.Service
+	seededActive     map[string]string
+	activeByView     map[string]*service.Service
+	lastActiveByView map[string]*service.Service
 
-	//last active service in a service group
-	lastActive *service.Service
+	onPromotion func(ServiceGroup, string)
 
-	// should never receive a nil promotion event
-	OnPromotion           func(*ServiceGroup)
-	prioritizedDatacenter string
-
-	hasOverride  bool
-	overrideAddr ip.Address
+	hasOverrideByView  map[string]bool
+	overrideAddrByView map[string]ip.Address
 }
 
-func NewEmptyServiceGroup(name string) *ServiceGroup {
-	// deterministic uuid generation from group name
+func NewServiceGroup(name string) *ServiceGroupV2 {
 	hash := md5.Sum([]byte(name))
-	id, err := uuid.FromBytes(hash[:])
-	if err != nil {
-		bslog.Error("failed to generate uuid", slog.String("reason", err.Error()), slog.String("memberOf", name))
-	}
+	id := uuid.UUID(hash[:])
 
-	return &ServiceGroup{
-		Name:         name,
-		uuid:         id,
-		mode:         ActiveActive,
-		Members:      make([]*service.Service, 0),
-		active:       nil,
-		lastActive:   nil,
-		hasOverride:  false,
-		overrideAddr: nil,
+	return &ServiceGroupV2{
+		name:               name,
+		uuid:               id,
+		members:            make([]*service.Service, 0),
+		modeByView:         make(map[string]ServiceGroupMode),
+		seededActive:       make(map[string]string),
+		activeByView:       make(map[string]*service.Service),
+		lastActiveByView:   make(map[string]*service.Service),
+		hasOverrideByView:  make(map[string]bool),
+		overrideAddrByView: make(map[string]ip.Address),
 	}
 }
 
-func (sg *ServiceGroup) Group() *model.GSLBServiceGroup {
+func (sg *ServiceGroupV2) Name() string {
+	return sg.name
+}
+
+func (sg *ServiceGroupV2) ID() string {
+	return sg.uuid.String()
+}
+
+func (sg *ServiceGroupV2) Group() *model.GSLBServiceGroup {
 	group := &model.GSLBServiceGroup{
-		Active:      make(map[string]string),
-		HasOverride: sg.hasOverride,
-		Members:     make(map[string]model.GSLBService),
-		UUID:        sg.uuid,
+		Active:  make(map[string]string),
+		Members: make(map[string]model.GSLBService),
+		Views:   make([]string, 0),
+		UUID:    sg.uuid,
 	}
 
-	if sg.active != nil {
-		group.Active[config.SplitDNS().DefaultView()] = sg.active.GetID()
+	for view, active := range sg.activeByView {
+		if active != nil {
+			group.Active[view] = active.GetID()
+		}
 	}
 
-	if sg.hasOverride {
-		group.Active[config.SplitDNS().DefaultView()] = sg.overrideAddr.String()
+	for view, addr := range sg.overrideAddrByView {
+		if sg.hasOverrideByView[view] {
+			group.Active[view] = addr.String()
+			group.HasOverride = true
+		}
 	}
 
-	for _, member := range sg.Members {
+	for _, member := range sg.members {
 		group.Members[member.GetID()] = *member.GSLBService()
+		for _, view := range member.GetViews() {
+			if !slices.Contains(group.Views, view) {
+				group.Views = append(group.Views, view)
+			}
+		}
 	}
 
 	return group
 }
 
-func (sg *ServiceGroup) SetOnPromotion(fn func(*ServiceGroup)) {
-	sg.OnPromotion = func(g *ServiceGroup) {
-		// no promotion event if override
-		if sg.hasOverride {
+func (sg *ServiceGroupV2) SetOnPromotion(fn func(ServiceGroup, string)) {
+	sg.onPromotion = func(group ServiceGroup, view string) {
+		if sg.hasOverrideByView[view] {
 			return
 		}
-		fn(sg)
+		fn(group, view)
 	}
 }
 
-// returns active service for the group
-func (sg *ServiceGroup) GetActive() *service.Service {
-	if sg.active != nil {
-		return sg.active
-	}
-
-	return sg.firstHealthy()
+func (sg *ServiceGroupV2) HasOverride(view string) bool {
+	return sg.hasOverrideByView[view]
 }
 
-// returns the first healthy service of the members in the group.
-// In other words, the service that SHOULD be active.
-// this is true because the members are sorted on priority.
-func (sg *ServiceGroup) firstHealthy() *service.Service {
-	for _, svc := range sg.Members {
-		if svc.IsHealthy() {
-			return svc
+func (sg *ServiceGroupV2) SetOverride(view string, addr ip.Address) error {
+	if sg.hasOverrideByView[view] {
+		return ErrOverrideAlreadyActive
+	}
+
+	sg.hasOverrideByView[view] = true
+	sg.overrideAddrByView[view] = addr
+	return nil
+}
+
+func (sg *ServiceGroupV2) ClearOverride(view string) *service.Service {
+	delete(sg.hasOverrideByView, view)
+	delete(sg.overrideAddrByView, view)
+	return sg.activeByView[view]
+}
+
+func (sg *ServiceGroupV2) OnServiceHealthChange(changedService *service.Service, healthy bool) {
+	for _, view := range changedService.GetViews() {
+		sg.onServiceHealthChangeForView(view, changedService, healthy)
+	}
+}
+
+func (sg *ServiceGroupV2) onServiceHealthChangeForView(view string, changedService *service.Service, healthy bool) {
+	active := sg.activeByView[view]
+
+	switch sg.modeByView[view] {
+	case ActivePassive:
+		if !healthy && active != nil && active.GetID() == changedService.GetID() {
+			sg.promoteNextHealthy(view)
+			return
+		}
+		if healthy && sg.triggerPromotion(view, changedService) {
+			sg.promote(view, changedService)
+			return
+		}
+
+	default: // ActiveActive
+		if healthy && sg.triggerPromotion(view, changedService) {
+			sg.promote(view, changedService)
+		} else if active != nil && changedService.GetID() == active.GetID() { // current active is down
+			sg.promote(view, firstHealthyOf(sg.Members(view))) // nil if all members are down
+		}
+	}
+}
+
+func (sg *ServiceGroupV2) Seed(view, activeID string) {
+	sg.seededActive[view] = activeID
+}
+
+func (sg *ServiceGroupV2) SeededActive(view string) (string, bool) {
+	id, ok := sg.seededActive[view]
+	return id, ok
+}
+
+func (sg *ServiceGroupV2) ClearSeed(view string) {
+	delete(sg.seededActive, view)
+}
+
+func (sg *ServiceGroupV2) GetActive(views ...string) *service.Service {
+	view := config.DNS().DefaultView()
+	if len(views) > 0 {
+		view = views[0]
+	}
+
+	if active, ok := sg.activeByView[view]; ok && active != nil {
+		return active
+	}
+
+	return firstHealthyOf(sg.Members(view))
+}
+
+func (sg *ServiceGroupV2) GetLastActive(views ...string) *service.Service {
+	view := config.DNS().DefaultView()
+	if len(views) > 0 {
+		view = views[0]
+	}
+
+	if lastActive, ok := sg.lastActiveByView[view]; ok && lastActive != nil {
+		return lastActive
+	}
+
+	return nil
+}
+
+func (sg *ServiceGroupV2) Members(view string) iter.Iterator[*service.Service] {
+	return iter.FromSlice(sg.members).Filter(func(s *service.Service) bool { return slices.Contains(s.GetViews(), view) })
+}
+
+func (sg *ServiceGroupV2) Refresh(views ...string) {
+	slices.SortFunc(sg.members, sortmembersFunc)
+	for _, view := range views {
+		sg.updateView(view)
+	}
+}
+
+func (sg *ServiceGroupV2) RegisterMember(newMember *service.Service) {
+	if newMember == nil || sg.memberExists(newMember) {
+		return
+	}
+
+	sg.members = append(sg.members, newMember)
+	sg.Refresh(newMember.GetViews()...)
+	serviceGroupMembers.WithLabelValues(sg.name).Inc()
+}
+
+func (sg *ServiceGroupV2) RemoveMember(id string) bool {
+	idx := slices.IndexFunc(sg.members, func(s *service.Service) bool {
+		return s.GetID() == id
+	})
+
+	if idx == -1 {
+		return len(sg.members) == 0
+	}
+
+	removed := sg.members[idx]
+	sg.members = append(sg.members[:idx], sg.members[idx+1:]...)
+
+	for _, view := range removed.GetViews() {
+		sg.updateView(view)
+	}
+
+	events.Emit(&events.Event{
+		Type:      domainEvents.EventTypeGSLBServiceMemberRemove,
+		Payload:   domainEvents.GSLBServiceMemberRemoveEvent{Service: sg.name, Removed: *removed.GSLBService()},
+		Timestamp: time.Now(),
+		ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, sg.name),
+	})
+	serviceGroupMembers.WithLabelValues(sg.name).Dec()
+
+	return len(sg.members) == 0
+}
+
+func (sg *ServiceGroupV2) updateView(view string) {
+	if !sg.setGroupModeForView(view) {
+		delete(sg.activeByView, view)
+		return
+	}
+
+	firstHealthy := firstHealthyOf(sg.Members(view))
+	if firstHealthy != sg.activeByView[view] {
+		sg.promote(view, firstHealthy)
+	}
+}
+
+// setGroupModeForView recomputes mode in a single pass; returns false if view has no members
+func (sg *ServiceGroupV2) setGroupModeForView(view string) bool {
+	count, firstPriority := 0, 0
+	allSamePriority := true
+
+	for m := range sg.Members(view) {
+		if count == 0 {
+			firstPriority = m.GetPriority()
+		} else if m.GetPriority() != firstPriority {
+			allSamePriority = false
+		}
+		count++
+	}
+
+	if count == 0 {
+		delete(sg.modeByView, view)
+		return false
+	}
+	if count == 1 {
+		sg.modeByView[view] = ActiveActive
+		return true
+	}
+
+	switch sg.modeByView[view] {
+	case ActivePassive:
+		if allSamePriority {
+			sg.modeByView[view] = ActiveActive
+		}
+	default:
+		if allSamePriority {
+			sg.modeByView[view] = ActiveActive
+		} else {
+			sg.modeByView[view] = ActivePassive
+		}
+	}
+	return true
+}
+
+func (sg *ServiceGroupV2) promote(view string, newActive *service.Service) {
+	sg.lastActiveByView[view] = sg.activeByView[view]
+	sg.activeByView[view] = newActive
+	sg.onPromotion(sg, view)
+}
+
+func (sg *ServiceGroupV2) promoteNextHealthy(view string) {
+	var best *service.Service
+	bestPriority := int(^uint(0) >> 1)
+
+	for m := range sg.Members(view) {
+		if m.IsHealthy() && m.GetPriority() < bestPriority {
+			best, bestPriority = m, m.GetPriority()
+		}
+	}
+
+	sg.promote(view, best)
+}
+
+// returns wether the current service healthchange should trigger a promotion
+func (sg *ServiceGroupV2) triggerPromotion(view string, svc *service.Service) bool {
+	if !svc.IsHealthy() {
+		return false
+	}
+
+	active := sg.activeByView[view]
+	if active == nil || !active.IsHealthy() {
+		return true
+	}
+
+	if svc.GetPriority() < active.GetPriority() {
+		return true
+	}
+
+	return svc.GetAverageRoundtrip() < active.GetAverageRoundtrip()
+}
+
+func (sg *ServiceGroupV2) memberExists(svc *service.Service) bool {
+	return slices.Contains(sg.members, svc)
+}
+
+// func passed into slices.SortFunc for sorting the groups members
+func sortmembersFunc(a, b *service.Service) int {
+	aPriority := a.GetPriority()
+	bPriority := b.GetPriority()
+
+	if aPriority != bPriority {
+		return cmp.Compare(aPriority, bPriority)
+	}
+
+	aRoundtrip := a.GetAverageRoundtrip()
+	bRoundtrip := b.GetAverageRoundtrip()
+
+	// handle case where no roundtrip time has been recorded
+	aHasRoundtrip := aRoundtrip > 0
+	bHasRoundtrip := bRoundtrip > 0
+
+	if aHasRoundtrip && bHasRoundtrip {
+		return cmp.Compare(aRoundtrip, bRoundtrip)
+	} else if aHasRoundtrip && !bHasRoundtrip { // prioritize the one who has recorded data
+		return -1
+	} else {
+		return 1
+	}
+}
+
+func firstHealthyOf(members iter.Iterator[*service.Service]) *service.Service {
+	for member := range members {
+		if member.IsHealthy() {
+			return member
 		}
 	}
 	return nil
 }
-
-func (sg *ServiceGroup) OnServiceHealthChange(changedService *service.Service, healthy bool) {
-	oldActive := sg.active
-	if oldActive == nil {
-		oldActive = sg.lastActive
-	}
-
-	switch sg.mode {
-	case ActivePassive:
-		if !healthy && sg.active.GetID() == changedService.GetID() { // active has gone down!
-			sg.lastActive = sg.active
-			sg.promoteNextHealthy()
-			sg.OnPromotion(sg)
-			return
-		}
-
-		if healthy && sg.triggerPromotion(changedService) {
-			sg.lastActive = sg.active
-			sg.active = changedService
-			sg.OnPromotion(sg)
-			return
-		}
-
-	case ActiveActive:
-		if healthy {
-			// If prioritized DC service becomes healthy, it must become active (single DNS record).
-			if changedService.Datacenter == sg.prioritizedDatacenter && changedService != sg.active {
-				sg.OnPromotion(sg)
-				sg.lastActive = sg.active
-				sg.active = changedService
-				return
-			}
-			// If there is no active or the current active is unhealthy, promote this healthy service.
-			if sg.active == nil || !sg.active.IsHealthy() {
-				sg.OnPromotion(sg)
-				sg.lastActive = sg.active
-				sg.active = changedService
-				return
-			}
-			return
-		}
-
-		// unhealthy
-		if changedService.GetID() == sg.active.GetID() {
-			next := sg.firstHealthy()
-			if next != nil {
-				sg.OnPromotion(sg)
-				sg.lastActive = sg.active
-				sg.active = next
-				return
-			}
-
-			// all down
-			sg.OnPromotion(sg)
-			sg.lastActive = sg.active
-			sg.active = nil
-			return
-		}
-	}
-}
-
-// This does not take in to account if the registered service has the highest priority
-func (sg *ServiceGroup) RegisterService(newService *service.Service) {
-	if newService == nil {
-		return
-	}
-
-	if sg.memberExists(newService) {
-		return
-	}
-
-	sg.Members = append(sg.Members, newService)
-
-	sg.Update()
-	serviceGroupMembers.WithLabelValues(newService.MemberOf).Inc()
-}
-
-func (sg *ServiceGroup) RemoveService(id string) bool {
-	members := sg.Members
-
-	idx := slices.IndexFunc(members, func(s *service.Service) bool {
-		return s.GetID() == id
-	})
-	if idx != -1 {
-		removed := members[idx]
-		sg.Members = append(members[:idx], members[idx+1:]...)
-		sg.Update()
-		serviceGroupMembers.WithLabelValues(sg.Name).Dec()
-
-		events.Emit(&events.Event{
-			Type:      domainEvents.EventTypeGSLBServiceMemberRemove,
-			Payload:   domainEvents.GSLBServiceMemberRemoveEvent{Service: removed.MemberOf, Removed: *removed.GSLBService()},
-			Timestamp: time.Now(),
-			ID:        events.ID(domainEvents.EventTypeGSLBServiceMemberAdd, removed.MemberOf),
-		})
-	}
-
-	return len(sg.Members) == 0
-}
-
-func (sg *ServiceGroup) promoteNextHealthy() {
-	bslog.Debug("promoting next healthy service", slog.Any("oldActive", sg.active))
-	//oldActive := sg.active
-
-	// Try to find next healthy service with highest priority (lowest priority number)
-	bestIdx := -1
-	bestPriority := int(^uint(0) >> 1) // max int
-
-	for i, svc := range sg.Members {
-		if svc.IsHealthy() && svc.GetPriority() < bestPriority {
-			bestIdx = i
-			bestPriority = svc.GetPriority()
-		}
-	}
-
-	if bestIdx != -1 {
-		sg.active = sg.Members[bestIdx]
-		return
-	}
-
-	// No healthy services: signal DNS delete (NewActive=nil)
-	sg.active = nil
-}
-
-func (sg *ServiceGroup) triggerPromotion(service *service.Service) bool {
-	if !service.IsHealthy() {
-		return false
-	}
-
-	if sg.active == nil || !sg.active.IsHealthy() { // if active not healthy then all other healthy services are prioritized
-		return service.IsHealthy()
-	}
-
-	return service.GetPriority() <= sg.active.GetPriority()
-}
-
-// Will configure group mode, based on the state of group members (Members).
-// If the state of the group deviates from the requirements of its mode, the mode will change
-func (sg *ServiceGroup) SetGroupMode() {
-	numServices := len(sg.Members)
-	if numServices == 0 {
-		sg.mode = ActiveActive
-		return
-	}
-
-	// If one service, default to ActiveActive but don't pre-seed active unless healthy
-	if numServices == 1 {
-		sg.mode = ActiveActive
-		if sg.Members[0].IsHealthy() {
-			sg.active = sg.Members[0]
-		} else {
-			sg.active = nil
-		}
-		return
-	}
-
-	// Check if all services have the same priority (ActiveActive requirement)
-	allSamePriority := true
-	firstPriority := sg.Members[0].GetPriority()
-	for _, svc := range sg.Members[1:] {
-		if svc.GetPriority() != firstPriority {
-			allSamePriority = false
-			break
-		}
-	}
-
-	switch sg.mode {
-	case ActiveActive:
-		// If services have different priorities, switch to ActivePassive
-		if !allSamePriority {
-			sg.mode = ActivePassive
-		}
-
-	case ActivePassive:
-		// If all services have same priority, can switch to ActiveActive
-		if allSamePriority {
-			sg.mode = ActiveActive
-			// if none healthy, leave active nil
-		}
-
-	/*
-		case ActiveActivePassive:
-			// TODO: implement when requirements are defined
-			sg.mode = ActiveActive
-			sg.active = sg.firstHealthy()
-*/
-/*
-	default:
-		sg.mode = ActiveActive
-	}
-	bslog.Debug("servicegroup mode set", slog.Any("mode", sg.mode.String()))
-}
-
-func (sg *ServiceGroup) memberExists(member *service.Service) bool {
-	return slices.Contains(sg.Members, member)
-}
-
-func (sg *ServiceGroup) Update() {
-	if len(sg.Members) == 0 { // dont need to do anything, group should be removed!
-		return
-	}
-
-	slices.SortFunc(sg.Members, sortMembersFunc)
-
-	sg.SetGroupMode()
-	firstHealthy := sg.firstHealthy() // who should have the active role!
-	if firstHealthy != sg.active {
-		// trigger promotion because whoever is active should not be active anymore!
-		sg.lastActive = sg.active
-		sg.active = firstHealthy
-
-		sg.OnPromotion(sg)
-	}
-}
-*/

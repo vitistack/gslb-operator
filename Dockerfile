@@ -5,7 +5,7 @@ LABEL MAINTAINER="espen.wobbes@nhn.no"
 ARG VERSION
 ARG DATE
 # Optional override: RACE=1 forces on, RACE=0 forces off. Empty = auto-detect from VERSION.
-ARG RACE
+ARG RACE=0
 
 WORKDIR /app
 
