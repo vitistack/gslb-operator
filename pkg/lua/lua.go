@@ -46,6 +46,7 @@ func Get() *glua.LState {
 }
 
 func Put(luaState *glua.LState) {
+	luaState.SetTop(0)
 	vmPool.Put(luaState)
 }
 
