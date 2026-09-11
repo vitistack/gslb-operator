@@ -23,6 +23,7 @@ type FailureCountCallback func(*model.GSLBService)
 
 type HealthChangeEvent struct {
 	Svc     *Service
+	Err     error
 	Healthy bool
 }
 
@@ -256,6 +257,7 @@ func (s *Service) OnFailure(err error) {
 	if becameUnHalthy { // threshold reached, service is considered down
 		s.onHealthChange(&HealthChangeEvent{
 			Svc:     s,
+			Err:     err,
 			Healthy: false,
 		})
 	} else {

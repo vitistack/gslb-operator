@@ -51,7 +51,7 @@ func TestScheduleItem(t *testing.T) {
 	receivedTick := false
 
 	wg := sync.WaitGroup{}
-	scheduler := NewScheduler[int](time.Millisecond, &wg)
+	scheduler := NewScheduler[int](time.Second, &wg)
 	scheduler.onTick = func(int) {
 		receivedTick = true
 	}
@@ -65,10 +65,9 @@ func TestScheduleItem(t *testing.T) {
 	if len(scheduler.heap) == 0 && !receivedTick {
 		t.Errorf("scheduler is running, but heap size is 0, means scheduler has pop'ed the heap before received tick")
 	}
-
 }
 
-func TestScheduler_RemoveService(t *testing.T) {
+func TestScheduler_RemoveItem(t *testing.T) {
 	first := 1
 	second := 2
 	tests := []struct {

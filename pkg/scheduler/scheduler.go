@@ -54,6 +54,9 @@ func NewScheduler[T any](interval time.Duration, wg *sync.WaitGroup) Scheduler[T
 	h := make(ItemHeap[T], 0)
 
 	maxOffsets := int(interval.Seconds() * 2)
+	if maxOffsets == 0 {
+		maxOffsets = 1
+	}
 
 	return Scheduler[T]{
 		interval:    interval,

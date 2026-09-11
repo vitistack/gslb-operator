@@ -625,11 +625,8 @@ func (sm *ServicesManager) reconcileHealthCheckIntervals(group group.ServiceGrou
 
 func (sm *ServicesManager) newServiceGroup(memberOf string) {
 	created := sm.serviceGroups.Create(memberOf, func(sg group.ServiceGroup) {
-		sg.SetOnPromotion(func(_ group.ServiceGroup, view string) {
-			sm.serviceGroups.With(memberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
-				sm.reconcile(sg, view)
-				unlock.Unlock()
-			})
+		sg.SetOnPromotion(func(g group.ServiceGroup, view string) {
+			sm.reconcile(g, view)
 		})
 	})
 
@@ -762,6 +759,10 @@ func (sm *ServicesManager) BuildServiceOptions(config model.GSLBConfig, optional
 func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChangeEvent) {
 	bslog.Debug("received health-change", slog.Any("service", event.Svc), slog.Bool("healthy", event.Healthy))
 
+	if event.Err != nil {
+		bslog.Info("service unhealthy", slog.Any("service", event.Svc), slog.String("reason", event.Err.Error()))
+	}
+
 	sm.serviceGroups.With(event.Svc.GetMemberOf(), func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
 		if err := sm.svcGroupRepo.UpdateMember(event.Svc.GetMemberOf(), *event.Svc.GSLBService()); err != nil {
 			bslog.Error(
@@ -785,6 +786,7 @@ func (sm *ServicesManager) ServiceHealthChangeCallback(event *service.HealthChan
 func (sm *ServicesManager) CreateOverride(override spoofs.Override) error {
 	var createErr error
 	ok := sm.serviceGroups.With(override.MemberOf, func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
+		defer unlock.Unlock()
 		view := override.View
 		if view == "" {
 			view = config.DNS().DefaultView()
@@ -830,7 +832,6 @@ func (sm *ServicesManager) CreateOverride(override spoofs.Override) error {
 			createErr = fmt.Errorf("failed to create DNS spoof: %w", err)
 			return
 		}
-		unlock.Unlock()
 	})
 
 	if !ok {

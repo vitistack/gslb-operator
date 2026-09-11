@@ -107,9 +107,12 @@ func (sr *ServiceGroupRepo) DeleteMember(memberOf string, member model.GSLBServi
 	}
 
 	delete(group.Members, member.ID)
-	// delete entire service group when empty
+	// store.Delete directly: sr.lock is already held, sr.Delete would re-lock and deadlock
 	if len(group.Members) == 0 {
-		return sr.Delete(member.MemberOf)
+		if err := sr.store.Delete(member.MemberOf); err != nil {
+			return fmt.Errorf("failed to delete servicegroup: %s: %w", member.MemberOf, err)
+		}
+		return nil
 	}
 
 	err = sr.store.Save(member.MemberOf, group)

@@ -60,7 +60,7 @@ func Configure(opts ...connectionOption) {
 
 func NewConnection(ctx context.Context, typ ConnectionType, amqpUrl string) *Connection {
 	lock.Lock()
-
+	defer lock.Unlock()
 	switch typ {
 	case Publish:
 		if pubConn == nil {
@@ -78,19 +78,19 @@ func NewConnection(ctx context.Context, typ ConnectionType, amqpUrl string) *Con
 		}
 
 		pubHandleOnce.Do(func() {
-		go func() {
-			err := pubConn.connect(ctx)
-			for err != nil {
-				pubConn.logger.Error("mq: failed to connect",
-					slog.String("reason", err.Error()),
-					slog.String("retry", pubConn.retryConnectionBackoff.String()),
-				)
-				time.Sleep(pubConn.retryConnectionBackoff)
-				err = pubConn.connect(ctx)
-			}
-		}()
-		go pubConn.handleConnection(ctx)
-	})
+			go func() {
+				err := pubConn.connect(ctx)
+				for err != nil {
+					pubConn.logger.Error("mq: failed to connect",
+						slog.String("reason", err.Error()),
+						slog.String("retry", pubConn.retryConnectionBackoff.String()),
+					)
+					time.Sleep(pubConn.retryConnectionBackoff)
+					err = pubConn.connect(ctx)
+				}
+			}()
+			go pubConn.handleConnection(ctx)
+		})
 
 		return pubConn
 
@@ -110,24 +110,22 @@ func NewConnection(ctx context.Context, typ ConnectionType, amqpUrl string) *Con
 		}
 
 		subHandleOnce.Do(func() {
-		go func() {
-			err := subConn.connect(ctx)
-			for err != nil {
-				subConn.logger.Error("mq: failed to connect",
-					slog.String("reason", err.Error()),
-					slog.String("retry", subConn.retryConnectionBackoff.String()),
-				)
-				time.Sleep(subConn.retryConnectionBackoff)
-				err = pubConn.connect(ctx)
-			}
-		}()
-		go subConn.handleConnection(ctx)
-	})
+			go func() {
+				err := subConn.connect(ctx)
+				for err != nil {
+					subConn.logger.Error("mq: failed to connect",
+						slog.String("reason", err.Error()),
+						slog.String("retry", subConn.retryConnectionBackoff.String()),
+					)
+					time.Sleep(subConn.retryConnectionBackoff)
+					err = subConn.connect(ctx)
+				}
+			}()
+			go subConn.handleConnection(ctx)
+		})
 
 		return subConn
 	}
-
-	lock.Unlock()
 
 	return nil
 }
