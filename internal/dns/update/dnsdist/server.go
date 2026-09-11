@@ -247,9 +247,10 @@ func (s *server) BulkStatus() (map[uuid.UUID]service.DNSServerStatusForService, 
 
 func (s *server) Status(uuid string) (service.DNSServerStatusForService, error) {
 	status := service.DNSServerStatusForService{
-		Host:    s.name,
-		View:    s.selector.View(),
-		Address: nil,
+		Programmed: true, // assume true
+		Host:       s.name,
+		View:       s.selector.View(),
+		Address:    nil,
 	}
 
 	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})

@@ -272,9 +272,8 @@ func (d *DNSDISTUpdater) FetchStatus(id string) (service.DNSStatusForService, er
 	}
 
 	var (
-		mu         sync.Mutex
-		resolvers  = make([]service.DNSServerStatusForService, 0, len(d.servers))
-		programmed = len(expectedAddress) > 0
+		mu        sync.Mutex
+		resolvers = make([]service.DNSServerStatusForService, 0, len(d.servers))
 	)
 
 	wg := sync.WaitGroup{}
@@ -287,7 +286,6 @@ func (d *DNSDISTUpdater) FetchStatus(id string) (service.DNSStatusForService, er
 			defer mu.Unlock()
 
 			if err != nil {
-				programmed = false
 				bslog.Error(
 					"failed to fetch dnsdist server status",
 					slog.String("server", dnsdist.name), slog.String("reason", err.Error()),
@@ -302,17 +300,15 @@ func (d *DNSDISTUpdater) FetchStatus(id string) (service.DNSStatusForService, er
 			}
 
 			if status.Address == nil || status.Address.String() != expected.String() {
-				programmed = false
+				status.Programmed = false
 			}
-
 		})
 	}
 
 	wg.Wait()
 
 	return service.DNSStatusForService{
-		Programmed: programmed,
-		Resolvers:  resolvers,
+		Resolvers: resolvers,
 	}, nil
 }
 

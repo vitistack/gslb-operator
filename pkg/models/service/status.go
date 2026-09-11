@@ -20,15 +20,19 @@ const (
 // GSLBServiceStatus aggregates a best effort current status for a gslb-service
 // between the different sites that the GSLB-operator is running from
 type GSLBServiceStatus struct {
-	MemberOf string                  `json:"memberOf"`
-	Sites    []SiteGSLBServiceStatus `json:"sites"`
+	MemberOf string       `json:"memberOf"`
+	Sites    []SiteStatus `json:"sites"`
+}
+
+type SiteStatus struct {
+	Site   string                `json:"site"`
+	Health GSLBServiceSiteHealth `json:"health"` // TODO: should this be by view?
+	LocalGSLBServiceStatus
 }
 
 type SiteGSLBServiceStatus struct {
-	Service string                `json:"service"`
-	Site    string                `json:"site"`
-	Health  GSLBServiceSiteHealth `json:"health"` // TODO: should this be by view?
-	LocalGSLBServiceStatus
+	MemberOf string `json:"memberOf"`
+	SiteStatus
 }
 
 type LocalGSLBServiceStatus struct {
@@ -38,14 +42,14 @@ type LocalGSLBServiceStatus struct {
 }
 
 type DNSStatusForService struct {
-	Programmed bool                        `json:"programmed"`
-	Resolvers  []DNSServerStatusForService `json:"resolvers"`
+	Resolvers []DNSServerStatusForService `json:"resolvers"`
 }
 
 type DNSServerStatusForService struct {
-	Host    string     `json:"host"`
-	View    string     `json:"view"`
-	Address ip.Address `json:"resolvesTo"`
+	Programmed bool       `json:"programmed"`
+	Host       string     `json:"host"`
+	View       string     `json:"view"`
+	Address    ip.Address `json:"resolvesTo"`
 }
 
 func (d *DNSServerStatusForService) UnmarshalJSON(b []byte) error {

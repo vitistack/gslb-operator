@@ -192,33 +192,33 @@ func (s *StatusBroker) GetID() string {
 
 func (s *StatusBroker) handleSiteStatus(ctx context.Context, status serviceModels.SiteGSLBServiceStatus) error {
 	bslog.Debug("received gslb site status", slog.Any("status", status))
-	gslbStatus, err := s.statusRepo.Read(status.Service)
+	gslbStatus, err := s.statusRepo.Read(status.MemberOf)
 	if err != nil {
 		bslog.Error("failed to read gslb status", slog.String("reason", err.Error()))
 		return fmt.Errorf("failed to read gslb status: %w", err)
 	}
 
 	if gslbStatus.MemberOf == "" {
-		gslbStatus.MemberOf = status.Service
+		gslbStatus.MemberOf = status.MemberOf
 	}
 
 	idx := slices.IndexFunc(
 		gslbStatus.Sites,
-		func(s serviceModels.SiteGSLBServiceStatus) bool { return s.Site == status.Site },
+		func(s serviceModels.SiteStatus) bool { return s.Site == status.Site },
 	)
 	if idx == -1 {
-		gslbStatus.Sites = append(gslbStatus.Sites, status)
-		return s.statusRepo.Update(status.Service, gslbStatus)
+		gslbStatus.Sites = append(gslbStatus.Sites, status.SiteStatus)
+		return s.statusRepo.Update(status.MemberOf, gslbStatus)
 	}
 
-	gslbStatus.Sites[idx] = status
+	gslbStatus.Sites[idx] = status.SiteStatus
 
-	return s.statusRepo.Update(status.Service, gslbStatus)
+	return s.statusRepo.Update(status.MemberOf, gslbStatus)
 }
 
 func (s *StatusBroker) PublishStatusForGroup(group string, lastSeen time.Time) error {
 	siteStatus := service.SiteGSLBServiceStatus{
-		Service:  group,
+		MemberOf: group,
 		Site:     config.GSLB().Site(),
 		LastSeen: lastSeen,
 		Members:  make([]serviceModels.ShortGSLBServiceMemberStatus, 0),
