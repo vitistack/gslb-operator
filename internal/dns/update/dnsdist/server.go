@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/vitistack/gslb-operator/internal/dns/update"
 	dnsviews "github.com/vitistack/gslb-operator/internal/dns/views"
@@ -23,6 +23,8 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/models/service"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 )
+
+var dnsdistRuleLineRegexPattern = regexp.MustCompile(`\S+`)
 
 type server struct {
 	name     string
@@ -126,10 +128,18 @@ func (s *server) Hash() (string, error) {
 		return "", fmt.Errorf("failed to list rules: %w", err)
 	}
 
-	spoofUUIDs, err := ParseRuleSet(rawRuleSet)
-	if err != nil {
-		return "", fmt.Errorf("%s could not parse rules: %w", s.name, err)
-	}
+	spoofUUIDs := make([]string, 0)
+	IterateRuleSet(rawRuleSet).
+		Filter(
+			func(rl rules.RuleLine) bool {
+				return strings.Contains(rl.Action, "spoof")
+			},
+		).
+		Each(
+			func(rl rules.RuleLine) {
+				spoofUUIDs = append(spoofUUIDs, rl.UUID)
+			},
+		)
 
 	joinedUUIDs := strings.Join(spoofUUIDs, ",")
 	rawHash := sha256.Sum256([]byte(joinedUUIDs))
@@ -154,20 +164,8 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 		return fmt.Errorf("failed to list rules: %w", err)
 	}
 
-	pattern, err := regexp.Compile(`\S+`)
-	if err != nil {
-		return fmt.Errorf("failed to compile pattern: %w", err)
-	}
-
-	baseIter := IterateRuleSet(rawRuleSet).Skip(1)
-	rulesIter := iter.Map(
-		baseIter,
-		func(line string) rules.RuleLine {
-			return MapStringToDNSDistRule(line, pattern)
-		}).
-		Filter(func(rl rules.RuleLine) bool { return strings.Contains(rl.Action, "spoof") })
-
-	for rule := range rulesIter {
+	for rule := range IterateRuleSet(rawRuleSet).
+		Filter(func(rl rules.RuleLine) bool { return strings.Contains(rl.Action, "spoof") }) {
 		err := s.client.Rules().Remove(rule.UUID)
 		if err != nil {
 			return fmt.Errorf("%s failed to remove configured spoofs: %w", s.name, err)
@@ -195,32 +193,80 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 	return nil
 }
 
-func (s *server) Status(uuid string) (service.DNSDISTServerStatusForService, error) {
-	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
-	if err != nil {
-		return service.DNSDISTServerStatusForService{}, fmt.Errorf("failed to list rules: %w", err)
-	}
-
-	pattern, err := regexp.Compile(`\S+`)
-	if err != nil {
-		return service.DNSDISTServerStatusForService{}, fmt.Errorf("failed to compile pattern: %w", err)
-	}
-
-	status := service.DNSDISTServerStatusForService{
+func (s *server) BulkStatus() (map[uuid.UUID]service.DNSServerStatusForService, error) {
+	baseStatus := service.DNSServerStatusForService{
 		Host:    s.name,
 		View:    s.selector.View(),
 		Address: nil,
 	}
 
-	line, ok := IterateRuleSet(rawRuleSet).Skip(1).Find(func(s string) bool { return strings.Contains(s, uuid) })
-	if !ok {
-		return status, nil
+	statuses := make(map[uuid.UUID]service.DNSServerStatusForService)
+
+	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
+	if err != nil {
+		return nil, fmt.Errorf("%s in view %s: failed to fetch rule-set: %w", s.name, s.selector.View(), err)
 	}
 
-	rule := MapStringToDNSDistRule(line, pattern)
-	rawAddresses := strings.Trim(rule.Action, "spoof in")
+	IterateRuleSet(rawRuleSet).
+		Filter(func(rl rules.RuleLine) bool { return strings.Contains(rl.Action, "spoof") }).
+		Each(
+			func(rl rules.RuleLine) {
+				rawAddress := strings.Trim(rl.Action, "spoof in ")
+				status := baseStatus
+				status.Address, err = ip.FromString(rawAddress)
+				if err != nil {
+					bslog.Error(
+						"failed to generate status",
+						slog.Group("server",
+							slog.String("name", s.name),
+							slog.String("view", s.selector.View()),
+						),
+						slog.String("reason", fmt.Errorf("failed to parse spoof-address from RuleAction: %w", err).Error()),
+					)
+					return
+				}
 
-	status.Address, err = ip.FromString(rawAddresses)
+				id, err := uuid.Parse(rl.UUID)
+				if err != nil {
+					bslog.Error(
+						"failed to generate status",
+						slog.Group("server",
+							slog.String("name", s.name),
+							slog.String("view", s.selector.View()),
+						),
+						slog.String("reason", fmt.Errorf("failed to parse rule-line uuid: %w", err).Error()),
+					)
+				}
+
+				statuses[id] = status
+			},
+		)
+
+	return statuses, nil
+}
+
+func (s *server) Status(uuid string) (service.DNSServerStatusForService, error) {
+	status := service.DNSServerStatusForService{
+		Programmed: true, // assume true
+		Host:       s.name,
+		View:       s.selector.View(),
+		Address:    nil,
+	}
+
+	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
+	if err != nil {
+		return service.DNSServerStatusForService{}, fmt.Errorf("failed to fetch rules: %w", err)
+	}
+
+	rule, ok := IterateRuleSet(rawRuleSet).Find(func(rl rules.RuleLine) bool { return rl.UUID == uuid })
+	if !ok {
+		return status, nil // no status for uuid
+	}
+
+	actionTrimmer := strings.NewReplacer("spoof in", "", " ", "") // removes all whitespace and prefixed spoof in for action
+	rawAddress := actionTrimmer.Replace(rule.Action)
+
+	status.Address, err = ip.FromString(rawAddress)
 	if err != nil {
 		return status, fmt.Errorf("failed to parse ip address: %w", err)
 	}
@@ -228,8 +274,8 @@ func (s *server) Status(uuid string) (service.DNSDISTServerStatusForService, err
 	return status, nil
 }
 
-func MapStringToDNSDistRule(ruleLine string, pattern *regexp.Regexp) rules.RuleLine {
-	matches := pattern.FindAllString(ruleLine, -1)
+func MapStringToDNSDistRule(ruleLine string) rules.RuleLine {
+	matches := dnsdistRuleLineRegexPattern.FindAllString(ruleLine, -1)
 	if len(matches) > 0 {
 		rule := rules.RuleLine{
 			ID: matches[0],
@@ -252,51 +298,56 @@ func MapStringToDNSDistRule(ruleLine string, pattern *regexp.Regexp) rules.RuleL
 	return rules.RuleLine{}
 }
 
-func IterateRuleSet(ruleSet string) iter.Iterator[string] {
+func IterateRuleSet(ruleSet string) iter.Iterator[rules.RuleLine] {
 	reader := strings.NewReader(ruleSet)
 	lines := bufio.NewScanner(reader)
 
-	return func(yield func(string) bool) {
-		for lines.Scan() {
-			if !yield(lines.Text()) {
-				return
+	baseIter := iter.FromSeq(
+		func(yield func(string) bool) {
+			for lines.Scan() {
+				if !yield(lines.Text()) {
+					return
+				}
 			}
-		}
-	}
+		},
+	)
+
+	// 1 skip because the first line is always the header line for rules
+	return baseIter.Skip(1).Map(MapStringToDNSDistRule)
 }
 
-func ParseRuleSet(ruleSet string) ([]string, error) {
-	reader := strings.NewReader(ruleSet)
-	lines := bufio.NewScanner(reader)
-
-	pattern, err := regexp.Compile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|qname==[a-zA-Z0-9-_\.]+|spoof`)
-	if err != nil {
-		return nil, fmt.Errorf("unable to compile regex: %w", err)
-	}
-
-	spoofRules := make([]string, 0)
-	for lines.Scan() {
-		line := lines.Text()
-
-		matches := pattern.FindAllString(line, -1)
-
-		if len(matches) < 3 {
-			continue
-		}
-
-		rule := rules.RuleLine{
-			UUID:   matches[0],
-			Rule:   matches[1],
-			Action: matches[2],
-		}
-
-		if rule.Action != "spoof" && !strings.Contains(rule.Rule, "qname") {
-			continue
-		}
-
-		spoofRules = append(spoofRules, rule.UUID)
-	}
-	slices.Sort(spoofRules)
-
-	return spoofRules, nil
-}
+//func ParseRuleSet(ruleSet string) ([]string, error) {
+//	reader := strings.NewReader(ruleSet)
+//	lines := bufio.NewScanner(reader)
+//
+//	pattern, err := regexp.Compile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|qname==[a-zA-Z0-9-_\.]+|spoof`)
+//	if err != nil {
+//		return nil, fmt.Errorf("unable to compile regex: %w", err)
+//	}
+//
+//	spoofRules := make([]string, 0)
+//	for lines.Scan() {
+//		line := lines.Text()
+//
+//		matches := pattern.FindAllString(line, -1)
+//
+//		if len(matches) < 3 {
+//			continue
+//		}
+//
+//		rule := rules.RuleLine{
+//			UUID:   matches[0],
+//			Rule:   matches[1],
+//			Action: matches[2],
+//		}
+//
+//		if rule.Action != "spoof" && !strings.Contains(rule.Rule, "qname") {
+//			continue
+//		}
+//
+//		spoofRules = append(spoofRules, rule.UUID)
+//	}
+//	slices.Sort(spoofRules)
+//
+//	return spoofRules, nil
+//}

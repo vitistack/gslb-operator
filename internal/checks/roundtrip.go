@@ -68,5 +68,7 @@ func (rt *RoundTripper) AverageRoundtripTime() time.Duration {
 }
 
 func (rt *RoundTripper) lastCheck() float64 {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
 	return float64(rt.roundtrips[rt.latestRoundtrip].Milliseconds())
 }
