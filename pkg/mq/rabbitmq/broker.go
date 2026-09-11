@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+	"uuid"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
@@ -27,7 +28,8 @@ func (rf RetryFunc) Retry(fn func() error) error {
 
 // TODO: decide if generics is overkill or not, could just pass amqp.Publishing directly instead
 type Broker[T any] struct {
-	channel     *connection.Channel
+	pub         *channelHandle
+	sub         *channelHandle
 	queue       string
 	exchange    string
 	dlx         string
@@ -45,12 +47,8 @@ type Broker[T any] struct {
 }
 
 func New[T any](ctx context.Context, ampqURL string, opts ...brokerOption[T]) mq.MessageBroker[T] {
-	conn := connection.NewConnection(ctx, ampqURL)
-
 	broker := &Broker[T]{
-		logger:    slog.Default(),
-		chanReady: make(chan *connection.Channel),
-		ready:     make(chan struct{}),
+		logger: slog.Default(),
 		retry: RetryFunc(func(errFunc func() error) error {
 			err := errFunc()
 			for err != nil {
@@ -65,122 +63,18 @@ func New[T any](ctx context.Context, ampqURL string, opts ...brokerOption[T]) mq
 		opt(broker)
 	}
 
-	conn.OnNewConnection(
-		func() error {
-			broker.logger.Debug("mq: received new connection declaring topology")
-			return broker.retry.Retry(func() error {
-				ch, err := conn.NewChannel(broker.prefetch, broker.declareTopology)
-				if err != nil {
-					broker.logger.Error("mq: broker failed to declare channel", slog.String("reason", err.Error()))
-					return err
-				}
-				broker.chanReady <- ch
-				return nil
-			})
-		},
-	)
+	// Separate connections so a slow/blocked consumer connection can never
+	// stall publishing (and vice versa).
+	pubConn := connection.NewConnection(ctx, connection.Publish, ampqURL)
+	subConn := connection.NewConnection(ctx, connection.Subscribe, ampqURL)
 
-	go broker.handleChannel(ctx)
+	broker.pub = newChannelHandle(pubConn, broker.prefetch, broker.declareTopology, broker.logger, broker.retry)
+	broker.sub = newChannelHandle(subConn, broker.prefetch, broker.declareTopology, broker.logger, broker.retry)
+
+	broker.pub.start(ctx)
+	broker.sub.start(ctx)
 
 	return broker
-}
-
-func (b *Broker[T]) getChannel(ctx context.Context) (*connection.Channel, error) {
-	for {
-		b.lock.Lock()
-		ch := b.channel
-		ready := b.ready
-		b.lock.Unlock()
-
-		if ch != nil {
-			return ch, nil
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("mq: waiting for channel: %w", ctx.Err())
-
-		case <-ready:
-		}
-	}
-}
-
-func (b *Broker[T]) handleChannel(ctx context.Context) {
-	var channel *connection.Channel
-
-	setChannel := func(ch *connection.Channel) {
-		channel = ch
-		b.lock.Lock()
-		b.channel = ch
-		if b.ready != nil {
-			close(b.ready)
-			b.ready = nil
-		}
-		b.lock.Unlock()
-	}
-
-	clearChannel := func() {
-		b.lock.Lock()
-		b.channel = nil
-		if b.ready == nil {
-			b.ready = make(chan struct{})
-		}
-		b.lock.Unlock()
-	}
-
-	redeclare := func() *connection.Channel {
-		var ch *connection.Channel
-		b.retry.Retry(func() error {
-			newCh, err := channel.GetConnection().NewChannel(b.prefetch, b.declareTopology)
-			if err != nil {
-				return err
-			}
-			ch = newCh
-			return nil
-		})
-		return ch
-	}
-
-	for channel == nil {
-		select {
-		case <-ctx.Done():
-			return
-		case ch := <-b.chanReady:
-			setChannel(ch)
-		}
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			channel.Close()
-			return
-
-		case ch := <-b.chanReady:
-			setChannel(ch)
-
-		case chanClosed, ok := <-channel.ChannelClosed:
-			if !ok {
-				continue
-			}
-			b.logger.Warn("mq: channel closed unexpectedly",
-				slog.String("reason", chanClosed.Reason),
-				slog.String("error", chanClosed.Error()),
-			)
-			clearChannel()
-			setChannel(redeclare())
-
-		case reason, ok := <-channel.ChannelCancelled:
-			if !ok {
-				continue
-			}
-			b.logger.Warn("mq: channel cancelled unexpectedly",
-				slog.String("reason", reason),
-			)
-			clearChannel()
-			setChannel(redeclare())
-		}
-	}
 }
 
 func (b *Broker[T]) declareTopology(channel *connection.Channel) error {
@@ -316,31 +210,35 @@ func (b *Broker[T]) declareTopology(channel *connection.Channel) error {
 	return nil
 }
 
-func (b *Broker[T]) Publish(ctx context.Context, msg T) error {
-	body, err := json.Marshal(msg)
+func (b *Broker[T]) Publish(ctx context.Context, payload T) error {
+	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("could not marshall message body: %w", err)
+		return fmt.Errorf("mq: failed to marshal message: %w", err)
 	}
 
-	channel, err := b.getChannel(ctx)
+	msg := amqp.Publishing{
+		MessageId:   uuid.NewV7().String(),
+		ContentType: "application/json",
+		Body:        body,
+	}
+
+	channel, err := b.pub.get(ctx)
 	if err != nil {
 		return fmt.Errorf("mq: broker failed to retrieve channel: %w", err)
 	}
+
+	b.logger.Info("mq: publishing message", slog.String("message_id", msg.MessageId))
+
 	return channel.Publish(
 		ctx,
 		b.exchange,
 		b.queue,
-		amqp.Publishing{
-			ContentType:  "application/json",
-			DeliveryMode: amqp.Transient,
-			Body:         body,
-			Timestamp:    time.Now(),
-		},
+		msg,
 	)
 }
 
 func (b *Broker[T]) Subscribe(ctx context.Context, handler mq.MessageHandler[T]) error {
-	channel, err := b.getChannel(ctx)
+	channel, err := b.sub.get(ctx)
 	if err != nil {
 		return fmt.Errorf("mq: broker failed to retrieve channel: %w", err)
 	}
@@ -370,6 +268,8 @@ func (b *Broker[T]) handle(ctx context.Context, delivery amqp.Delivery, handler 
 		return
 	}
 
+	b.logger.Info("mq: received new message", slog.String("message_id", delivery.MessageId))
+
 	err := handler(ctx, msg)
 	if err != nil {
 		delivery.Reject(false)
@@ -386,9 +286,8 @@ func (b *Broker[T]) handle(ctx context.Context, delivery amqp.Delivery, handler 
 }
 
 func (b *Broker[T]) Close(ctx context.Context) error {
-	channel, err := b.getChannel(ctx)
-	if err != nil {
-		return fmt.Errorf("mq: broker failed to retrieve channel: %w", err)
-	}
-	return channel.Close()
+	return errors.Join(
+		b.pub.close(ctx),
+		b.sub.close(ctx),
+	)
 }

@@ -65,8 +65,8 @@ func (c *HTTPChecker) Check() *HealthCheckResult {
 			CheckTime: c.lastCheck(),
 		}
 	}
-
-	if resp.StatusCode == http.StatusServiceUnavailable {
+	statusOk := resp.StatusCode >= 200 && resp.StatusCode < 300 // 2XX responsecode
+	if !statusOk {
 		return &HealthCheckResult{
 			err:       fmt.Errorf("service un-available: %d", resp.StatusCode),
 			Success:   false,

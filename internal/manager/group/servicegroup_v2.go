@@ -4,17 +4,15 @@ import (
 	"cmp"
 	"crypto/md5"
 	"errors"
-	"log/slog"
 	"slices"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
 	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/ip"
-	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/iter"
 )
@@ -85,10 +83,7 @@ type ServiceGroupV2 struct {
 
 func NewServiceGroup(name string) *ServiceGroupV2 {
 	hash := md5.Sum([]byte(name))
-	id, err := uuid.FromBytes(hash[:])
-	if err != nil {
-		bslog.Error("failed to generate uuid", slog.String("reason", err.Error()), slog.String("memberOf", name))
-	}
+	id := uuid.UUID(hash[:])
 
 	return &ServiceGroupV2{
 		name:               name,
@@ -134,7 +129,7 @@ func (sg *ServiceGroupV2) Group() *model.GSLBServiceGroup {
 
 	for _, member := range sg.members {
 		group.Members[member.GetID()] = *member.GSLBService()
-		for _, view := range member.Views {
+		for _, view := range member.GetViews() {
 			if !slices.Contains(group.Views, view) {
 				group.Views = append(group.Views, view)
 			}
@@ -174,7 +169,7 @@ func (sg *ServiceGroupV2) ClearOverride(view string) *service.Service {
 }
 
 func (sg *ServiceGroupV2) OnServiceHealthChange(changedService *service.Service, healthy bool) {
-	for _, view := range changedService.Views {
+	for _, view := range changedService.GetViews() {
 		sg.onServiceHealthChangeForView(view, changedService, healthy)
 	}
 }
@@ -242,7 +237,7 @@ func (sg *ServiceGroupV2) GetLastActive(views ...string) *service.Service {
 }
 
 func (sg *ServiceGroupV2) Members(view string) iter.Iterator[*service.Service] {
-	return iter.FromSlice(sg.members).Filter(func(s *service.Service) bool { return slices.Contains(s.Views, view) })
+	return iter.FromSlice(sg.members).Filter(func(s *service.Service) bool { return slices.Contains(s.GetViews(), view) })
 }
 
 func (sg *ServiceGroupV2) Refresh(views ...string) {
@@ -258,7 +253,7 @@ func (sg *ServiceGroupV2) RegisterMember(newMember *service.Service) {
 	}
 
 	sg.members = append(sg.members, newMember)
-	sg.Refresh(newMember.Views...)
+	sg.Refresh(newMember.GetViews()...)
 	serviceGroupMembers.WithLabelValues(sg.name).Inc()
 }
 
@@ -274,7 +269,7 @@ func (sg *ServiceGroupV2) RemoveMember(id string) bool {
 	removed := sg.members[idx]
 	sg.members = append(sg.members[:idx], sg.members[idx+1:]...)
 
-	for _, view := range removed.Views {
+	for _, view := range removed.GetViews() {
 		sg.updateView(view)
 	}
 

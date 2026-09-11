@@ -56,7 +56,7 @@ func TestOnSuccess(t *testing.T) {
 
 		},
 		onFailureCountUpdate: func(g *model.GSLBService) {},
-		FailureThreshold:     3,
+		failureThreshold:     3,
 		isHealthy:            false,
 	}
 	svc1 := Service{
@@ -66,7 +66,7 @@ func TestOnSuccess(t *testing.T) {
 
 		},
 		onFailureCountUpdate: func(g *model.GSLBService) {},
-		FailureThreshold:     3,
+		failureThreshold:     3,
 		isHealthy:            false,
 	}
 	svc2 := Service{
@@ -76,7 +76,7 @@ func TestOnSuccess(t *testing.T) {
 
 		},
 		onFailureCountUpdate: func(g *model.GSLBService) {},
-		FailureThreshold:     3,
+		failureThreshold:     3,
 		isHealthy:            false,
 	}
 	svc3 := Service{
@@ -86,7 +86,7 @@ func TestOnSuccess(t *testing.T) {
 
 		},
 		onFailureCountUpdate: func(g *model.GSLBService) {},
-		FailureThreshold:     3,
+		failureThreshold:     3,
 		isHealthy:            false,
 	}
 	svc4 := Service{
@@ -96,7 +96,7 @@ func TestOnSuccess(t *testing.T) {
 
 		},
 		onFailureCountUpdate: func(g *model.GSLBService) {},
-		FailureThreshold:     3,
+		failureThreshold:     3,
 		isHealthy:            true,
 	}
 
@@ -142,7 +142,7 @@ func TestOnSuccess(t *testing.T) {
 	}
 
 	svc0.isHealthy = true
-	for range svc0.FailureThreshold - 1 {
+	for range svc0.failureThreshold - 1 {
 		svc0.OnFailure(errors.New("test error"))
 	}
 	svc0.OnSuccess()
@@ -151,7 +151,7 @@ func TestOnSuccess(t *testing.T) {
 		t.Errorf("Expected health: %v, but got: %v. After 2x OnFailure before OnSuccess()", true, svc0.IsHealthy())
 	}
 
-	for range svc0.FailureThreshold {
+	for range svc0.failureThreshold {
 		svc0.OnFailure(errors.New("test error"))
 	}
 	svc0.OnSuccess()
@@ -169,7 +169,7 @@ func TestOnFailure(t *testing.T) {
 
 		},
 		onFailureCountUpdate: func(g *model.GSLBService) {},
-		FailureThreshold:     3,
+		failureThreshold:     3,
 		isHealthy:            true,
 	}
 	svc1 := Service{
@@ -179,7 +179,7 @@ func TestOnFailure(t *testing.T) {
 
 		},
 		onFailureCountUpdate: func(g *model.GSLBService) {},
-		FailureThreshold:     3,
+		failureThreshold:     3,
 		isHealthy:            true,
 	}
 	svc2 := Service{
@@ -189,7 +189,7 @@ func TestOnFailure(t *testing.T) {
 
 		},
 		onFailureCountUpdate: func(g *model.GSLBService) {},
-		FailureThreshold:     3,
+		failureThreshold:     3,
 		isHealthy:            true,
 	}
 	svc3 := Service{
@@ -199,7 +199,7 @@ func TestOnFailure(t *testing.T) {
 
 		},
 		onFailureCountUpdate: func(g *model.GSLBService) {},
-		FailureThreshold:     3,
+		failureThreshold:     3,
 		isHealthy:            true,
 	}
 	svc4 := Service{
@@ -209,7 +209,7 @@ func TestOnFailure(t *testing.T) {
 
 		},
 		onFailureCountUpdate: func(g *model.GSLBService) {},
-		FailureThreshold:     3,
+		failureThreshold:     3,
 		isHealthy:            false,
 	}
 
@@ -257,7 +257,7 @@ func TestOnFailure(t *testing.T) {
 
 	svc0.isHealthy = false
 	svc0.failureCount = 3
-	for range svc0.FailureThreshold - 1 {
+	for range svc0.failureThreshold - 1 {
 		svc0.OnSuccess()
 	}
 	svc0.OnFailure(errors.New("test"))
@@ -266,7 +266,7 @@ func TestOnFailure(t *testing.T) {
 		t.Errorf("Expected health: %v, but got: %v. After 2x OnSuccess() before OnFailure()", false, svc0.IsHealthy())
 	}
 
-	for range svc0.FailureThreshold {
+	for range svc0.failureThreshold {
 		svc0.OnSuccess()
 	}
 	svc0.OnFailure(errors.New("test"))

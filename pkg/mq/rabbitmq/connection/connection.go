@@ -16,9 +16,20 @@ import (
 
 const ConnectionRetryBackoff = time.Second // backoff on Connection failure
 
-var mqConn *Connection // global MQ connection
+type ConnectionType int
+
+const (
+	Publish ConnectionType = iota
+	Subscribe
+)
+
+var pubConn *Connection
+var pubHandleOnce sync.Once
+
+var subConn *Connection
+var subHandleOnce sync.Once
+
 var lock sync.Mutex
-var handleOnce sync.Once
 var connOpts []connectionOption
 
 type connectionOption func(*Connection)
@@ -47,39 +58,76 @@ func Configure(opts ...connectionOption) {
 	lock.Unlock()
 }
 
-func NewConnection(ctx context.Context, amqpUrl string) *Connection {
+func NewConnection(ctx context.Context, typ ConnectionType, amqpUrl string) *Connection {
 	lock.Lock()
-	if mqConn == nil {
-		mqConn = &Connection{
-			amqpURL: amqpUrl,
-			ready:   make(chan struct{}),
-			logger:  slog.Default(),
-			retry:   5,
-			lock:    sync.Mutex{},
+	defer lock.Unlock()
+	switch typ {
+	case Publish:
+		if pubConn == nil {
+			pubConn = &Connection{
+				amqpURL: amqpUrl,
+				ready:   make(chan struct{}),
+				logger:  slog.Default(),
+				retry:   5,
+				lock:    sync.Mutex{},
+			}
+
+			for _, opt := range connOpts {
+				opt(pubConn)
+			}
 		}
 
-		for _, opt := range connOpts {
-			opt(mqConn)
+		pubHandleOnce.Do(func() {
+			go func() {
+				err := pubConn.connect(ctx)
+				for err != nil {
+					pubConn.logger.Error("mq: failed to connect",
+						slog.String("reason", err.Error()),
+						slog.String("retry", pubConn.retryConnectionBackoff.String()),
+					)
+					time.Sleep(pubConn.retryConnectionBackoff)
+					err = pubConn.connect(ctx)
+				}
+			}()
+			go pubConn.handleConnection(ctx)
+		})
+
+		return pubConn
+
+	case Subscribe:
+		if subConn == nil {
+			subConn = &Connection{
+				amqpURL: amqpUrl,
+				ready:   make(chan struct{}),
+				logger:  slog.Default(),
+				retry:   5,
+				lock:    sync.Mutex{},
+			}
+
+			for _, opt := range connOpts {
+				opt(subConn)
+			}
 		}
+
+		subHandleOnce.Do(func() {
+			go func() {
+				err := subConn.connect(ctx)
+				for err != nil {
+					subConn.logger.Error("mq: failed to connect",
+						slog.String("reason", err.Error()),
+						slog.String("retry", subConn.retryConnectionBackoff.String()),
+					)
+					time.Sleep(subConn.retryConnectionBackoff)
+					err = subConn.connect(ctx)
+				}
+			}()
+			go subConn.handleConnection(ctx)
+		})
+
+		return subConn
 	}
 
-	handleOnce.Do(func() {
-		go func() {
-			err := mqConn.connect(ctx)
-			for err != nil {
-				mqConn.logger.Error("mq: failed to connect",
-					slog.String("reason", err.Error()),
-					slog.String("retry", mqConn.retryConnectionBackoff.String()),
-				)
-				time.Sleep(mqConn.retryConnectionBackoff)
-				err = mqConn.connect(ctx)
-			}
-		}()
-		go mqConn.handleConnection(ctx)
-	})
-	lock.Unlock()
-
-	return mqConn
+	return nil
 }
 
 func (c *Connection) NewChannel(prefetch int, fn Topology) (*Channel, error) {
@@ -195,18 +243,27 @@ func (c *Connection) connect(ctx context.Context) error {
 
 	c.OnSuccessFullConnection()
 
-	close(c.ready) // broadcast ready
-	c.ready = nil
 	c.logger.Info("mq: successfully established Connection")
 
 	return nil
 }
 
 func (c *Connection) OnSuccessFullConnection() {
+	c.lock.Lock()
+	jobs := make([]func() error, len(c.postNewConnectionActions))
+	copy(jobs, c.postNewConnectionActions)
+
+	if c.ready != nil {
+		close(c.ready)
+		c.ready = nil
+	}
+
+	c.lock.Unlock()
+
 	go func() {
 		wg := errgroup.Group{}
 
-		for _, job := range c.postNewConnectionActions {
+		for _, job := range jobs {
 			wg.Go(job)
 		}
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/vitistack/gslb-operator/pkg/bslog"
@@ -19,6 +20,7 @@ var ErrBodyTooBig = errors.New("response body too big")
 const maxBodySize = 1 * 1024 * 1024 // 1MB
 
 type LuaValidator struct {
+	mu       sync.Mutex
 	script   string
 	compiled *glua.LFunction
 }
@@ -26,6 +28,8 @@ type LuaValidator struct {
 // sets global lua values for the script
 // executes validation script, and returns the validation result
 func (l *LuaValidator) Validate(resp *http.Response) (err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	defer func() { // makes sure we recover from any panics caused by the lua execution
 		if r := recover(); r != nil {
 			err = fmt.Errorf("recovered from lua script validation error: %v", r)
@@ -34,7 +38,7 @@ func (l *LuaValidator) Validate(resp *http.Response) (err error) {
 	vm := lua.Get()
 	defer lua.Put(vm)
 
-	sandbox := lua.GetSandBox(vm)
+	sandbox := lua.NewRequestEnv(vm)
 
 	if l.compiled == nil {
 		// compile user script
@@ -72,7 +76,7 @@ func (l *LuaValidator) Validate(resp *http.Response) (err error) {
 
 	vm.SetFEnv(l.compiled, sandbox)
 	vm.Push(l.compiled)
-	if err := vm.PCall(0, 1, nil); err != nil {
+	if err := vm.PCall(0, 2, nil); err != nil {
 		// Clean up before returning
 		sandbox.RawSetString("status_code", glua.LNil)
 		sandbox.RawSetString("body", glua.LNil)
@@ -81,8 +85,11 @@ func (l *LuaValidator) Validate(resp *http.Response) (err error) {
 	}
 
 	// Get the return value
-	ret := vm.Get(-1)
-	vm.Pop(1)
+	ret := vm.Get(-2)
+	reason := vm.Get(-1)
+	vm.Pop(2)
+
+	reasonStr, _ := reason.(glua.LString)
 
 	// Clean up sandbox
 	sandbox.RawSetString("status_code", glua.LNil)
@@ -90,11 +97,17 @@ func (l *LuaValidator) Validate(resp *http.Response) (err error) {
 	sandbox.RawSetString("headers", glua.LNil)
 
 	if ret == glua.LNil {
-		return fmt.Errorf("script returned a nil value")
+		if reasonStr != "" {
+			return fmt.Errorf("lua script returned a nil value: %s", reasonStr)
+		}
+		return fmt.Errorf("lua script returned a nil value")
 	}
 
 	if ret == glua.LFalse {
-		return fmt.Errorf("health-check validation returned a false value")
+		if reasonStr != "" {
+			return fmt.Errorf("lua script health-check validation returned false: %s", reasonStr)
+		}
+		return fmt.Errorf("lua script health-check validation returned false")
 	}
 
 	return err

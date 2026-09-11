@@ -54,9 +54,9 @@ func (i Iterator[T]) Filter(filter func(T) bool) Iterator[T] {
 	return i
 }
 
-func Map[T, A any](iter Iterator[T], fn func(T) A) Iterator[A] {
+func (i Iterator[T]) Map[A any](fn func(T) A) Iterator[A] {
 	return func(yield func(A) bool) {
-		for element := range iter {
+		for element := range i {
 			if !yield(fn(element)) {
 				return
 			}
@@ -64,18 +64,18 @@ func Map[T, A any](iter Iterator[T], fn func(T) A) Iterator[A] {
 	}
 }
 
-func (i Iterator[T]) Map(fn func(T) T) Iterator[T] {
-	copy := i
-	i = func(yield func(T) bool) {
-		for element := range copy {
-			element = fn(element)
-			if !yield(element) {
-				return
-			}
-		}
-	}
-	return i
-}
+//func (i Iterator[T]) Map(fn func(T) T) Iterator[T] {
+//	copy := i
+//	i = func(yield func(T) bool) {
+//		for element := range copy {
+//			element = fn(element)
+//			if !yield(element) {
+//				return
+//			}
+//		}
+//	}
+//	return i
+//}
 
 func (i Iterator[T]) Reverse() Iterator[T] {
 	collect := i.Collect()

@@ -9,6 +9,7 @@ import (
 	"os"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns/update"
@@ -16,10 +17,12 @@ import (
 	"github.com/vitistack/gslb-operator/internal/model"
 	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
 	repo "github.com/vitistack/gslb-operator/internal/repositories/spoof"
+	"github.com/vitistack/gslb-operator/internal/utils/ip"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/transport/tcp"
 	"github.com/vitistack/gslb-operator/pkg/events"
+	"github.com/vitistack/gslb-operator/pkg/models/service"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
 	"golang.org/x/sync/errgroup"
 )
@@ -207,7 +210,7 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 
 	hashesByView := make(map[string]string)
 	lock := sync.Mutex{}
-	
+
 	if d.servers == nil {
 		return errors.New("no registered dnsdist servers")
 	}
@@ -260,4 +263,73 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 	}
 
 	return nil
+}
+
+func (d *DNSDISTUpdater) FetchStatus(id string) (service.DNSStatusForService, error) {
+	expectedAddress, err := d.expectedAddressesByView(id)
+	if err != nil {
+		return service.DNSStatusForService{}, err
+	}
+
+	var (
+		mu        sync.Mutex
+		resolvers = make([]service.DNSServerStatusForService, 0, len(d.servers))
+	)
+
+	wg := sync.WaitGroup{}
+
+	for _, dnsdist := range d.servers {
+		wg.Go(func() {
+			status, err := dnsdist.Status(id)
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			if err != nil {
+				bslog.Error(
+					"failed to fetch dnsdist server status",
+					slog.String("server", dnsdist.name), slog.String("reason", err.Error()),
+				)
+				return
+			}
+
+			resolvers = append(resolvers, status)
+			expected, ok := expectedAddress[status.View]
+			if !ok {
+				return
+			}
+
+			if status.Address == nil || status.Address.String() != expected.String() {
+				status.Programmed = false
+			}
+		})
+	}
+
+	wg.Wait()
+
+	return service.DNSStatusForService{
+		Resolvers: resolvers,
+	}, nil
+}
+
+func (d *DNSDISTUpdater) BulkFetchStatus() (map[uuid.UUID]service.DNSStatusForService, error) {
+	bslog.Warn("UN-IMPLEMENTED DNSDISTUpdater.BulkFetchStatus()")
+	return nil, nil
+}
+
+func (d *DNSDISTUpdater) expectedAddressesByView(id string) (map[string]ip.Address, error) {
+	spoofs, finish := d.spoofRepo.ReadAll()
+
+	expected := make(map[string]ip.Address)
+	for spoof := range spoofs {
+		if spoof.UUID == id {
+			expected[spoof.View] = spoof.Address
+		}
+	}
+
+	if err := finish(); err != nil {
+		return nil, fmt.Errorf("failed to read expected spoof state: %w", err)
+	}
+
+	return expected, nil
 }

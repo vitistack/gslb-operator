@@ -32,9 +32,9 @@ func (hj *HealthCheckJob) Execute() error {
 
 	hj.duration = result.CheckTime
 	healthCheckDuration.WithLabelValues(
-		hj.Service.MemberOf,
-		hj.Service.Fqdn,
-		hj.Service.Datacenter).
+		hj.Service.GetMemberOf(),
+		hj.Service.GetFqdn(),
+		hj.Service.GetDatacenter()).
 		Observe(result.CheckTime)
 
 	return result.Err()
@@ -46,9 +46,9 @@ func (hj *HealthCheckJob) OnSuccess() {
 		slog.Any("service", hj.Service),
 	)
 
-	healthChecksTotal.WithLabelValues(hj.Service.MemberOf,
-		hj.Service.Fqdn,
-		hj.Service.Datacenter,
+	healthChecksTotal.WithLabelValues(hj.Service.GetMemberOf(),
+		hj.Service.GetFqdn(),
+		hj.Service.GetDatacenter(),
 		"success").
 		Inc()
 	hj.Service.OnSuccess()
@@ -61,9 +61,9 @@ func (hj *HealthCheckJob) OnFailure(err error) {
 		slog.String("error", err.Error()),
 	)
 
-	healthChecksTotal.WithLabelValues(hj.Service.MemberOf,
-		hj.Service.Fqdn,
-		hj.Service.Datacenter,
+	healthChecksTotal.WithLabelValues(hj.Service.GetMemberOf(),
+		hj.Service.GetFqdn(),
+		hj.Service.GetDatacenter(),
 		"failure").
 		Inc()
 	hj.Service.OnFailure(err)

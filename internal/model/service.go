@@ -3,8 +3,8 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/utils/ip"
 	"github.com/vitistack/gslb-operator/pkg/models/service"
