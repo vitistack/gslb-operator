@@ -4,8 +4,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type Job interface {
@@ -112,10 +110,9 @@ func (wp *WorkerPool) newWorker() {
 	wp.lock.Lock()
 
 	wp.numRunningWorkers++
-	id := uuid.New().ID()
 
 	wp.poolWg.Add(1)
-	go wp.worker(id)
+	go wp.worker()
 	wp.lock.Unlock()
 
 	if wp.OnScaleUp != nil {
@@ -123,7 +120,7 @@ func (wp *WorkerPool) newWorker() {
 	}
 }
 
-func (wp *WorkerPool) worker(id uint32) {
+func (wp *WorkerPool) worker() {
 	defer wp.poolWg.Done()
 
 	for {
