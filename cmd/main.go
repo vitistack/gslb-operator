@@ -87,6 +87,9 @@ func main() {
 
 	updater, err := dnsdist.NewDNSDISTUpdater(servicesStore)
 	if err != nil {
+		if config.GSLB().StatusEnabled() {
+			bslog.Fatal("fatal error: unable to create updater", slog.String("error", err.Error()))
+		}
 		bslog.Error("unable to create updater", slog.String("error", err.Error()))
 	}
 

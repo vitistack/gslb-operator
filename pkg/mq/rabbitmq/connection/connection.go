@@ -243,18 +243,27 @@ func (c *Connection) connect(ctx context.Context) error {
 
 	c.OnSuccessFullConnection()
 
-	close(c.ready) // broadcast ready
-	c.ready = nil
 	c.logger.Info("mq: successfully established Connection")
 
 	return nil
 }
 
 func (c *Connection) OnSuccessFullConnection() {
+	c.lock.Lock()
+	jobs := make([]func() error, len(c.postNewConnectionActions))
+	copy(jobs, c.postNewConnectionActions)
+
+	if c.ready != nil {
+		close(c.ready)
+		c.ready = nil
+	}
+
+	c.lock.Unlock()
+
 	go func() {
 		wg := errgroup.Group{}
 
-		for _, job := range c.postNewConnectionActions {
+		for _, job := range jobs {
 			wg.Go(job)
 		}
 

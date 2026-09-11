@@ -4,17 +4,15 @@ import (
 	"cmp"
 	"crypto/md5"
 	"errors"
-	"log/slog"
 	"slices"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
 	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
 	"github.com/vitistack/gslb-operator/internal/service"
 	"github.com/vitistack/gslb-operator/internal/utils/ip"
-	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/iter"
 )
@@ -85,10 +83,7 @@ type ServiceGroupV2 struct {
 
 func NewServiceGroup(name string) *ServiceGroupV2 {
 	hash := md5.Sum([]byte(name))
-	id, err := uuid.FromBytes(hash[:])
-	if err != nil {
-		bslog.Error("failed to generate uuid", slog.String("reason", err.Error()), slog.String("memberOf", name))
-	}
+	id := uuid.UUID(hash[:])
 
 	return &ServiceGroupV2{
 		name:               name,

@@ -213,7 +213,7 @@ func (b *Broker[T]) declareTopology(channel *connection.Channel) error {
 func (b *Broker[T]) Publish(ctx context.Context, payload T) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("mq: failed to marshall message: %w", err)
+		return fmt.Errorf("mq: failed to marshal message: %w", err)
 	}
 
 	msg := amqp.Publishing{

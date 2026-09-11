@@ -75,12 +75,16 @@ func NewStatusBroker(ctx context.Context, statusRepo *status.StatusRepo, groupRe
 	}
 	broker.scheduler.OnTick(func(memberOf string) {
 		go func() {
-			broker.PublishStatusForGroup(memberOf, time.Now())
+			if err := broker.PublishStatusForGroup(memberOf, time.Now()); err != nil {
+				bslog.Error(
+					"failed to publish scheduled gslb-site status for "+memberOf,
+					slog.String("reason", err.Error()),
+				)
+			}
 		}()
 	})
 
 	events.On(domainEvents.EventTypeGSLBService, broker)
-	broker.Subscribe(ctx)
 
 	go broker.coldStart()
 	go func() {
@@ -121,6 +125,11 @@ func (s *StatusBroker) reconcileScheduledGroup(memberOf string) {
 	group, err := s.serviceGroupRepo.Read(memberOf)
 	if err != nil || len(group.Members) == 0 {
 		s.scheduler.Remove(func(m string) bool { return m == memberOf })
+		return
+	}
+
+	if !s.scheduler.Has(func(m string) bool { return m == memberOf }) {
+		s.scheduler.Schedule(memberOf)
 	}
 }
 

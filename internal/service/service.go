@@ -208,8 +208,9 @@ func (s *Service) OnSuccess() {
 		s.failureCount = 0
 
 		s.mu.Unlock()
+		gslbService := s.GSLBService()
 		if previousFailureCount > 0 {
-			s.onFailureCountUpdate(s.GSLBService())
+			s.onFailureCountUpdate(gslbService)
 		}
 
 		return
@@ -223,7 +224,9 @@ func (s *Service) OnSuccess() {
 	if becameHealthy {
 		s.isHealthy = true
 	}
+
 	s.mu.Unlock()
+	gslbService := s.GSLBService()
 
 	if s.failureCount == 0 {
 		s.onHealthChange(&HealthChangeEvent{
@@ -231,7 +234,7 @@ func (s *Service) OnSuccess() {
 			Healthy: true,
 		})
 	} else {
-		s.onFailureCountUpdate(s.GSLBService())
+		s.onFailureCountUpdate(gslbService)
 	}
 }
 
@@ -390,11 +393,12 @@ func (s *Service) Assign(new *Service) {
 }
 
 func (s *Service) LogValue() slog.Value {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s == nil {
 		return slog.StringValue("nil")
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	return slog.GroupValue(
 		slog.String("id", s.id),

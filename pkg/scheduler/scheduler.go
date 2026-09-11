@@ -124,20 +124,31 @@ func (s *Scheduler[T]) Remove(cmp func(T) bool) bool {
 	return s.heap.Len() == 0
 }
 
-// re-schedule the service at the top of the heap
-func (s *Scheduler[T]) reSchedule() {
+func (s *Scheduler[T]) Has(cmp func(T) bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	top := heap.Pop(&s.heap).(*ScheduledItem[T])
+	return s.heap.GetIndex(func(si *ScheduledItem[T]) bool { return cmp(si.item) }) != -1
+}
 
-	if !top.shouldReSchedule {
+// re-schedule the service at the top of the heap
+func (s *Scheduler[T]) reSchedule(item *ScheduledItem[T]) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	idx := s.heap.GetIndex(func(si *ScheduledItem[T]) bool { return si == item })
+	if idx == -1 {
+		// item was removed concurrently
+		return
+	}
+
+	if !item.shouldReSchedule {
 		// just return since the service is now removed from the heap
 		return
 	}
 
-	top.nextCheckTime = time.Now().Add(s.newTickInterval()) // initiate the next checktime
+	item.nextCheckTime = time.Now().Add(s.newTickInterval()) // initiate the next checktime
 
-	heap.Push(&s.heap, top)
+	heap.Push(&s.heap, item)
 
 	if s.heap.Len() == 0 {
 		s.startLoop()
@@ -156,7 +167,9 @@ func (s *Scheduler[T]) loop() {
 	s.wg.Go(func() {
 		defer func() {
 			s.mu.Lock()
-			s.isRunning = false
+			if s.heap.Len() == 0 {
+				s.isRunning = false
+			}
 			s.mu.Unlock()
 			bslog.Debug("scheduler closed", slog.String("interval", s.interval.String()))
 		}()
@@ -171,6 +184,7 @@ func (s *Scheduler[T]) loop() {
 
 			s.mu.Lock()
 			if s.heap.Len() == 0 { // no need to infinitly run on an empty queue
+				s.isRunning = false
 				s.mu.Unlock()
 				return
 			}
@@ -189,7 +203,7 @@ func (s *Scheduler[T]) loop() {
 				default:
 				}
 
-				s.reSchedule()
+				s.reSchedule(next)
 			} else {
 				timeUntil := time.Until(next.nextCheckTime)
 				select {
@@ -208,7 +222,7 @@ func (s *Scheduler[T]) loop() {
 					default:
 					}
 
-					s.reSchedule()
+					s.reSchedule(next)
 				}
 			}
 		}

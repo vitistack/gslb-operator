@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"uuid"
@@ -135,11 +136,11 @@ func (s *server) Hash() (string, error) {
 				return strings.Contains(rl.Action, "spoof")
 			},
 		).
-		Each(
-			func(rl rules.RuleLine) {
-				spoofUUIDs = append(spoofUUIDs, rl.UUID)
-			},
-		)
+		Each(func(rl rules.RuleLine) {
+			spoofUUIDs = append(spoofUUIDs, rl.UUID)
+		})
+
+	slices.Sort(spoofUUIDs)
 
 	joinedUUIDs := strings.Join(spoofUUIDs, ",")
 	rawHash := sha256.Sum256([]byte(joinedUUIDs))
@@ -195,9 +196,10 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 
 func (s *server) BulkStatus() (map[uuid.UUID]service.DNSServerStatusForService, error) {
 	baseStatus := service.DNSServerStatusForService{
-		Host:    s.name,
-		View:    s.selector.View(),
-		Address: nil,
+		Programmed: true,
+		Host:       s.name,
+		View:       s.selector.View(),
+		Address:    nil,
 	}
 
 	statuses := make(map[uuid.UUID]service.DNSServerStatusForService)
@@ -211,7 +213,7 @@ func (s *server) BulkStatus() (map[uuid.UUID]service.DNSServerStatusForService, 
 		Filter(func(rl rules.RuleLine) bool { return strings.Contains(rl.Action, "spoof") }).
 		Each(
 			func(rl rules.RuleLine) {
-				rawAddress := strings.Trim(rl.Action, "spoof in ")
+				rawAddress := strings.TrimPrefix(rl.Action, "spoof in ")
 				status := baseStatus
 				status.Address, err = ip.FromString(rawAddress)
 				if err != nil {
@@ -236,6 +238,7 @@ func (s *server) BulkStatus() (map[uuid.UUID]service.DNSServerStatusForService, 
 						),
 						slog.String("reason", fmt.Errorf("failed to parse rule-line uuid: %w", err).Error()),
 					)
+					return
 				}
 
 				statuses[id] = status
