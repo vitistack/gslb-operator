@@ -16,6 +16,9 @@ const (
 	ErrInvalidInput  = Error("INVALID_INPUT")
 	ErrInternalError = Error("INTERNAL_ERROR")
 	ErrNotFound      = Error("NOT_FOUND")
+	ErrUnauthorized  = Error("UNAUTHORIZED")
+	ErrForbidden     = Error("FORBIDDEN")
+	ErrConflict      = Error("CONFLICT")
 )
 
 var (
@@ -31,6 +34,18 @@ var (
 		ErrNotFound: {
 			Code:  http.StatusNotFound,
 			Title: string(ErrNotFound),
+		},
+		ErrUnauthorized: {
+			Code:  http.StatusUnauthorized,
+			Title: string(ErrUnauthorized),
+		},
+		ErrForbidden: {
+			Code:  http.StatusForbidden,
+			Title: string(ErrForbidden),
+		},
+		ErrConflict: {
+			Code:  http.StatusConflict,
+			Title: string(ErrConflict),
 		},
 	}
 )

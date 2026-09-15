@@ -1,0 +1,154 @@
+package authc
+
+import (
+	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+)
+
+type LoginPayload struct {
+	ClientID        string `json:"client_id"`
+	PublicKey       string `json:"public_key"`       // base64 Ed25519 (bootstrap enrolment)
+	ClientAssertion string `json:"client_assertion"` // signed JWT (private-key-jwt)
+}
+
+type payloadCtxKey struct{}
+
+func WithLoginPayload(parent context.Context, payload LoginPayload) context.Context {
+	return context.WithValue(parent, payloadCtxKey{}, payload)
+}
+
+func LoginPayloadFrom(ctx context.Context) (LoginPayload, bool) {
+	p, ok := ctx.Value(payloadCtxKey{}).(LoginPayload)
+	return p, ok
+}
+
+// --- M2M: bootstrap-key (enrol-on-first-use) --------------------------------
+
+type BootstrapKey struct {
+	registry *Registry
+}
+
+func NewBootstrapKey(reg *Registry) *BootstrapKey {
+	return &BootstrapKey{registry: reg}
+}
+
+func (b *BootstrapKey) Method() string   { return "bootstrap-key" }
+func (b *BootstrapKey) Class() AuthClass { return M2M }
+
+func (b *BootstrapKey) Detect(r *http.Request) bool {
+	payload, ok := LoginPayloadFrom(r.Context())
+	return ok && payload.PublicKey != "" && payload.ClientAssertion == ""
+}
+
+func (b *BootstrapKey) Authenticate(r *http.Request) (Principal, error) {
+	payload, ok := LoginPayloadFrom(r.Context())
+	if !ok || payload.ClientID == "" || payload.PublicKey == "" {
+		return Principal{}, ErrUnauthorized
+	}
+	pub, err := base64.StdEncoding.DecodeString(payload.PublicKey)
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return Principal{}, ErrUnauthorized
+	}
+
+	// FCFS: bind the key now; later private-key-jwt assertions verify against it.
+	switch err := b.registry.Register(r.Context(), payload.ClientID, ed25519.PublicKey(pub)); {
+	case err == nil:
+	case errors.Is(err, ErrClientExists):
+		if err := b.registry.Verify(r.Context(), payload.ClientID, ed25519.PublicKey(pub)); err != nil {
+			return Principal{}, err // client_id taken by a different key
+		}
+	default:
+		return Principal{}, err
+	}
+
+	return Principal{Subject: payload.ClientID, Method: b.Method(), Class: M2M}, nil
+}
+
+// --- M2M: private-key-jwt (proof of possession) -----------------------------
+
+type ClientAssertion struct {
+	registry *Registry
+	replay   *Replay
+	audience string
+	leeway   time.Duration
+}
+
+func NewClientAssertion(reg *Registry, replay *Replay, audience string) *ClientAssertion {
+	return &ClientAssertion{registry: reg, replay: replay, audience: audience, leeway: 5 * time.Second}
+}
+
+func (c *ClientAssertion) Method() string   { return "private-key-jwt" }
+func (c *ClientAssertion) Class() AuthClass { return M2M }
+
+// The assertion lives in the body, so this method is selected via the
+// explicit X-Auth-Method header (handled by Dispatcher.Resolve) rather than sniffing.
+func (c *ClientAssertion) Detect(r *http.Request) bool {
+	p, ok := LoginPayloadFrom(r.Context())
+	return ok && p.ClientAssertion != ""
+}
+
+func (c *ClientAssertion) Authenticate(r *http.Request) (Principal, error) {
+	payload, ok := LoginPayloadFrom(r.Context())
+	if !ok || payload.ClientAssertion == "" {
+		return Principal{}, ErrUnauthorized
+	}
+
+	claims := &jwt.RegisteredClaims{}
+	token, err := jwt.ParseWithClaims(payload.ClientAssertion, claims,
+		func(t *jwt.Token) (any, error) {
+			if claims.Subject == "" {
+				return nil, ErrUnauthorized
+			}
+			return c.registry.PublicKey(r.Context(), claims.Subject)
+		},
+		jwt.WithValidMethods([]string{"EdDSA"}),
+		jwt.WithAudience(c.audience),
+		jwt.WithExpirationRequired(),
+		jwt.WithLeeway(c.leeway),
+	)
+	if err != nil || !token.Valid || claims.ID == "" {
+		return Principal{}, ErrUnauthorized
+	}
+
+	ttl := time.Until(claims.ExpiresAt.Time) + c.leeway
+	if err := c.replay.Once(r.Context(), claims.ID, ttl); err != nil {
+		return Principal{}, ErrReplayed
+	}
+
+	return Principal{Subject: claims.Subject, Method: c.Method(), Class: M2M}, nil
+}
+
+// --- C2M: oidc-session (human via external IdP) ------------------------------
+
+// SessionStore validates a browser/OIDC session and returns the user identity.
+type SessionStore interface {
+	User(r *http.Request) (string, error)
+}
+
+type OIDCSession struct {
+	sessions SessionStore
+}
+
+func NewOIDCSession(s SessionStore) *OIDCSession { return &OIDCSession{sessions: s} }
+
+func (o *OIDCSession) Method() string   { return "oidc-session" }
+func (o *OIDCSession) Class() AuthClass { return C2M }
+
+func (o *OIDCSession) Detect(r *http.Request) bool {
+	_, err := r.Cookie("session")
+	return err == nil
+}
+
+func (o *OIDCSession) Authenticate(r *http.Request) (Principal, error) {
+	user, err := o.sessions.User(r)
+	if err != nil {
+		return Principal{}, ErrUnauthorized
+	}
+	return Principal{Subject: user, Method: o.Method(), Class: C2M}, nil
+}

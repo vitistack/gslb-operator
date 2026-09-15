@@ -12,6 +12,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/valkey-io/valkey-go"
+	"github.com/vitistack/gslb-operator/internal/api/handlers/auth"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/service"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
@@ -23,8 +24,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
 	"github.com/vitistack/gslb-operator/internal/repositories/status"
-	"github.com/vitistack/gslb-operator/pkg/auth"
-	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
+	"github.com/vitistack/gslb-operator/pkg/auth/authc"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/lua"
@@ -115,23 +115,42 @@ func main() {
 	//	}
 	//}
 
+	authStore := authc.NewValkeyStore(valkeyClient)
+	authRegistry := authc.NewRegistry(authStore)
+	authReplay := authc.NewReplay(authStore)
+	tokenIssuer := authc.NewTokenIssuer(
+		config.JWT().Secret(),
+		authc.WithAudience(config.JWT().Issuer()),
+		authc.WithIssuer(config.JWT().Issuer()),
+		authc.WithTTL(config.JWT().TTL()),
+	)
+
 	api := http.NewServeMux()
-
 	// routes handlers
-	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
+	authService := auth.NewAuthService(
+		tokenIssuer,
+		authc.NewBootstrapKey(authRegistry),
+		authc.NewClientAssertion(authRegistry, authReplay, config.JWT().Issuer()),
+	)
 
-	// initializing the service jwt self signer
-	jwt.InitServiceTokenManager(config.JWT().Secret(), config.JWT().User())
+	api.HandleFunc(routes.POST_AUTH_TOKEN, authService.Token)
+
+	// middleware chains
+	//securedChain := middleware.Chain(
+	//	middleware.WithIncomingRequestLogging(slog.Default()),
+	//	authService.Verify(),
+	//	//authService.Enforce(), // TODO
+	//)
+
+	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
 
 	// spoofs
 	api.HandleFunc(routes.GET_SPOOFS, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),
-		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetSpoofs))
 
 	api.HandleFunc(routes.GET_SPOOFID, middleware.Chain(
 		middleware.WithIncomingRequestLogging(slog.Default()),
-		auth.WithTokenValidation(slog.Default()),
 	)(spoofsApiService.GetFQDNSpoof))
 
 	//api.HandleFunc(routes.GET_SPOOFS_HASH, middleware.Chain(

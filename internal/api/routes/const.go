@@ -7,6 +7,9 @@ import (
 const (
 	ROOT = "/"
 
+	AUTH            = ROOT + "auth"
+	POST_AUTH_TOKEN = http.MethodPost + " " + AUTH + "/token"
+
 	SPOOFS          = ROOT + "spoofs" // DNSDIST domain spoofs
 	SPOOFS_HASH     = SPOOFS + "/hash"
 	SPOOFS_ID       = SPOOFS + "/{fqdn}"
@@ -19,10 +22,6 @@ const (
 	GET_OVERRIDE    = http.MethodGet + " " + OVERRIDE + "/{" + MemberOf + "}"    // Route GET
 	POST_OVERRIDE   = http.MethodPost + " " + OVERRIDE                           // Route POST
 	DELETE_OVERRIDE = http.MethodDelete + " " + OVERRIDE + "/{" + MemberOf + "}" // Route DELETE
-
-	AUTH            = ROOT + "auth"
-	AUTH_LOGIN      = AUTH + "/login"
-	POST_AUTH_LOGIN = http.MethodPost + " " + AUTH_LOGIN
 
 	METRICS     = ROOT + "metrics"
 	GET_METRICS = http.MethodGet + " " + METRICS

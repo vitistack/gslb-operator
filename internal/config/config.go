@@ -252,16 +252,21 @@ func (g *gslb) Servers() string {
 }
 
 type jwt struct {
-	SECRET string `mapstructure:"secret"`
-	USER   string `mapstructure:"user"`
+	SECRET      string        `mapstructure:"secret"`
+	ISSUER_NAME string        `mapstructure:"issuerName"`
+	Ttl         time.Duration `mapstrucrure:"ttl"`
 }
 
 func (jwt *jwt) Secret() []byte {
 	return []byte(jwt.SECRET)
 }
 
-func (jwt *jwt) User() string {
-	return jwt.USER
+func (jwt *jwt) Issuer() string {
+	return jwt.ISSUER_NAME
+}
+
+func (jwt *jwt) TTL() time.Duration {
+	return jwt.Ttl
 }
 
 type webhooks struct {
