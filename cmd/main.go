@@ -15,7 +15,6 @@ import (
 	"github.com/vitistack/gslb-operator/internal/api/handlers/auth"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/service"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
-	"github.com/vitistack/gslb-operator/internal/api/routes"
 	"github.com/vitistack/gslb-operator/internal/brokers"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
@@ -31,6 +30,7 @@ import (
 	serviceModels "github.com/vitistack/gslb-operator/pkg/models/service"
 	valkeyStore "github.com/vitistack/gslb-operator/pkg/persistence/store/valkey"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
+	"github.com/vitistack/gslb-operator/pkg/rest/router"
 )
 
 var ( // injected at buildtime
@@ -107,78 +107,65 @@ func main() {
 	dnsHandler.Start(ctx, cancel)
 	updater.Synchronize(ctx)
 
-	//configs := getRandomGSLBConfig()
-	//for _, config := range configs {
-	//	_, err := mgr.RegisterService(config)
-	//	if err != nil {
-	//		bslog.Fatal("could not create service", slog.String("reason", err.Error()))
-	//	}
-	//}
-
 	authStore := authc.NewValkeyStore(valkeyClient)
 	authRegistry := authc.NewRegistry(authStore)
 	authReplay := authc.NewReplay(authStore)
 	tokenIssuer := authc.NewTokenIssuer(
 		config.JWT().Secret(),
-		authc.WithAudience(config.JWT().Issuer()),
+		authc.WithAudience(config.JWT().Audience()),
 		authc.WithIssuer(config.JWT().Issuer()),
 		authc.WithTTL(config.JWT().TTL()),
 	)
 
-	api := http.NewServeMux()
-	// routes handlers
 	authService := auth.NewAuthService(
 		tokenIssuer,
 		authc.NewBootstrapKey(authRegistry),
 		authc.NewClientAssertion(authRegistry, authReplay, config.JWT().Issuer()),
 	)
 
-	api.HandleFunc(routes.POST_AUTH_TOKEN, authService.Token)
-
 	// middleware chains
-	//securedChain := middleware.Chain(
-	//	middleware.WithIncomingRequestLogging(slog.Default()),
-	//	authService.Verify(),
-	//	//authService.Enforce(), // TODO
-	//)
+	securedChain := middleware.Chain(
+		authService.Verify(),
+	)
+
+	router := router.New(
+		nil,
+		slog.Default(),
+		middleware.WithIncomingRequestLogging(slog.Default()),
+	)
+	rootRouter := router.Group("/")
+	rootRouter.Handle( // static wiring of prometheus metrics handler
+		http.MethodGet,
+		"/metrics",
+		promhttp.Handler(),
+	).Public()
+
+	apiRouter := rootRouter.Group("/api/v1")
+
+	authRouter := apiRouter.Group("/auth")
+	authRouter.POST("/token", authService.Token).Public()
 
 	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
+	spoofsRouter := apiRouter.Group("/spoofs").Use(securedChain)
+	spoofsRouter.GET("", spoofsApiService.GetSpoofs).Action("spoofs.list")
+	spoofsRouter.GET("/{memberOf}", spoofsApiService.GetFQDNSpoof).Action("spoofs.read")
 
-	// spoofs
-	api.HandleFunc(routes.GET_SPOOFS, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.GetSpoofs))
-
-	api.HandleFunc(routes.GET_SPOOFID, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.GetFQDNSpoof))
-
-	//api.HandleFunc(routes.GET_SPOOFS_HASH, middleware.Chain(
-	//	middleware.WithIncomingRequestLogging(slog.Default()),
-	//	auth.WithTokenValidation(slog.Default()),
-	//)(spoofsApiService.GetSpoofsHash))
-
-	// spoofs/override
-	// TODO: add auth!
-	api.HandleFunc(routes.GET_OVERRIDE, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.GetOverride))
-
-	api.HandleFunc(routes.POST_OVERRIDE, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.CreateOverride))
-
-	api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.DeleteOverride))
+	overrideRouter := spoofsRouter.Group("/override")
+	overrideRouter.GET("", spoofsApiService.GetOverride).Action("override.list")
+	overrideRouter.GET("/{memberOf}", spoofsApiService.GetOverride).Action("override.read")
+	overrideRouter.POST("{memberOf}", spoofsApiService.CreateOverride).Action("override.create")
+	overrideRouter.DELETE("/{memberOf}", spoofsApiService.DeleteOverride).Action("override.delete")
 
 	gslbServicesApiService := service.NewGSLBServiceHandler(statusRepo)
-	api.HandleFunc(routes.GET_SERVICE_STATUS, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(gslbServicesApiService.GetServiceStatus))
+	gslbServiceRouter := apiRouter.Group("/service").Use(securedChain)
+	statusRouter := gslbServiceRouter.Group("/status")
+	statusRouter.GET("", gslbServicesApiService.GetServiceStatus).Action("status.list")
+	statusRouter.GET("/{memberOf}", gslbServicesApiService.GetServiceStatus).Action("status.read")
 
-	// metrics
-	api.Handle(routes.METRICS, promhttp.Handler())
+	api, err := router.Build()
+	if err != nil {
+		bslog.Fatal("unable to build")
+	}
 
 	server := http.Server{
 		Addr:    config.API().Port(),
@@ -214,28 +201,3 @@ func main() {
 	// stop event handling
 	events.Stop(shutdown)
 }
-
-//func getRandomGSLBConfig() []model.GSLBConfig {
-//	configs := make([]model.GSLBConfig, 0, 500)
-//
-//	config := model.GSLBConfig{
-//		Fqdn:             "test.example.com",
-//		Ip:               "10.10.0.1",
-//		Port:             "80",
-//		Datacenter:       "DC1",
-//		Interval:         timesutil.FromDuration(time.Second * 5),
-//		Priority:         1,
-//		FailureThreshold: 3,
-//		CheckType:        checks.TCP_FULL,
-//	}
-//
-//	for idx := range cap(configs) {
-//
-//		config.ServiceID = fmt.Sprintf("%d", idx)
-//		config.MemberOf = fmt.Sprintf("%s.%s", config.ServiceID, config.Fqdn)
-//
-//		configs = append(configs, config)
-//	}
-//
-//	return configs
-//}
