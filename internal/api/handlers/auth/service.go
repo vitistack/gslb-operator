@@ -84,6 +84,8 @@ func (a *AuthService) Token(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, authc.ErrReplayed):
 		response.Err(w, response.ErrUnauthorized, "client assertion already used")
+	case errors.Is(err, authc.ErrTooLongClientAssertionTTL):
+		response.Err(w, response.ErrForbidden, "too long TTL on client-assertion")
 	case err != nil:
 		logger.Error("authentication failed", slog.String("reason", err.Error()))
 		response.Err(w, response.ErrInternalError, "authentication unavailable")

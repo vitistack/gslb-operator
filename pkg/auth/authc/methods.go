@@ -111,8 +111,13 @@ func (c *ClientAssertion) Authenticate(r *http.Request) (Principal, error) {
 	}
 
 	ttl := time.Until(claims.ExpiresAt.Time) + c.leeway
+
 	if err := c.replay.Once(r.Context(), claims.ID, ttl); err != nil {
 		return Principal{}, err
+	}
+
+	if ttl > time.Second*5 {
+		return Principal{}, ErrTooLongClientAssertionTTL
 	}
 
 	roles, kv, err := c.registry.Identity(r.Context(), claims.Subject)
