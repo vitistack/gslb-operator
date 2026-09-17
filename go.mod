@@ -14,6 +14,7 @@ require (
 	github.com/yuin/gopher-lua v1.1.2
 	golang.org/x/crypto v0.55.0
 	golang.org/x/sync v0.22.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

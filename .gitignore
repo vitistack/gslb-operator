@@ -30,6 +30,7 @@ go.work.sum
 *.env
 secrets
 config.yaml
+policy.yaml
 
 store.json
 # Editor/IDE

@@ -24,6 +24,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
 	"github.com/vitistack/gslb-operator/internal/repositories/status"
 	"github.com/vitistack/gslb-operator/pkg/auth/authc"
+	"github.com/vitistack/gslb-operator/pkg/auth/authz"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/lua"
@@ -108,20 +109,10 @@ func main() {
 	updater.Synchronize(ctx)
 
 	authStore := authc.NewValkeyStore(valkeyClient)
-	authRegistry := authc.NewRegistry(authStore)
-	authReplay := authc.NewReplay(authStore)
-	tokenIssuer := authc.NewTokenIssuer(
-		config.JWT().Secret(),
-		authc.WithAudience(config.JWT().Audience()),
-		authc.WithIssuer(config.JWT().Issuer()),
-		authc.WithTTL(config.JWT().TTL()),
-	)
-
-	authService := auth.NewAuthService(
-		tokenIssuer,
-		authc.NewBootstrapKey(authRegistry),
-		authc.NewClientAssertion(authRegistry, authReplay, config.JWT().Issuer()),
-	)
+	authService, err := auth.Init(authStore)
+	if err != nil {
+		bslog.Fatal("failed to init auth service", slog.String("reason", err.Error()))
+	}
 
 	// middleware chains
 	securedChain := middleware.Chain(
@@ -129,10 +120,11 @@ func main() {
 	)
 
 	router := router.New(
-		nil,
+		authService.Enforcer(),
 		slog.Default(),
 		middleware.WithIncomingRequestLogging(slog.Default()),
 	)
+
 	rootRouter := router.Group("/")
 	rootRouter.Handle( // static wiring of prometheus metrics handler
 		http.MethodGet,
@@ -147,20 +139,23 @@ func main() {
 
 	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
 	spoofsRouter := apiRouter.Group("/spoofs").Use(securedChain)
-	spoofsRouter.GET("", spoofsApiService.GetSpoofs).Action("spoofs.list")
-	spoofsRouter.GET("/{memberOf}", spoofsApiService.GetFQDNSpoof).Action("spoofs.read")
+	spoofsRouter.GET("", spoofsApiService.GetSpoofs).Action(authz.SpoofsList)
+	spoofsRouter.GET("/{memberOf}", spoofsApiService.GetFQDNSpoof).Action(authz.SpoofsRead)
 
 	overrideRouter := spoofsRouter.Group("/override")
-	overrideRouter.GET("", spoofsApiService.GetOverride).Action("override.list")
-	overrideRouter.GET("/{memberOf}", spoofsApiService.GetOverride).Action("override.read")
-	overrideRouter.POST("{memberOf}", spoofsApiService.CreateOverride).Action("override.create")
-	overrideRouter.DELETE("/{memberOf}", spoofsApiService.DeleteOverride).Action("override.delete")
+	overrideRouter.GET("", spoofsApiService.GetOverride).Action(authz.OverrideList)
+	overrideRouter.GET("/{memberOf}", spoofsApiService.GetOverride).Action(authz.OverrideRead)
+	overrideRouter.POST("{memberOf}", spoofsApiService.CreateOverride).Action(authz.OverrideCreate)
+	overrideRouter.DELETE("/{memberOf}", spoofsApiService.DeleteOverride).Action(authz.OverrideDelete)
 
-	gslbServicesApiService := service.NewGSLBServiceHandler(statusRepo)
-	gslbServiceRouter := apiRouter.Group("/service").Use(securedChain)
-	statusRouter := gslbServiceRouter.Group("/status")
-	statusRouter.GET("", gslbServicesApiService.GetServiceStatus).Action("status.list")
-	statusRouter.GET("/{memberOf}", gslbServicesApiService.GetServiceStatus).Action("status.read")
+	if config.GSLB().StatusEnabled() {
+		gslbServicesApiService := service.NewGSLBServiceHandler(statusRepo)
+		gslbServiceRouter := apiRouter.Group("/service").Use(securedChain)
+
+		statusRouter := gslbServiceRouter.Group("/status")
+		statusRouter.GET("", gslbServicesApiService.GetServiceStatus).Action(authz.StatusList)
+		statusRouter.GET("/{memberOf}", gslbServicesApiService.GetServiceStatus).Action(authz.StatusRead)
+	}
 
 	api, err := router.Build()
 	if err != nil {
