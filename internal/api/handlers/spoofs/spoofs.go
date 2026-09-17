@@ -43,7 +43,7 @@ func (ss *SpoofsService) GetSpoofs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ss *SpoofsService) GetFQDNSpoof(w http.ResponseWriter, r *http.Request) {
-	fqdn := r.PathValue("fqdn")
+	fqdn := r.PathValue("memberOf")
 	if fqdn == "" {
 		response.Err(w, response.ErrInvalidInput, "empty id is not valid")
 		return

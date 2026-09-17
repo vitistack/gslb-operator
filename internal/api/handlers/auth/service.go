@@ -82,6 +82,8 @@ func (a *AuthService) Token(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, authc.ErrClientExists):
 		response.Err(w, response.ErrConflict, "client already enrolled: use private-key-jwt")
 		return
+	case errors.Is(err, authc.ErrReplayed):
+		response.Err(w, response.ErrUnauthorized, "client assertion already used")
 	case err != nil:
 		logger.Error("authentication failed", slog.String("reason", err.Error()))
 		response.Err(w, response.ErrInternalError, "authentication unavailable")
