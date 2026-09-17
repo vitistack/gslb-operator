@@ -1,5 +1,7 @@
 package routes
 
+/*
+
 import (
 	"net/http"
 )
@@ -37,6 +39,7 @@ const (
 	GET_SERVICE_STATUS = http.MethodGet + " " + SERVICE_STATUS
 )
 
+*/
 const (
 	MemberOf = "memberOf"
 )

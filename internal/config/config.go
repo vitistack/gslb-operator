@@ -19,7 +19,7 @@ type Config struct {
 	Api           api      `mapstructure:"api"`
 	Dns           splitDns `mapstructure:"split_dns"`
 	Gslb          gslb     `mapstructure:"gslb"`
-	Jwt           jwt      `mapstructure:"jwt"`
+	Auth          auth     `mapstructure:"auth"`
 	Webhooks      webhooks `mapstructure:"webhooks"`
 	Mq            mq       `mapstructure:"mq"`
 	Valkey        valkey   `mapstructure:"valkey"`
@@ -32,6 +32,9 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("env", c.Server.Env),
 		slog.String("log_level", c.Server.LOG_LEVEL),
 		slog.String("api_port", c.Api.PORT),
+
+		slog.String("jwt_issuer", c.Auth.Jwt.ISSUER),
+		slog.String("jwt_audience", c.Auth.Jwt.AUDIENCE),
 
 		slog.Bool("dns_enabled", c.Dns.Enabled),
 		slog.Any("dns_views", c.Dns.Views),
@@ -79,8 +82,8 @@ func GSLB() *gslb {
 	return &cfg.Gslb
 }
 
-func JWT() *jwt {
-	return &cfg.Jwt
+func Auth() *auth {
+	return &cfg.Auth
 }
 
 func Webhooks() *webhooks {
@@ -251,10 +254,24 @@ func (g *gslb) Servers() string {
 	return g.SERVERS
 }
 
+type auth struct {
+	PolicyFile string `mapstructure:"policy_file"`
+	Jwt        jwt    `mapstructure:"jwt"`
+}
+
+func (a *auth) Policy() string {
+	return a.PolicyFile
+}
+
+func (a *auth) JWT() *jwt {
+	return &a.Jwt
+}
+
 type jwt struct {
-	SECRET      string        `mapstructure:"secret"`
-	ISSUER_NAME string        `mapstructure:"issuerName"`
-	Ttl         time.Duration `mapstrucrure:"ttl"`
+	SECRET   string        `mapstructure:"secret"`
+	ISSUER   string        `mapstructure:"issuer"`
+	AUDIENCE string        `mapstructure:"audience"`
+	Ttl      time.Duration `mapstrucrure:"ttl"`
 }
 
 func (jwt *jwt) Secret() []byte {
@@ -262,7 +279,11 @@ func (jwt *jwt) Secret() []byte {
 }
 
 func (jwt *jwt) Issuer() string {
-	return jwt.ISSUER_NAME
+	return jwt.ISSUER
+}
+
+func (jwt *jwt) Audience() string {
+	return jwt.AUDIENCE
 }
 
 func (jwt *jwt) TTL() time.Duration {

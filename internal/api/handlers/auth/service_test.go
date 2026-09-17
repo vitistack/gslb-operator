@@ -34,7 +34,9 @@ func newTestService(t *testing.T) *AuthService {
 		authc.WithTTL(time.Minute),
 	)
 
-	return NewAuthService(issuer,
+	return newAuthService(
+		issuer,
+		nil,
 		authc.NewBootstrapKey(registry),
 		authc.NewClientAssertion(registry, replay, testAudience),
 	)
@@ -150,33 +152,33 @@ func TestToken_ClientAssertion(t *testing.T) {
 }
 
 func TestToken_ClientAssertionReplay(t *testing.T) {
-    svc := newTestService(t)
-    pub, priv := genKey(t)
-    const clientID = "client_id"
+	svc := newTestService(t)
+	pub, priv := genKey(t)
+	const clientID = "client_id"
 
-    // enrol on first contact (bootstrap)
-    if rec := postToken(t, svc, map[string]string{
-        "client_id":  clientID,
-        "public_key": encodeKey(pub),
-    }); rec.Code != http.StatusOK {
-        t.Fatalf("bootstrap: expected 200, got %d: %s", rec.Code, rec.Body.String())
-    }
+	// enrol on first contact (bootstrap)
+	if rec := postToken(t, svc, map[string]string{
+		"client_id":  clientID,
+		"public_key": encodeKey(pub),
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("bootstrap: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
 
-    // same assertion (same jti) submitted twice
-    assertion := buildAssertion(t, clientID, priv)
+	// same assertion (same jti) submitted twice
+	assertion := buildAssertion(t, clientID, priv)
 
-    if rec := postToken(t, svc, map[string]string{
-        "client_assertion": assertion,
-    }); rec.Code != http.StatusOK {
-        t.Fatalf("first use: expected 200, got %d: %s", rec.Code, rec.Body.String())
-    }
+	if rec := postToken(t, svc, map[string]string{
+		"client_assertion": assertion,
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("first use: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
 
-    rec := postToken(t, svc, map[string]string{
-        "client_assertion": assertion,
-    })
-    if rec.Code != http.StatusUnauthorized {
-        t.Fatalf("replay: expected 401, got %d: %s", rec.Code, rec.Body.String())
-    }
+	rec := postToken(t, svc, map[string]string{
+		"client_assertion": assertion,
+	})
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("replay: expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestToken_DoubleRegistration(t *testing.T) {
