@@ -147,6 +147,12 @@ volumes:
       items:
         - key: config.yaml
           path: config.yaml
+  - name: policy
+    configMap:
+      name: gslb-operator-policy-roles
+      items:
+        - key: policy.yaml
+          path: policy.yaml
 
 # Additional volumeMounts on the output Deployment definition.
 # Additional volumeMounts on the output Deployment definition.
@@ -158,6 +164,8 @@ volumeMounts:
     mountPath: "/app/config.yaml"
     subPath: config.yaml
     readOnly: true
+  - name: policy
+    mountPath: "/app/policy.yaml"
 
 nodeSelector: {}
 
