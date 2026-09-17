@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -33,7 +34,7 @@ func New(enforcer *authz.Enforcer, logger *slog.Logger, global ...middleware.Mid
 // enforcement, and returns the handler. It fails fast so a misconfigured route
 // can never reach serving.
 func (rt *Router) Build() (http.Handler, error) {
-	seenAction := map[Action]string{}
+	seenAction := map[authz.Action]string{}
 	seenRoute := map[string]struct{}{}
 
 	var walk func(g *RouteGroup, prefix string, mws []middleware.MiddlewareFunc, public bool) error
@@ -67,7 +68,7 @@ func (rt *Router) Build() (http.Handler, error) {
 			chain = append(chain, gmws...)
 			chain = append(chain, r.mws...)
 			if !isPublic && rt.enforcer != nil {
-				chain = append(chain, rt.enforcer.Enforce(string(r.action), full, rt.logger))
+				chain = append(chain, rt.enforcer.Enforce(r.action, full, rt.logger))
 			}
 
 			rt.mux.HandleFunc(key, middleware.Chain(chain...)(r.handler))
@@ -84,13 +85,15 @@ func (rt *Router) Build() (http.Handler, error) {
 	if err := walk(rt.RouteGroup, "", nil, false); err != nil {
 		return nil, err
 	}
+
+	rt.DebugRoutes() // optionally print the registered routes
 	return rt.mux, nil
 }
 
 // Actions returns the registered action inventory (whole tree), so the policy
 // loader can reject any role referencing an action that doesn't exist.
-func (rt *Router) Actions() []Action {
-	var out []Action
+func (rt *Router) Actions() []authz.Action {
+	var out []authz.Action
 	var walk func(g *RouteGroup)
 	walk = func(g *RouteGroup) {
 		for _, r := range g.routes {
@@ -104,6 +107,43 @@ func (rt *Router) Actions() []Action {
 	}
 	walk(rt.RouteGroup)
 	return out
+}
+
+// DebugRoutes logs every registered route with its resolved pattern, effective
+// public flag, and action ("NoAction" when unset).
+func (rt *Router) DebugRoutes() {
+	logger := rt.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	if !logger.Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+
+	var walk func(g *RouteGroup, prefix string, public bool)
+	walk = func(g *RouteGroup, prefix string, public bool) {
+		gp := joinPattern(prefix, g.prefix)
+		gpublic := public || g.public
+
+		for _, r := range g.routes {
+			full := joinPattern(gp, r.pattern)
+			action := string(r.action)
+			if action == "" {
+				action = "NoAction"
+			}
+			logger.Debug("registered route",
+				slog.String("route", r.method+" "+full),
+				slog.Bool("public", gpublic || r.public),
+				slog.String("action", action),
+			)
+		}
+
+		for _, c := range g.children {
+			walk(c, gp, gpublic)
+		}
+	}
+	walk(rt.RouteGroup, "", false)
 }
 
 func joinPattern(prefix, seg string) string {
