@@ -8,13 +8,14 @@ import (
 )
 
 type accessClaims struct {
-	Method string    `json:"method"`
-	Class  AuthClass `json:"class"`
+	Method     string    `json:"method"`
+	Class      AuthClass `json:"class"`
+	Roles      []string  `json:"roles,omitempty"` // attributes, not decisions
+	KeyVersion int       `json:"kv,omitempty"`    // pinned at mint for rotation checks
 	jwt.RegisteredClaims
 }
 
 // TokenIssuer mints and verifies short-lived operator-signed access tokens.
-// Ed25519 keeps verification asymmetric (verifiers need only the public key).
 type TokenIssuer struct {
 	signingSecret []byte
 	issuer        string
@@ -57,18 +58,21 @@ func NewTokenIssuer(signingSecret []byte, opts ...TokenIssuerOption) *TokenIssue
 func (ti *TokenIssuer) Issue(p Principal) (string, int, error) {
 	now := time.Now()
 	claims := accessClaims{
-		Method:    p.Method,
-		Class:     p.Class,
-		Issuer:    ti.issuer,
-		Subject:   p.Subject,
-		Audience:  jwt.ClaimStrings{ti.audience},
-		IssuedAt:  jwt.NewNumericDate(now),
-		ExpiresAt: jwt.NewNumericDate(now.Add(ti.ttl)),
+		Method:     p.Method,
+		Class:      p.Class,
+		Roles:      p.Roles,
+		KeyVersion: p.KeyVersion,
+		Issuer:     ti.issuer,
+		Subject:    p.Subject,
+		Audience:   jwt.ClaimStrings{ti.audience},
+		IssuedAt:   jwt.NewNumericDate(now),
+		ExpiresAt:  jwt.NewNumericDate(now.Add(ti.ttl)),
 	}
 	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS512, claims).SignedString(ti.signingSecret)
 	if err != nil {
 		return "", 0, fmt.Errorf("sign access token: %w", err)
 	}
+
 	return signed, int(ti.ttl.Seconds()), nil
 }
 
@@ -77,7 +81,7 @@ func (ti *TokenIssuer) Verify(tokenString string) (Principal, error) {
 	claims := &accessClaims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims,
 		func(t *jwt.Token) (any, error) { return ti.signingSecret, nil },
-		jwt.WithValidMethods([]string{"EdDSA"}),
+		jwt.WithValidMethods([]string{"HS512"}),
 		jwt.WithIssuer(ti.issuer),
 		jwt.WithAudience(ti.audience),
 		jwt.WithExpirationRequired(),
@@ -85,5 +89,11 @@ func (ti *TokenIssuer) Verify(tokenString string) (Principal, error) {
 	if err != nil || !token.Valid {
 		return Principal{}, ErrUnauthorized
 	}
-	return Principal{Subject: claims.Subject, Method: claims.Method, Class: claims.Class}, nil
+	return Principal{
+		Subject:    claims.Subject,
+		Method:     claims.Method,
+		Class:      claims.Class,
+		Roles:      claims.Roles,
+		KeyVersion: claims.KeyVersion,
+	}, nil
 }

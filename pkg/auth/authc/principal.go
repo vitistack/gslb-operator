@@ -10,10 +10,14 @@ const (
 )
 
 // Principal is the verified identity behind a login.
+// Roles/KeyVersion are server-side attributes stamped at authentication time,
+// never self-claimed by the caller.
 type Principal struct {
-	Subject string    `json:"sub"`
-	Method  string    `json:"method"`
-	Class   AuthClass `json:"class"`
+	Subject    string    `json:"sub"`
+	Method     string    `json:"method"`
+	Class      AuthClass `json:"class"`
+	Roles      []string  `json:"roles,omitempty"`
+	KeyVersion int       `json:"kv,omitempty"`
 }
 
 type ctxKey struct{}

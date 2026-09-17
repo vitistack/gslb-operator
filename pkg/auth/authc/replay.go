@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-const replayPrefix = "authc:jti:"
-
 type Replay struct {
 	store KVStore
 }

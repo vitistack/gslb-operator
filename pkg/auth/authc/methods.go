@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
-	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -12,9 +12,9 @@ import (
 )
 
 type LoginPayload struct {
-	ClientID        string `json:"client_id"`
-	PublicKey       string `json:"public_key"`       // base64 Ed25519 (bootstrap enrolment)
-	ClientAssertion string `json:"client_assertion"` // signed JWT (private-key-jwt)
+	ClientID        string `json:"clientId"`
+	PublicKey       string `json:"pubKey"`          // base64 Ed25519 (bootstrap enrolment)
+	ClientAssertion string `json:"clientAssertion"` // signed JWT (private-key-jwt)
 }
 
 type payloadCtxKey struct{}
@@ -51,23 +51,22 @@ func (b *BootstrapKey) Authenticate(r *http.Request) (Principal, error) {
 	if !ok || payload.ClientID == "" || payload.PublicKey == "" {
 		return Principal{}, ErrUnauthorized
 	}
+
 	pub, err := base64.StdEncoding.DecodeString(payload.PublicKey)
 	if err != nil || len(pub) != ed25519.PublicKeySize {
 		return Principal{}, ErrUnauthorized
 	}
-
 	// FCFS: bind the key now; later private-key-jwt assertions verify against it.
-	switch err := b.registry.Register(r.Context(), payload.ClientID, ed25519.PublicKey(pub)); {
-	case err == nil:
-	case errors.Is(err, ErrClientExists):
-		if err := b.registry.Verify(r.Context(), payload.ClientID, ed25519.PublicKey(pub)); err != nil {
-			return Principal{}, err // client_id taken by a different key
-		}
-	default:
+	if err := b.registry.Register(r.Context(), payload.ClientID, ed25519.PublicKey(pub)); err != nil {
 		return Principal{}, err
 	}
 
-	return Principal{Subject: payload.ClientID, Method: b.Method(), Class: M2M}, nil
+	roles, kv, err := b.registry.Identity(r.Context(), payload.ClientID)
+	if err != nil {
+		return Principal{}, err
+	}
+
+	return Principal{Subject: payload.ClientID, Method: b.Method(), Class: M2M, Roles: roles, KeyVersion: kv}, nil
 }
 
 // --- M2M: private-key-jwt (proof of possession) -----------------------------
@@ -113,15 +112,20 @@ func (c *ClientAssertion) Authenticate(r *http.Request) (Principal, error) {
 		jwt.WithLeeway(c.leeway),
 	)
 	if err != nil || !token.Valid || claims.ID == "" {
-		return Principal{}, ErrUnauthorized
+		return Principal{}, fmt.Errorf("%w:%w", ErrUnauthorized, err)
 	}
 
 	ttl := time.Until(claims.ExpiresAt.Time) + c.leeway
 	if err := c.replay.Once(r.Context(), claims.ID, ttl); err != nil {
-		return Principal{}, ErrReplayed
+		return Principal{}, err
 	}
 
-	return Principal{Subject: claims.Subject, Method: c.Method(), Class: M2M}, nil
+	roles, kv, err := c.registry.Identity(r.Context(), claims.Subject)
+	if err != nil {
+		return Principal{}, err
+	}
+
+	return Principal{Subject: claims.Subject, Method: c.Method(), Class: M2M, Roles: roles, KeyVersion: kv}, nil
 }
 
 // --- C2M: oidc-session (human via external IdP) ------------------------------
