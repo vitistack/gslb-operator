@@ -13,8 +13,15 @@ import (
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
+	"github.com/vitistack/gslb-operator/pkg/auth/authc"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 )
+
+type OwnershipClaimer interface {
+	Materialize(ctx context.Context, claims map[string][]string) error
+}
+
+type ClientIDFunc func(recordName string) (clientId string, ok bool)
 
 // Handles/Orchestrates DNS related things
 type Handler struct {
@@ -22,20 +29,46 @@ type Handler struct {
 	svcManager    *manager.ServicesManager
 	updater       update.Updater
 	knownServices map[string]struct{} // service.ID: makes it easier to look up using map, but dont need a real value!
+	claimer       OwnershipClaimer
+	clientID      ClientIDFunc
 	stop          chan struct{}
 	cancel        func() // cancels context
 	wg            sync.WaitGroup
 }
 
-func NewHandler(fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater update.Updater) *Handler {
+func NewHandler(fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater update.Updater, registry *authc.Registry) *Handler {
+	ownershipClaimer := authc.NewAttributeMaterializer(
+		registry,
+		"zone",
+		"memberOf",
+		func(zone, memberOf string) bool { return memberOf == zone || strings.HasSuffix(memberOf, "."+zone) },
+	)
+
 	return &Handler{
 		fetcher:       fetcher,
 		svcManager:    mgr,
 		updater:       updater,
 		knownServices: make(map[string]struct{}),
+		claimer:       ownershipClaimer,
+		clientID:      clientIDFromRecord,
 		stop:          make(chan struct{}),
 		wg:            sync.WaitGroup{},
 	}
+}
+
+// clientIDFromRecord derives the enrollment key from a record's owner name,
+// whose leftmost label is the client_id-namespace.
+func clientIDFromRecord(recordName string) (string, bool) {
+	name := strings.TrimSuffix(recordName, ".")
+	if i := strings.IndexByte(name, '.'); i >= 0 {
+		name = name[:i]
+	}
+
+	if i := strings.LastIndexByte(name, '-'); i >= 0 {
+		name = name[:i]
+	}
+
+	return name, name != ""
 }
 
 func (h *Handler) Start(ctx context.Context, cancel func()) {
@@ -51,7 +84,7 @@ func (h *Handler) Start(ctx context.Context, cancel func()) {
 
 	zoneBatches, pollErrors := h.fetcher.StartAutoPoll(ctx)
 	h.wg.Go(func() {
-		h.handleZoneUpdates(zoneBatches, pollErrors)
+		h.handleZoneUpdates(ctx, zoneBatches, pollErrors)
 	})
 }
 
@@ -75,13 +108,15 @@ func (h *Handler) Stop(ctx context.Context) {
 func (h *Handler) Create(rec update.Record) error          { return h.updater.Create(rec) }
 func (h *Handler) Delete(id string, views ...string) error { return h.updater.Delete(id, views...) }
 
-func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan error) {
+func (h *Handler) handleZoneUpdates(ctx context.Context, zone <-chan []dns.RR, pollErrors <-chan error) {
 	for {
 		select {
 		case records, ok := <-zone:
 			if !ok { // chan is closed
 				return
 			}
+
+			h.claimOwnership(ctx, records)
 
 			if len(h.knownServices) == 0 {
 				h.bulkHandleRecords(records)
@@ -131,7 +166,6 @@ func (h *Handler) bulkHandleRecords(records []dns.RR) {
 		rawData := strings.Join(txt.Txt, "")
 		data := strings.ReplaceAll(rawData, "\\", "")
 		gslbConfig := model.GSLBConfig{
-			MemberOf:         txt.Hdr.Name,
 			FailureThreshold: service.DEFAULT_FAILURE_THRESHOLD,
 			Views:            []string{config.DNS().DefaultView()},
 		}
@@ -157,7 +191,6 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 	rawData := strings.Join(txt.Txt, "")
 	data := strings.ReplaceAll(rawData, "\\", "")
 	svcConfig := model.GSLBConfig{
-		MemberOf:         txt.Hdr.Name,
 		FailureThreshold: service.DEFAULT_FAILURE_THRESHOLD,
 		Views:            []string{config.DNS().DefaultView()},
 	}
@@ -176,4 +209,46 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 	}
 
 	return svc
+}
+
+// claimOwnership materializes each client's owned memberOf from its claimed
+// value in the config zone, gated by the client's authorized attributes.
+func (h *Handler) claimOwnership(ctx context.Context, records []dns.RR) {
+	if h.claimer == nil || h.clientID == nil {
+		return
+	}
+
+	claims := make(map[string][]string)
+	for _, record := range records {
+		txt, ok := record.(*dns.TXT)
+		if !ok {
+			continue
+		}
+
+		clientID, ok := h.clientID(txt.Hdr.Name)
+		if !ok {
+			continue
+		}
+
+		rawData := strings.Join(txt.Txt, "")
+		data := strings.ReplaceAll(rawData, "\\", "")
+		cfg := model.GSLBConfig{}
+		if err := json.NewDecoder(strings.NewReader(data)).Decode(&cfg); err != nil {
+			continue
+		}
+
+		if cfg.MemberOf == "" {
+			continue
+		}
+
+		claims[clientID] = append(claims[clientID], cfg.MemberOf)
+	}
+
+	if len(claims) == 0 {
+		return
+	}
+
+	if err := h.claimer.Materialize(ctx, claims); err != nil {
+		bslog.Error("failed to materialize ownership claims", slog.String("reason", err.Error()))
+	}
 }

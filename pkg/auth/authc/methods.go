@@ -9,22 +9,17 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	models "github.com/vitistack/gslb-operator/pkg/models/auth"
 )
-
-type LoginPayload struct {
-	ClientID        string `json:"clientId"`
-	PublicKey       string `json:"pubKey"`          // base64 Ed25519 (bootstrap enrolment)
-	ClientAssertion string `json:"clientAssertion"` // signed JWT (private-key-jwt)
-}
 
 type payloadCtxKey struct{}
 
-func WithLoginPayload(parent context.Context, payload LoginPayload) context.Context {
+func WithLoginPayload(parent context.Context, payload models.LoginPayload) context.Context {
 	return context.WithValue(parent, payloadCtxKey{}, payload)
 }
 
-func LoginPayloadFrom(ctx context.Context) (LoginPayload, bool) {
-	p, ok := ctx.Value(payloadCtxKey{}).(LoginPayload)
+func LoginPayloadFrom(ctx context.Context) (models.LoginPayload, bool) {
+	p, ok := ctx.Value(payloadCtxKey{}).(models.LoginPayload)
 	return p, ok
 }
 

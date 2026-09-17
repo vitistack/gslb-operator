@@ -22,7 +22,6 @@ func NewEnforcer(a Authorizer, r Revoker) *Enforcer {
 
 // Enforce builds the policy input from the verified Principal + request, runs
 // the instant kill-switch and key-rotation checks, then asks the policy engine.
-// resource is the route template so policies match the pattern, not the path.
 func (e *Enforcer) Enforce(action Action, pattern string, logger *slog.Logger) middleware.MiddlewareFunc {
 	attributeKeys := wildcardNames(pattern)
 	return func(next http.HandlerFunc) http.HandlerFunc {
@@ -46,6 +45,8 @@ func (e *Enforcer) Enforce(action Action, pattern string, logger *slog.Logger) m
 				response.Err(w, response.ErrForbidden, "access revoked")
 				return
 			}
+			
+			// TODO: blacklisted
 
 			// 2) key rotation: reject tokens minted under a superseded key
 			if principal.Class != authc.C2M {
@@ -70,7 +71,7 @@ func (e *Enforcer) Enforce(action Action, pattern string, logger *slog.Logger) m
 				Method:  principal.Method,
 				Class:   string(principal.Class),
 				Roles:   principal.Roles,
-				Action:  r.Method,
+				Action:  string(action),
 				//Resource: resource,
 				Attrs: pathAttrs(r, attributeKeys),
 			}

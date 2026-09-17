@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+
+	models "github.com/vitistack/gslb-operator/pkg/models/auth"
 )
 
 // Authenticator verifies the identity behind a login using one method.
@@ -26,6 +28,7 @@ func NewDispatcher(as ...Authenticator) *Dispatcher {
 		d.ordered = append(d.ordered, a)
 		d.byMethod[a.Method()] = a
 	}
+
 	return d
 }
 
@@ -45,11 +48,12 @@ func (d *Dispatcher) Resolve(r *http.Request) (Authenticator, error) {
 			return a, nil
 		}
 	}
+	
 	return nil, ErrNoMethodDetected
 }
 
 func (d *Dispatcher) Authenticate(r *http.Request) (Principal, error) {
-	var payload LoginPayload
+	var payload models.LoginPayload
 	if r.Body != nil {
 		// tolerate empty body: cookie-based (C2M) methods carry no JSON payload
 		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&payload)
