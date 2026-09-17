@@ -94,10 +94,12 @@ func main() {
 		bslog.Error("unable to create updater", slog.String("error", err.Error()))
 	}
 
+	authStore := authc.NewValkeyStore(valkeyClient)
 	dnsHandler := dns.NewHandler(
 		zoneFetcher,
 		mgr,
 		updater,
+		authc.NewRegistry(authStore),
 	)
 
 	background := context.Background()
@@ -108,7 +110,6 @@ func main() {
 	dnsHandler.Start(ctx, cancel)
 	updater.Synchronize(ctx)
 
-	authStore := authc.NewValkeyStore(valkeyClient)
 	authService, err := auth.Init(authStore)
 	if err != nil {
 		bslog.Fatal("failed to init auth service", slog.String("reason", err.Error()))
@@ -137,29 +138,23 @@ func main() {
 	authRouter := apiRouter.Group("/auth")
 	authRouter.POST("/token", authService.Token).Public()
 
-	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
-	spoofsRouter := apiRouter.Group("/spoofs").Use(securedChain)
-	spoofsRouter.GET("", spoofsApiService.GetSpoofs).Action(authz.SpoofsList)
-	spoofsRouter.GET("/{memberOf}", spoofsApiService.GetFQDNSpoof).Action(authz.SpoofsRead)
+	gslbServicesApiService := service.NewGSLBServiceHandler(statusRepo)
+	gslbServiceRouter := apiRouter.Group("/service/{memberOf}").Use(securedChain)
 
-	overrideRouter := spoofsRouter.Group("/override")
-	overrideRouter.GET("", spoofsApiService.GetOverride).Action(authz.OverrideList)
-	overrideRouter.GET("/{memberOf}", spoofsApiService.GetOverride).Action(authz.OverrideRead)
-	overrideRouter.POST("{memberOf}", spoofsApiService.CreateOverride).Action(authz.OverrideCreate)
-	overrideRouter.DELETE("/{memberOf}", spoofsApiService.DeleteOverride).Action(authz.OverrideDelete)
+	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
+	gslbServiceRouter.GET("/spoofs", spoofsApiService.GetFQDNSpoof).Use(securedChain).Action(authz.SpoofsRead)
+
+	gslbServiceRouter.GET("/override", spoofsApiService.GetOverride).Action(authz.OverrideRead)
+	gslbServiceRouter.POST("override", spoofsApiService.CreateOverride).Action(authz.OverrideCreate)
+	gslbServiceRouter.DELETE("/override", spoofsApiService.DeleteOverride).Action(authz.OverrideDelete)
 
 	if config.GSLB().StatusEnabled() {
-		gslbServicesApiService := service.NewGSLBServiceHandler(statusRepo)
-		gslbServiceRouter := apiRouter.Group("/service").Use(securedChain)
-
-		statusRouter := gslbServiceRouter.Group("/status")
-		statusRouter.GET("", gslbServicesApiService.GetServiceStatus).Action(authz.StatusList)
-		statusRouter.GET("/{memberOf}", gslbServicesApiService.GetServiceStatus).Action(authz.StatusRead)
+		gslbServiceRouter.GET("/status", gslbServicesApiService.GetServiceStatus).Action(authz.StatusRead)
 	}
 
 	api, err := router.Build()
 	if err != nil {
-		bslog.Fatal("unable to build")
+		bslog.Fatal("unable to build api schema", slog.String("reason", err.Error()))
 	}
 
 	server := http.Server{
