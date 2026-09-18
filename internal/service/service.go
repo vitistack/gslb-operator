@@ -105,10 +105,20 @@ func NewServiceFromGSLBConfig(cfg model.GSLBConfig, opts ...ServiceOption) (*Ser
 		svc.checker = &checks.DryRun{}
 
 	case cfg.CheckType == checks.HTTPS:
-		svc.checker = checks.NewHTTPChecker("https://"+svc.fqdn+svc.healthPath, checks.DEFAULT_TIMEOUT, cfg.Script)
+		svc.checker = checks.NewHTTPChecker(
+			"https://"+svc.memberOf+svc.healthPath,
+			svc.address.PrimaryTCPAddr(svc.port),
+			checks.DEFAULT_TIMEOUT,
+			cfg.Script,
+		)
 
 	case cfg.CheckType == checks.HTTP:
-		svc.checker = checks.NewHTTPChecker("http://"+svc.fqdn+svc.healthPath, checks.DEFAULT_TIMEOUT, cfg.Script)
+		svc.checker = checks.NewHTTPChecker(
+			"http://"+svc.memberOf+svc.healthPath,
+			svc.address.PrimaryTCPAddr(svc.port),
+			checks.DEFAULT_TIMEOUT,
+			cfg.Script,
+		)
 
 	case cfg.CheckType == checks.TCP_FULL:
 		svc.checker = checks.NewTCPFullChecker(svc.address.PrimaryTCPAddr(svc.port), checks.DEFAULT_TIMEOUT)
