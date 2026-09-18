@@ -1,8 +1,10 @@
 package checks
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -16,9 +18,17 @@ type HTTPChecker struct {
 	validator *LuaValidator
 }
 
-func NewHTTPChecker(url string, timeout time.Duration, validationScripts ...*model.LuaScript) Checker {
+func NewHTTPChecker(url, dialAddr string, timeout time.Duration, validationScripts ...*model.LuaScript) Checker {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+
+	if dialAddr != "" {
+		dialer := &net.Dialer{Timeout: timeout}
+
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, dialAddr)
+		}
+	}
 
 	var validator *LuaValidator
 	for _, script := range validationScripts {
