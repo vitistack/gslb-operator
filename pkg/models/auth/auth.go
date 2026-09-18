@@ -11,3 +11,12 @@ type LoginPayload struct {
 	PublicKey       string `json:"pubKey"`          // base64 Ed25519 (bootstrap enrolment)
 	ClientAssertion string `json:"clientAssertion"` // signed JWT (private-key-jwt)
 }
+
+type AssignRoles struct {
+	Roles []string `json:"roles"`
+}
+
+type AssignAttributes struct {
+	Key    string   `json:"key"`
+	Values []string `json:"values"`
+}

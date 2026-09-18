@@ -74,12 +74,15 @@ func (a *AuthService) Token(w http.ResponseWriter, r *http.Request) {
 	principal, err := a.dispatcher.Authenticate(r)
 	switch {
 	case errors.Is(err, authc.ErrNoMethodDetected), errors.Is(err, authc.ErrUnknownMethod):
+		bslog.Info("token exchange failed", slog.String("reason", "no usable authentication method"))
 		response.Err(w, response.ErrInvalidInput, "no usable authentication method")
 		return
 	case errors.Is(err, authc.ErrKeyMismatch):
+		bslog.Info("token exchange failed", slog.String("reason", "client_id registered to different key"))
 		response.Err(w, response.ErrConflict, "client_id already registered to a different key")
 		return
 	case errors.Is(err, authc.ErrClientExists):
+		bslog.Info("token exchange failed", slog.String("reason", "client enrolled"))
 		response.Err(w, response.ErrConflict, "client already enrolled: use private-key-jwt")
 		return
 	case errors.Is(err, authc.ErrReplayed):
