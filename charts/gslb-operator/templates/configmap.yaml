@@ -20,10 +20,14 @@ data:
 
     gslb:
       status:
-        enable: false
+        enabled: false
       site: {{ .Values.datacenter }}
       poll_interval: 1m
-      dnsdist_servers_file: ./secrets/GSLB_DNSDIST_SERVERS
+      {{- with .Values.dnsdist }}
+      dnsdist:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
 
     valkey:
       enabled: true

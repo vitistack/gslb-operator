@@ -193,8 +193,8 @@ vault:
       property: gslb-zone
     - secretKey: GSLB_NAMESERVER
       property: gslb-nameserver
-    - secretKey: GSLB_DNSDIST_SERVERS
-      property: dnsdist-servers
+    - secretKey: GSLB_DNSDIST_KEY
+      property: gslb-dnsdist-key
     - secretKey: VK_USER
       property: valkey-user
     - secretKey: VK_PASS
@@ -210,3 +210,6 @@ split_dns:
 
 webhooks:
   enable: false
+
+dnsdist:
+  servers: []
