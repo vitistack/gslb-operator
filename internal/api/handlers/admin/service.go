@@ -35,7 +35,7 @@ func (a *AdminService) GrantAttribute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	grantRequest := auth.AssignAttributes{}
-	if err := json.NewDecoder(w).Decode(&grantRequest); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&grantRequest); err != nil {
 		logger.Info("failed to decode request body", slog.String("reason", err.Error()))
 		response.Err(w, response.ErrInvalidInput, "invalid request body")
 		return
