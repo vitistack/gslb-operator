@@ -12,6 +12,7 @@ import (
 var secretsKeyMap = map[string]string{
 	"GSLB_NAMESERVER": "gslb.nameserver",
 	"GSLB_ZONE":       "gslb.zone",
+	"GSLB_DNSDIST_KEY": "gslb.dnsdist.key",
 	"JWT_SECRET":      "jwt.secret",
 	"JWT_USER":        "jwt.user",
 }
