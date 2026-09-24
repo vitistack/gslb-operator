@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/utils/timesutil"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 )
@@ -215,11 +216,11 @@ type gslb struct {
 	Status struct {
 		Enabled bool `mapstructure:"enabled"`
 	} `mapstructure:"status"`
-	SITE         string `mapstructure:"site"`
-	ZONE         string `mapstructure:"zone"`
-	NS           string `mapstructure:"nameserver"`
-	PollInterval string `mapstructure:"poll_interval"`
-	SERVERS      string `mapstructure:"dnsdist_servers_file"`
+	SITE         string  `mapstructure:"site"`
+	ZONE         string  `mapstructure:"zone"`
+	NS           string  `mapstructure:"nameserver"`
+	PollInterval string  `mapstructure:"poll_interval"`
+	DIST         dnsdist `mapstructure:"dnsdist"`
 }
 
 func (g *gslb) Site() string {
@@ -247,8 +248,21 @@ func (g *gslb) Poll() (timesutil.Duration, error) {
 	return duration, nil
 }
 
-func (g *gslb) Servers() string {
-	return g.SERVERS
+func (g *gslb) DNSDIST() *dnsdist {
+	return &g.DIST
+}
+
+type dnsdist struct {
+	Secret  string                `mapstructure:"key"`
+	SERVERS []model.DNSDISTServer `mapstructure:"servers"`
+}
+
+func (d *dnsdist) Key() string {
+	return d.Secret
+}
+
+func (d *dnsdist) Servers() []model.DNSDISTServer {
+	return d.SERVERS
 }
 
 type jwt struct {
