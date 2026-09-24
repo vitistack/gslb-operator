@@ -1,11 +1,9 @@
 package model
 
-import "net"
-
 type DNSDISTServer struct {
-	Name string `json:"name"`
-	Host net.IP `json:"host"`
-	Port uint16 `json:"port"`
-	Key  string `json:"key"`
-	View string `json:"view"`
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
+	Host string `json:"host" yaml:"host" mapstructure:"host"`
+	Port uint16 `json:"port" yaml:"port" mapstructure:"port"`
+	Key  string `json:"key" yaml:"key" mapstructure:"key"`
+	View string `json:"view" yaml:"view" mapstructure:"view"`
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"uuid"
 
-	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/utils/ip"
 	"github.com/vitistack/gslb-operator/pkg/models/service"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
@@ -32,7 +31,7 @@ func (g GSLBServiceGroup) Spoof(views ...string) *spoofs.Spoof {
 
 	var view string
 	if len(views) == 0 {
-		view = config.DNS().DefaultView()
+		view = g.Views[0]
 	} else {
 		view = views[0]
 	}

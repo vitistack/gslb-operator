@@ -2,11 +2,9 @@ package dnsdist
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"time"
 	"uuid"
@@ -41,24 +39,13 @@ func NewDNSDISTUpdater(store persistence.Store[model.GSLBServiceGroup]) (*DNSDIS
 		spoofRepo: *repo.NewSpoofRepo(store),
 	}
 
-	file, err := os.ReadFile(config.GSLB().Servers())
-	if err != nil {
-		return nil, fmt.Errorf("could could not load dnsdist servers configuration: %w", err)
-	}
-
-	servers := []model.DNSDISTServer{}
-	err = json.Unmarshal(file, &servers)
-	if err != nil {
-		return nil, fmt.Errorf("malformed dnsdist servers configuration: %w", err)
-	}
-
-	for _, srv := range servers {
+	for _, srv := range config.GSLB().DNSDIST().Servers() {
 		// initialize server connection to down
 		serverUpMetric.WithLabelValues(srv.Name).Set(0)
 
 		transport, err := tcp.NewTCPTransport(
-			srv.Key,
-			tcp.WithHost(srv.Host.String()),
+			config.GSLB().DNSDIST().Key(),
+			tcp.WithHost(srv.Host),
 			tcp.WithPort(srv.Port),
 			tcp.WithTimeout(time.Second*5),
 			tcp.WithNumRetriesOnCommandFailure(3),
