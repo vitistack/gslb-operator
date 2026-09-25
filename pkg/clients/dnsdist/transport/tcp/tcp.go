@@ -63,6 +63,8 @@ func NewTCPTransport(key string, opts ...tcpTransportOption) (*tcpTransport, err
 		err := errFn()
 		for attempts := 0; err != nil && attempts < tcpTransport.retries; attempts++ {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				tcpTransport.conn.Close()
+				tcpTransport.conn = nil
 				return fmt.Errorf("server side error: %w", err)
 			}
 			if recErr := tcpTransport.reconnect(); recErr != nil {
