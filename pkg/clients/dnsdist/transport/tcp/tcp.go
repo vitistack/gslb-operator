@@ -22,6 +22,7 @@ type tcpTransport struct {
 	hostPort string
 	timeout  time.Duration
 	retries  int
+	retryer  transport.Retryer
 	cNonce   [transport.NONCE_LEN]byte //ClientNonce
 	sNonce   [transport.NONCE_LEN]byte //ServerNonce
 	wNonce   [transport.NONCE_LEN]byte //WriteNonce
@@ -57,6 +58,20 @@ func NewTCPTransport(key string, opts ...tcpTransportOption) (*tcpTransport, err
 			return nil, fmt.Errorf("invalid options: %w", err)
 		}
 	}
+
+	tcpTransport.retryer = transport.RetryFunc(func(errFn func() error) error {
+		err := errFn()
+		for attempts := 0; err != nil && attempts < tcpTransport.retries; attempts++ {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				return fmt.Errorf("server side error: %w", err)
+			}
+			if recErr := tcpTransport.reconnect(); recErr != nil {
+				return fmt.Errorf("unable to reconnect after failed command: %w", recErr)
+			}
+			err = errFn()
+		}
+		return err
+	})
 
 	return tcpTransport, nil
 }
@@ -157,17 +172,12 @@ func (t *tcpTransport) command(cmd string) (string, error) {
 		return "", err
 	}
 
-	response, err := t.sendCommand(cmd)
-
-	attempts := 0
-	for err != nil && attempts < t.retries {
-		attempts++
-		if recErr := t.reconnect(); recErr != nil {
-			err = errors.Join(err, recErr)
-			continue
-		}
+	response := ""
+	var err error
+	err = t.retryer.Retry(func() error {
 		response, err = t.sendCommand(cmd)
-	}
+		return err
+	})
 
 	if err != nil {
 		return "", err
