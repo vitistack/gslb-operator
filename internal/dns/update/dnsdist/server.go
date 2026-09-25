@@ -63,7 +63,7 @@ func (s *server) Create(records ...update.Record) error {
 			rules.QNameRule(rec.Name),
 			rules.SpoofAction(
 				rec.Address.Strings(),
-				rules.SpoofActionOptions{TTL: new(30)},
+				rules.SpoofActionOptions{TTL: new(30), AA: new(true)},
 			),
 			rules.GlobalRuleOptions{
 				Name: &rec.Name,
@@ -176,7 +176,7 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 	for spoof := range gslbSpoofs.Filter(func(spoof spoofs.Spoof) bool { return spoof.View == s.selector.View() }) { // add all spoofs that does not exist but should
 		err = s.client.Rules().Add(
 			rules.QNameRule(spoof.FQDN),
-			rules.SpoofAction(spoof.Address.Strings(), rules.SpoofActionOptions{TTL: new(30)}),
+			rules.SpoofAction(spoof.Address.Strings(), rules.SpoofActionOptions{TTL: new(30), AA: new(true)}),
 			rules.GlobalRuleOptions{
 				Name: &spoof.Name,
 				UUID: &spoof.UUID,
