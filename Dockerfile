@@ -18,19 +18,19 @@ RUN go mod download
 COPY . .
 # Auto-enable the race detector for staging/rc tags (e.g. v1.2.3-staging, v1.2.3-rc1).
 RUN set -eux; \
-    race="${RACE}"; \
-    if [ -z "$race" ] || [ "$race" = "auto" ]; then
-        case "$VERSION" in \
+    race="${RACE:-auto}"; \
+    if [ -z "$race" ] || [ "$race" = "auto" ]; then \
+        case "${VERSION:-}" in \
             *staging*|*-rc*) race=1 ;; \
             *) race=0 ;; \
         esac; \
     fi; \
     if [ "$race" = "1" ] || [ "$race" = "true" ]; then \
-        echo "Building WITH race detector (VERSION=${VERSION})"; \
-        CGO_ENABLED=1 go build -race -ldflags "-X main.version=${VERSION} -X main.buildDate=${DATE}" -o gslb-operator ./cmd/main.go; \
+        echo "Building WITH race detector (VERSION=${VERSION:-})"; \
+        CGO_ENABLED=1 go build -race -ldflags "-X main.version=${VERSION:-} -X main.buildDate=${DATE:-}" -o gslb-operator ./cmd/main.go; \
     else \
-        echo "Building WITHOUT race detector (VERSION=${VERSION})"; \
-        CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION} -X main.buildDate=${DATE}" -o gslb-operator ./cmd/main.go; \
+        echo "Building WITHOUT race detector (VERSION=${VERSION:-})"; \
+        CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION:-} -X main.buildDate=${DATE:-}" -o gslb-operator ./cmd/main.go; \
     fi
 
 FROM alpine:3.23
