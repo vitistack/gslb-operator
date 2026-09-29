@@ -164,11 +164,11 @@ func (sm *ServicesManager) ColdStart(configs []model.GSLBConfig) {
 		}
 
 		sm.serviceGroups.Create(cfg.MemberOf, func(sg group.ServiceGroup) {
+			sg.SetOnPromotion(func(sg group.ServiceGroup, view string) {
+				touched[cfg.MemberOf+"|"+view] = touchedView{sg, view}
+			})
 			for view, activeID := range svcGroup.Active {
 				sg.Seed(view, activeID)
-				sg.SetOnPromotion(func(sg group.ServiceGroup, view string) {
-					touched[cfg.MemberOf+"|"+view] = touchedView{sg, view}
-				})
 			}
 		})
 
