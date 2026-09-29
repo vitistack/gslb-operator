@@ -19,7 +19,7 @@ COPY . .
 # Auto-enable the race detector for staging/rc tags (e.g. v1.2.3-staging, v1.2.3-rc1).
 RUN set -eux; \
     race="${RACE}"; \
-    if [ "$race" = "auto" ]; then \
+    if [ -z "$race" ] || [ "$race" = "auto" ]; then
         case "$VERSION" in \
             *staging*|*-rc*) race=1 ;; \
             *) race=0 ;; \
