@@ -5,7 +5,7 @@ LABEL MAINTAINER="espen.wobbes@nhn.no"
 ARG VERSION
 ARG DATE
 # Optional override: RACE=1 forces on, RACE=0 forces off. Empty = auto-detect from VERSION.
-ARG RACE=0
+ARG RACE=auto
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ COPY . .
 # Auto-enable the race detector for staging/rc tags (e.g. v1.2.3-staging, v1.2.3-rc1).
 RUN set -eux; \
     race="${RACE}"; \
-    if [ -z "$race" ]; then \
+    if [ "$race" = "auto" ]; then \
         case "$VERSION" in \
             *staging*|*-rc*) race=1 ;; \
             *) race=0 ;; \
@@ -32,7 +32,6 @@ RUN set -eux; \
         echo "Building WITHOUT race detector (VERSION=${VERSION})"; \
         CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION} -X main.buildDate=${DATE}" -o gslb-operator ./cmd/main.go; \
     fi
-
 
 FROM alpine:3.23
 
