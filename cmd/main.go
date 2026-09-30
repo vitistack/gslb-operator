@@ -42,6 +42,7 @@ func main() {
 	bslog.Info("Running GSLB - Operator",
 		slog.String("version", version),
 		slog.String("build-date", buildDate),
+		slog.Bool("race", raceEnabled),
 	)
 
 	// initialize lua execution environment
