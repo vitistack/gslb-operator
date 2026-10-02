@@ -142,6 +142,10 @@ func CalculateInterval(priority int, baseInterval timesutil.Duration) timesutil.
 		priority = 1
 	}
 
+	if baseInterval < timesutil.Duration(checks.MIN_CHECK_INTERVAL) {
+		baseInterval = timesutil.Duration(checks.MIN_CHECK_INTERVAL)
+	}
+
 	// Calculate: baseInterval * (scaleFactor ^ (priority - 1))
 	multiplier := 1.0
 	for i := 1; i < priority; i++ {
