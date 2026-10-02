@@ -129,7 +129,7 @@ func (s *server) Hash() (string, error) {
 		return "", fmt.Errorf("failed to list rules: %w", err)
 	}
 
-	spoofUUIDs := make([]string, 0)
+	spoofEntries := make([]string, 0)
 	IterateRuleSet(rawRuleSet).
 		Filter(
 			func(rl rules.RuleLine) bool {
@@ -137,12 +137,13 @@ func (s *server) Hash() (string, error) {
 			},
 		).
 		Each(func(rl rules.RuleLine) {
-			spoofUUIDs = append(spoofUUIDs, rl.UUID)
+			address := strings.TrimPrefix(rl.Action, "spoof in ")
+			spoofEntries = append(spoofEntries, rl.UUID+":"+address)
 		})
 
-	slices.Sort(spoofUUIDs)
+	slices.Sort(spoofEntries)
 
-	joinedUUIDs := strings.Join(spoofUUIDs, ",")
+	joinedUUIDs := strings.Join(spoofEntries, ",")
 	rawHash := sha256.Sum256([]byte(joinedUUIDs))
 	return hex.EncodeToString(rawHash[:]), nil
 }
