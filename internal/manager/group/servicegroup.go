@@ -37,7 +37,6 @@ func (m *ServiceGroupMode) String() string {
 	}
 }
 
-
 var (
 	ErrOverrideAlreadyActive = errors.New("group already has an active override for view")
 )
@@ -385,8 +384,8 @@ func (sg *ServiceGroupV2) triggerPromotion(view string, svc *service.Service) bo
 		return true
 	}
 
-	if svc.GetPriority() < active.GetPriority() {
-		return true
+	if svc.GetPriority() != active.GetPriority() {
+		return svc.GetPriority() < active.GetPriority()
 	}
 
 	return svc.GetAverageRoundtrip() < active.GetAverageRoundtrip()
