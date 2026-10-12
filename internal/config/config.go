@@ -61,7 +61,7 @@ func Server() *server {
 
 func DevMode() bool {
 	switch cfg.Server.Env {
-	case "dev", "DEV", "development", "DEVELOPMENT":
+	case "dev", "DEV", "development", "DEVELOPMENT", "local", "LOCAL":
 		return true
 	default:
 		return false

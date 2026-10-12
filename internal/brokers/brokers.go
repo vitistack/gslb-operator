@@ -20,10 +20,8 @@ import (
 )
 
 func Init(ctx context.Context, client valkey.Client, statusRepo *status.StatusRepo, serviceGroupRepo *servicegroup.ServiceGroupRepo, dnsStatusFetcher dns.StatusFetcher) {
-	switch config.Server().Environment() {
-	case "local", "LOCAL", "dev", "DEV", "DEVELOPMENT", "development":
+	if config.DevMode() {
 		debug_broker.Init()
-	default:
 	}
 
 	if config.MQ().Enabled() {
