@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/valkey-io/valkey-go"
+	debug_broker "github.com/vitistack/gslb-operator/internal/brokers/debug"
 	status_broker "github.com/vitistack/gslb-operator/internal/brokers/status"
 	webhooks_broker "github.com/vitistack/gslb-operator/internal/brokers/webhooks"
 	"github.com/vitistack/gslb-operator/internal/config"
@@ -19,6 +20,12 @@ import (
 )
 
 func Init(ctx context.Context, client valkey.Client, statusRepo *status.StatusRepo, serviceGroupRepo *servicegroup.ServiceGroupRepo, dnsStatusFetcher dns.StatusFetcher) {
+	switch config.Server().Environment() {
+	case "local", "LOCAL", "dev", "DEV", "DEVELOPMENT", "development":
+		debug_broker.Init()
+	default:
+	}
+
 	if config.MQ().Enabled() {
 		bslog.Debug("mq enabled configuring connection")
 		connection.Configure(
