@@ -3,17 +3,13 @@ package auth
 import (
 	"errors"
 	"fmt"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"os"
 	"strings"
 
 	"github.com/vitistack/gslb-operator/internal/config"
-	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/pkg/auth/authc"
-	"github.com/vitistack/gslb-operator/pkg/auth/authz"
 	"github.com/vitistack/gslb-operator/pkg/auth/authz"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/auth"
@@ -25,46 +21,8 @@ type AuthService struct {
 	dispatcher *authc.Dispatcher
 	issuer     *authc.TokenIssuer
 	enforcer   *authz.Enforcer
-	enforcer   *authz.Enforcer
 }
 
-func Init(store authc.KVStore) (*AuthService, error) {
-	registry := authc.NewRegistry(store)
-	authReplay := authc.NewReplay(store)
-
-	rawPolicy, err := os.ReadFile(config.Auth().Policy())
-	if err != nil {
-		return nil, fmt.Errorf("failed to read policy file: %w", err)
-	}
-
-	policy, err := authz.ParsePolicy(rawPolicy)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse policy: %w", err)
-	}
-
-	scopeGuard := authz.NewScopeGuard(
-		authz.NewAttributeScopeGuard(registry, "memberOf"),
-	)
-
-	authorizer := authz.NewRBACAuthorizer(policy, scopeGuard)
-	enforcer := authz.NewEnforcer(authorizer, registry)
-
-	tokenIssuer := authc.NewTokenIssuer(
-		config.Auth().JWT().Secret(),
-		authc.WithAudience(config.Auth().JWT().Audience()),
-		authc.WithIssuer(config.Auth().JWT().Issuer()),
-		authc.WithTTL(config.Auth().JWT().TTL()),
-	)
-
-	return newAuthService(
-		tokenIssuer,
-		enforcer,
-		authc.NewBootstrapKey(registry),
-		authc.NewClientAssertion(registry, authReplay, config.Auth().JWT().Issuer()),
-	), nil
-}
-
-func newAuthService(issuer *authc.TokenIssuer, enforcer *authz.Enforcer, authenticators ...authc.Authenticator) *AuthService {
 func Init(store authc.KVStore) (*AuthService, error) {
 	registry := authc.NewRegistry(store)
 	authReplay := authc.NewReplay(store)
@@ -105,7 +63,6 @@ func newAuthService(issuer *authc.TokenIssuer, enforcer *authz.Enforcer, authent
 	return &AuthService{
 		dispatcher: authc.NewDispatcher(authenticators...),
 		issuer:     issuer,
-		enforcer:   enforcer,
 		enforcer:   enforcer,
 	}
 }
@@ -186,10 +143,6 @@ func bearerToken(r *http.Request) string {
 		return ""
 	}
 	return strings.TrimSpace(parts[1])
-}
-
-func (a *AuthService) Enforcer() *authz.Enforcer {
-	return a.enforcer
 }
 
 func (a *AuthService) Enforcer() *authz.Enforcer {
