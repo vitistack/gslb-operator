@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -156,6 +157,11 @@ func main() {
 	api, err := router.Build()
 	if err != nil {
 		bslog.Fatal("unable to build api schema", slog.String("reason", err.Error()))
+	}
+
+	if config.DevMode() {
+		api.HandleFunc("/debug/pprof/", pprof.Index)
+		api.HandleFunc("/debug/pprof/heap/", pprof.Handler("heap").ServeHTTP)
 	}
 
 	server := http.Server{
