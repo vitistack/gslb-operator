@@ -205,3 +205,11 @@ webhooks:
 
 dnsdist:
   servers: []
+
+metrics:
+  port: 3000
+  path: /metrics
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}
