@@ -163,6 +163,11 @@ func main() {
 		rootRouter.GET("/debug/pprof/heap/", pprof.Handler("heap").ServeHTTP)
 	}
 
+	if config.DevMode() {
+		api.HandleFunc("/debug/pprof/", pprof.Index)
+		api.HandleFunc("/debug/pprof/heap/", pprof.Handler("heap").ServeHTTP)
+	}
+
 	server := http.Server{
 		Addr:    config.API().Port(),
 		Handler: api,
