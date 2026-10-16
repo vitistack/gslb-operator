@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -161,6 +162,11 @@ func main() {
 
 	// metrics
 	api.Handle(routes.METRICS, promhttp.Handler())
+
+	if config.DevMode() {
+		api.HandleFunc("/debug/pprof/", pprof.Index)
+		api.HandleFunc("/debug/pprof/heap/", pprof.Handler("heap").ServeHTTP)
+	}
 
 	server := http.Server{
 		Addr:    config.API().Port(),
