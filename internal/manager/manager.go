@@ -562,7 +562,7 @@ func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
     }
 
     if err := sm.DNSCreate(update.Record{
-        Name: active.GetMemberOf(), Address: active.GetAddress(), Views: active.GetViews(), UUID: string(group.ID()),
+        Name: active.GetMemberOf(), Address: active.GetAddress(), Views: []string{view}, UUID: string(group.ID()),
     }); err != nil {
         bslog.Error("failed to reconcile gslb service-group",
             slog.String("reason", fmt.Errorf("failed to create DNS record: %w", err).Error()), slog.Any("activeService", active))
