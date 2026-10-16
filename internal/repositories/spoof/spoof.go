@@ -88,7 +88,7 @@ func (r *SpoofRepo) Hash(views ...string) (string, error) {
 	spoofs.Filter(
 		func(s spoofModel.Spoof) bool { return slices.Contains(views, s.View) },
 	).Each(
-		func(s spoofModel.Spoof) { ids = append(ids, s.UUID) },
+		func(s spoofModel.Spoof) { ids = append(ids, s.UUID+":"+s.Address.String()) },
 	)
 
 	if err := finish(); err != nil {
