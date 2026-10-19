@@ -158,13 +158,12 @@ func (s *server) Hash() (string, error) {
 	return hex.EncodeToString(rawHash[:]), nil
 }
 
-func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func() error) error {
+func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func() error) (err error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	var err error
-	defer func(err error) {
-		if err != nil {
+	defer func() {
+		if err != nil { // reads named returned err value
 			events.Emit(&events.Event{
 				Type:      domainEvents.EventTypeDNSDISTServerOutOfSync,
 				Payload:   domainEvents.DNSDistServerOutOfSyncEvent{},
@@ -172,7 +171,7 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 				ID:        events.ID(domainEvents.EventTypeDNSDISTServerOutOfSync, s.name),
 			})
 		}
-	}(err)
+	}()
 
 	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
 	if err != nil {
