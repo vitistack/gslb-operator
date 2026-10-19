@@ -9,9 +9,9 @@ spec:
   type: {{ .Values.service.type }}
   ports:
     - port: {{ .Values.service.port }}
-      targetPort: http
+      targetPort: {{ trimPrefix ":" .Values.settings.port }}
       protocol: TCP
-      name: http
+      name: port
   selector:
     {{- include "gslb-operator.selectorLabels" . | nindent 4 }}
 {{- end }}
