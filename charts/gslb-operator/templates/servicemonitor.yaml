@@ -13,7 +13,7 @@ spec:
     matchLabels:
       {{- include "gslb-operator.selectorLabels" . | nindent 6 }}
   endpoints:
-    - port: {{ .Values.metrics.port }}
+    - port: port
       path: {{ .Values.metrics.path }}
       interval: {{ .Values.serviceMonitor.interval }}
 {{- end }}
