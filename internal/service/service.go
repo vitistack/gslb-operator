@@ -457,6 +457,7 @@ func (s *Service) GSLBConfig() model.GSLBConfig {
 		Fqdn:             s.fqdn,
 		Address:          s.address,
 		Port:             strings.Trim(s.port, ":"),
+		Path:             s.healthPath,
 		Datacenter:       s.datacenter,
 		Views:            s.views,
 		Interval:         s.defaultInterval,
