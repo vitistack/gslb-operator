@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"uuid"
 
@@ -31,9 +32,12 @@ type server struct {
 	name     string
 	client   dnsdist.Client
 	selector dnsviews.Selector
+	lock     sync.RWMutex
 }
 
 func (s *server) Create(records ...update.Record) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	for _, rec := range records {
 		if !s.selector.Select(rec.Views...) {
 			continue
@@ -90,6 +94,9 @@ func (s *server) Create(records ...update.Record) error {
 }
 
 func (s *server) Delete(id string, views ...string) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
 	if !s.selector.Select(views...) {
 		return nil
 	}
@@ -124,6 +131,9 @@ func (s *server) Delete(id string, views ...string) error {
 }
 
 func (s *server) Hash() (string, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
 	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
 	if err != nil {
 		return "", fmt.Errorf("failed to list rules: %w", err)
@@ -149,6 +159,9 @@ func (s *server) Hash() (string, error) {
 }
 
 func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func() error) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
 	var err error
 	defer func(err error) {
 		if err != nil {
@@ -196,6 +209,9 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 }
 
 func (s *server) BulkStatus() (map[uuid.UUID]service.DNSServerStatusForService, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
 	baseStatus := service.DNSServerStatusForService{
 		Programmed: true,
 		Host:       s.name,
@@ -250,6 +266,9 @@ func (s *server) BulkStatus() (map[uuid.UUID]service.DNSServerStatusForService, 
 }
 
 func (s *server) Status(uuid string) (service.DNSServerStatusForService, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
 	status := service.DNSServerStatusForService{
 		Programmed: true, // assume true
 		Host:       s.name,
@@ -319,39 +338,3 @@ func IterateRuleSet(ruleSet string) iter.Iterator[rules.RuleLine] {
 	// 1 skip because the first line is always the header line for rules
 	return baseIter.Skip(1).Map(MapStringToDNSDistRule)
 }
-
-//func ParseRuleSet(ruleSet string) ([]string, error) {
-//	reader := strings.NewReader(ruleSet)
-//	lines := bufio.NewScanner(reader)
-//
-//	pattern, err := regexp.Compile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|qname==[a-zA-Z0-9-_\.]+|spoof`)
-//	if err != nil {
-//		return nil, fmt.Errorf("unable to compile regex: %w", err)
-//	}
-//
-//	spoofRules := make([]string, 0)
-//	for lines.Scan() {
-//		line := lines.Text()
-//
-//		matches := pattern.FindAllString(line, -1)
-//
-//		if len(matches) < 3 {
-//			continue
-//		}
-//
-//		rule := rules.RuleLine{
-//			UUID:   matches[0],
-//			Rule:   matches[1],
-//			Action: matches[2],
-//		}
-//
-//		if rule.Action != "spoof" && !strings.Contains(rule.Rule, "qname") {
-//			continue
-//		}
-//
-//		spoofRules = append(spoofRules, rule.UUID)
-//	}
-//	slices.Sort(spoofRules)
-//
-//	return spoofRules, nil
-//}
