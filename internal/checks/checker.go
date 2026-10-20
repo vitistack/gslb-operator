@@ -9,6 +9,11 @@ type Checker interface {
 	Roundtrip() time.Duration
 }
 
+// Implemented by checkers that hold resources (e.g. pooled connections)
+type Closer interface {
+	Close()
+}
+
 type HealthCheckResult struct {
 	// populated if an error happened during the health-check
 	// e.g. failed healthcheck

@@ -93,3 +93,7 @@ func (c *HTTPChecker) Check() *HealthCheckResult {
 func (c *HTTPChecker) Roundtrip() time.Duration {
 	return c.AverageRoundtripTime()
 }
+
+func (c *HTTPChecker) Close() {
+	c.client.CloseIdleConnections()
+}

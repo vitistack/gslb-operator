@@ -391,14 +391,14 @@ func (sm *ServicesManager) RemoveService(id string) error {
 
 // updates an existing service with new configuration
 func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBConfig) {
-	new, err := service.NewServiceFromGSLBConfig(cfg, sm.BuildServiceOptions(cfg)...)
-	if err != nil {
-		bslog.Error("failed to update service with new config", slog.String("reason", err.Error()))
+	if !old.ConfigChanged(cfg) { // nothing to do
+		bslog.Debug("skipping update due to unchanged config", slog.Any("service", old))
 		return
 	}
 
-	if !old.ConfigChanged(cfg) { // nothing to do
-		bslog.Debug("skipping update due to unchanged config", slog.Any("service", old))
+	new, err := service.NewServiceFromGSLBConfig(cfg, sm.BuildServiceOptions(cfg)...)
+	if err != nil {
+		bslog.Error("failed to update service with new config", slog.String("reason", err.Error()))
 		return
 	}
 
