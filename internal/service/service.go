@@ -392,6 +392,11 @@ func (s *Service) ConfigChanged(other model.GSLBConfig) bool {
 func (s *Service) Assign(new *Service) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if closer, ok := s.checker.(checks.Closer); ok {
+		closer.Close()
+	}
+
 	s.fqdn = new.fqdn
 	s.port = new.port
 	s.views = new.views
