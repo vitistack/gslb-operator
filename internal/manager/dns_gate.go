@@ -51,6 +51,13 @@ func (g *dnsGate) Create(records ...update.Record) error {
     }
 
     if err := g.create(pending...); err != nil {
+        g.mu.Lock()
+        for _, rec := range pending {
+            for _, view := range rec.Views {
+                delete(g.applied, rec.UUID+"|"+view)
+            }
+        }
+        g.mu.Unlock()
         return err
     }
 
