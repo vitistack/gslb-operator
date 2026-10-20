@@ -84,9 +84,7 @@ func (g *dnsGate) changed(rec update.Record) bool {
 }
 
 func (g *dnsGate) Delete(id string, views ...string) error {
-    if err := g.delete(id, views...); err != nil {
-        return err
-    }
+    err := g.delete(id, views...)
 
     g.mu.Lock()
     defer g.mu.Unlock()
@@ -97,12 +95,12 @@ func (g *dnsGate) Delete(id string, views ...string) error {
                 delete(g.applied, key)
             }
         }
-        return nil
+        return err
     }
     for _, view := range views {
         delete(g.applied, prefix+view)
     }
-    return nil
+    return err
 }
 
 func recordsEqual(a, b update.Record) bool {
