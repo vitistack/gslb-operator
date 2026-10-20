@@ -169,8 +169,8 @@ func main() {
 	}
 
 	if config.DevMode() {
-		api.HandleFunc("/debug/pprof/", pprof.Index)
-		api.HandleFunc("/debug/pprof/heap/", pprof.Handler("heap").ServeHTTP)
+		rootRouter.GET("/debug/pprof/", pprof.Index)
+		rootRouter.GET("/debug/pprof/heap/", pprof.Handler("heap").ServeHTTP)
 	}
 
 	server := http.Server{
