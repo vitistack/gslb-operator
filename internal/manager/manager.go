@@ -391,14 +391,14 @@ func (sm *ServicesManager) RemoveService(id string) error {
 
 // updates an existing service with new configuration
 func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBConfig) {
-	new, err := service.NewServiceFromGSLBConfig(cfg, sm.BuildServiceOptions(cfg)...)
-	if err != nil {
-		bslog.Error("failed to update service with new config", slog.String("reason", err.Error()))
+	if !old.ConfigChanged(cfg) { // nothing to do
+		bslog.Debug("skipping update due to unchanged config", slog.Any("service", old))
 		return
 	}
 
-	if !old.ConfigChanged(cfg) { // nothing to do
-		bslog.Debug("skipping update due to unchanged config", slog.Any("service", old))
+	new, err := service.NewServiceFromGSLBConfig(cfg, sm.BuildServiceOptions(cfg)...)
+	if err != nil {
+		bslog.Error("failed to update service with new config", slog.String("reason", err.Error()))
 		return
 	}
 
@@ -536,7 +536,7 @@ func (sm *ServicesManager) handleServiceHealthChange(ctx context.Context) {
 // reconciles the current state of a group to reflect internal state of the manager
 // and external state
 func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
-	active := group.GetActive(view)
+    active := group.GetActive(view)
 
 	wasPreviouslyActive := false
 	if _, ok := group.SeededActive(view); ok {
@@ -544,20 +544,20 @@ func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
 		group.ClearSeed(view)
 	}
 
-	err := sm.svcGroupRepo.Mutate(group.Name(), func(g *model.GSLBServiceGroup) {
-		if g.Active == nil {
-			g.Active = make(map[string]string)
-		}
-		if active != nil {
-			g.Active[view] = active.GetID()
-		} else {
-			delete(g.Active, view)
-		}
-	})
-	if err != nil {
-		bslog.Error("failed to reconcile service-group", slog.String("reason", err.Error()), slog.Any("group", group))
-		return
-	}
+    err := sm.svcGroupRepo.Mutate(group.Name(), func(g *model.GSLBServiceGroup) {
+        if g.Active == nil {
+            g.Active = make(map[string]string)
+        }
+        if active != nil {
+            g.Active[view] = active.GetID()
+        } else {
+            delete(g.Active, view)
+        }
+    })
+    if err != nil {
+        bslog.Error("failed to reconcile service-group", slog.String("reason", err.Error()), slog.Any("group", group))
+        return
+    }
 
 	if active == nil {
 		if err := sm.dnsGate.Delete(group.ID()); err != nil {
