@@ -374,14 +374,14 @@ func (sm *ServicesManager) RemoveService(id string) error {
 
 // updates an existing service with new configuration
 func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBConfig) {
-	new, err := service.NewServiceFromGSLBConfig(cfg, sm.BuildServiceOptions(cfg)...)
-	if err != nil {
-		bslog.Error("failed to update service with new config", slog.String("reason", err.Error()))
+	if !old.ConfigChanged(cfg) { // nothing to do
+		bslog.Debug("skipping update due to unchanged config", slog.Any("service", old))
 		return
 	}
 
-	if !old.ConfigChanged(cfg) { // nothing to do
-		bslog.Debug("skipping update due to unchanged config", slog.Any("service", old))
+	new, err := service.NewServiceFromGSLBConfig(cfg, sm.BuildServiceOptions(cfg)...)
+	if err != nil {
+		bslog.Error("failed to update service with new config", slog.String("reason", err.Error()))
 		return
 	}
 
@@ -519,57 +519,57 @@ func (sm *ServicesManager) handleServiceHealthChange(ctx context.Context) {
 // reconciles the current state of a group to reflect internal state of the manager
 // and external state
 func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
-    active := group.GetActive(view)
+	active := group.GetActive(view)
 
-    wasPreviouslyActive := false
-    if _, ok := group.SeededActive(view); ok {
-        wasPreviouslyActive = true
-        group.ClearSeed(view)
-    }
+	wasPreviouslyActive := false
+	if _, ok := group.SeededActive(view); ok {
+		wasPreviouslyActive = true
+		group.ClearSeed(view)
+	}
 
-    err := sm.svcGroupRepo.Mutate(group.Name(), func(g *model.GSLBServiceGroup) {
-        if g.Active == nil {
-            g.Active = make(map[string]string)
-        }
-        if active != nil {
-            g.Active[view] = active.GetID()
-        } else {
-            delete(g.Active, view)
-        }
-    })
-    if err != nil {
-        bslog.Error("failed to reconcile service-group", slog.String("reason", err.Error()), slog.Any("group", group))
-        return
-    }
+	err := sm.svcGroupRepo.Mutate(group.Name(), func(g *model.GSLBServiceGroup) {
+		if g.Active == nil {
+			g.Active = make(map[string]string)
+		}
+		if active != nil {
+			g.Active[view] = active.GetID()
+		} else {
+			delete(g.Active, view)
+		}
+	})
+	if err != nil {
+		bslog.Error("failed to reconcile service-group", slog.String("reason", err.Error()), slog.Any("group", group))
+		return
+	}
 
-    if active == nil {
-        if err := sm.DNSDelete(group.ID()); err != nil {
-            bslog.Error("failed to reconcile gslb service-group",
-                slog.String("reason", fmt.Errorf("failed to delete DNS records: %w", err).Error()), slog.Any("group", group))
-            return
-        }
+	if active == nil {
+		if err := sm.DNSDelete(group.ID()); err != nil {
+			bslog.Error("failed to reconcile gslb service-group",
+				slog.String("reason", fmt.Errorf("failed to delete DNS records: %w", err).Error()), slog.Any("group", group))
+			return
+		}
 
-        bslog.Warn("gslb service group is down",
-            slog.String("service", group.Name()), slog.String("view", view),
-            slog.String("status", "down"), slog.String("reason", "all members are considered down"))
-        events.Emit(&events.Event{
-            Type:      domainEvents.EventTypeGSLBServiceDown,
-            Payload:   domainEvents.GSLBServiceDownEvent{MemberOf: group.Name()},
-            Timestamp: time.Now(),
-            ID:        events.ID(domainEvents.EventTypeGSLBServiceDown, group.Name()),
-        })
-        return
-    }
+		bslog.Warn("gslb service group is down",
+			slog.String("service", group.Name()), slog.String("view", view),
+			slog.String("status", "down"), slog.String("reason", "all members are considered down"))
+		events.Emit(&events.Event{
+			Type:      domainEvents.EventTypeGSLBServiceDown,
+			Payload:   domainEvents.GSLBServiceDownEvent{MemberOf: group.Name()},
+			Timestamp: time.Now(),
+			ID:        events.ID(domainEvents.EventTypeGSLBServiceDown, group.Name()),
+		})
+		return
+	}
 
-    if err := sm.DNSCreate(update.Record{
-        Name: active.GetMemberOf(), Address: active.GetAddress(), Views: []string{view}, UUID: string(group.ID()),
-    }); err != nil {
-        bslog.Error("failed to reconcile gslb service-group",
-            slog.String("reason", fmt.Errorf("failed to create DNS record: %w", err).Error()), slog.Any("activeService", active))
-        return
-    }
+	if err := sm.DNSCreate(update.Record{
+		Name: active.GetMemberOf(), Address: active.GetAddress(), Views: []string{view}, UUID: string(group.ID()),
+	}); err != nil {
+		bslog.Error("failed to reconcile gslb service-group",
+			slog.String("reason", fmt.Errorf("failed to create DNS record: %w", err).Error()), slog.Any("activeService", active))
+		return
+	}
 
-    sm.reconcileHealthCheckIntervals(group, view, wasPreviouslyActive)
+	sm.reconcileHealthCheckIntervals(group, view, wasPreviouslyActive)
 }
 
 func (sm *ServicesManager) reconcileHealthCheckIntervals(group group.ServiceGroup, view string, wasPreviouslyActive bool) {
