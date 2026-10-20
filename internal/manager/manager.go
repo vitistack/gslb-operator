@@ -377,6 +377,7 @@ func (sm *ServicesManager) RemoveService(id string) error {
 		serviceGroups.Dec()
 	}
 	bslog.Debug("removed service", slog.Any("service", svc))
+	healthcheck.DeleteMetrics(svc.GetMemberOf(), svc.GetID())
 	events.Emit(&events.Event{ // publish delete event for service
 		Type: domainEvents.EventTypeGSLBConfigDelete,
 		Payload: domainEvents.GSLBConfigDeleteEvent{
@@ -408,6 +409,10 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 	lastConfig := old.GSLBConfig()
 	views := old.GetViews()
 	old.Assign(new) // assigning changed config variables to the registered service
+
+	if lastConfig.MemberOf != cfg.MemberOf || lastConfig.Datacenter != cfg.Datacenter {
+		healthcheck.DeleteMetrics(lastConfig.MemberOf, lastConfig.ServiceID)
+	}
 
 	if oldMemberOf != newMemberOf {
 		sm.memberOfChanged(oldMemberOf, newMemberOf, old)
