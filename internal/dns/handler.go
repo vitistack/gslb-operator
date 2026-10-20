@@ -51,7 +51,7 @@ func (h *Handler) Start(ctx context.Context, cancel func()) {
 
 	zoneBatches, pollErrors := h.fetcher.StartAutoPoll(ctx)
 	h.wg.Go(func() {
-		h.handleZoneUpdates(zoneBatches, pollErrors)
+		h.handleZoneUpdates(ctx, zoneBatches, pollErrors)
 	})
 }
 
@@ -75,7 +75,21 @@ func (h *Handler) Stop(ctx context.Context) {
 func (h *Handler) Create(rec update.Record) error          { return h.updater.Create(rec) }
 func (h *Handler) Delete(id string, views ...string) error { return h.updater.Delete(id, views...) }
 
-func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan error) {
+func (h *Handler) handleZoneUpdates(ctx context.Context, zone <-chan []dns.RR, pollErrors <-chan error) {
+	select {
+	case records, ok := <-zone:
+		if !ok {
+			return
+		}
+
+		h.bulkHandleRecords(records)
+		h.updater.Synchronize(ctx)
+
+	case <-h.stop:
+		bslog.Debug("no longer handling zone transfers")
+		return
+	}
+
 	for {
 		select {
 		case records, ok := <-zone:
@@ -83,29 +97,25 @@ func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan erro
 				return
 			}
 
-			if len(h.knownServices) == 0 {
-				h.bulkHandleRecords(records)
-			} else {
-				servicesInBatch := make(map[string]struct{}, 0)
-				for _, record := range records { // registers every service in the current batch
-					svc := h.handleRecord(record)
-					if svc != nil {
-						servicesInBatch[svc.GetID()] = struct{}{}
-					}
+			servicesInBatch := make(map[string]struct{}, 0)
+			for _, record := range records { // registers every service in the current batch
+				svc := h.handleRecord(record)
+				if svc != nil {
+					servicesInBatch[svc.GetID()] = struct{}{}
 				}
-
-				for key := range h.knownServices { // remove any services that dont exist in the current batch
-					if _, exists := servicesInBatch[key]; !exists {
-						bslog.Info("service no longer exists in GSLB - config zone", slog.String("action", "removing"), slog.String("serviceID", key))
-						err := h.svcManager.RemoveService(key)
-						if err != nil {
-							bslog.Error("failed to remove service", slog.Any("serviceID", key), slog.String("reason", err.Error()))
-						}
-					}
-				}
-
-				h.knownServices = servicesInBatch
 			}
+
+			for key := range h.knownServices { // remove any services that dont exist in the current batch
+				if _, exists := servicesInBatch[key]; !exists {
+					bslog.Info("service no longer exists in GSLB - config zone", slog.String("action", "removing"), slog.String("serviceID", key))
+					err := h.svcManager.RemoveService(key)
+					if err != nil {
+						bslog.Error("failed to remove service", slog.Any("serviceID", key), slog.String("reason", err.Error()))
+					}
+				}
+			}
+
+			h.knownServices = servicesInBatch
 
 		case err, ok := <-pollErrors:
 			if !ok {

@@ -107,8 +107,6 @@ func main() {
 	brokers.Init(ctx, valkeyClient, statusRepo, svcGroupRepo, updater)
 
 	dnsHandler.Start(ctx, cancel)
-	// TODO: handle this inside dnsHandler instead of calling here
-	updater.Synchronize(ctx)
 
 	api := http.NewServeMux()
 
