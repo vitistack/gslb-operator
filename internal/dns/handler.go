@@ -109,18 +109,27 @@ func (h *Handler) Create(rec update.Record) error          { return h.updater.Cr
 func (h *Handler) Delete(id string, views ...string) error { return h.updater.Delete(id, views...) }
 
 func (h *Handler) handleZoneUpdates(ctx context.Context, zone <-chan []dns.RR, pollErrors <-chan error) {
-	select {
-	case records, ok := <-zone:
-		if !ok {
+	for initialized := false; !initialized; {
+		select {
+		case records, ok := <-zone:
+			if !ok {
+				return
+			}
+
+			h.bulkHandleRecords(records)
+			h.updater.Synchronize(ctx)
+			initialized = true
+
+		case err, ok := <-pollErrors:
+			if !ok {
+				return
+			}
+			bslog.Error("zone transfer did not succeed", slog.String("reason", err.Error()))
+
+		case <-h.stop:
+			bslog.Debug("no longer handling zone transfers")
 			return
 		}
-
-		h.bulkHandleRecords(records)
-		h.updater.Synchronize(ctx)
-
-	case <-h.stop:
-		bslog.Debug("no longer handling zone transfers")
-		return
 	}
 
 	for {
