@@ -1,8 +1,9 @@
 package update
 
+import "context"
+
 type Updater interface {
 	Create(...Record) error
 	Delete(string, ...string) error
-	//OnServiceUp(Record) error
-	//OnServiceDown(Record) error
+	Synchronize(context.Context)
 }

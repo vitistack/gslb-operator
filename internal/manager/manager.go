@@ -43,6 +43,7 @@ type ServicesManager struct {
 
 	DNSCreate func(...update.Record) error
 	DNSDelete func(string, ...string) error
+	dnsGate   *dnsGate
 
 	pool   *pool.WorkerPool
 	dryrun bool
@@ -87,6 +88,10 @@ func NewManager(opts ...serviceManagerOption) *ServicesManager {
 		pool:               pool,
 		dryrun:             cfg.DryRun,
 	}
+	mgr.dnsGate = newDNSGate(
+		func(records ...update.Record) error { return mgr.DNSCreate(records...) },
+		func(id string, views ...string) error { return mgr.DNSDelete(id, views...) },
+	)
 
 	return mgr
 }
@@ -169,6 +174,18 @@ func (sm *ServicesManager) ColdStart(configs []model.GSLBConfig) {
 			})
 			for view, activeID := range svcGroup.Active {
 				sg.Seed(view, activeID)
+
+				if svcGroup.HasOverride {
+					continue // override addresses aren't tied to a member; let Synchronize pick these up
+				}
+				if member, ok := svcGroup.Members[activeID]; ok && member.Address != nil {
+					sm.dnsGate.Seed(update.Record{
+						Name:    cfg.MemberOf,
+						Address: member.Address,
+						UUID:    sg.ID(),
+						Views:   []string{view},
+					})
+				}
 			}
 		})
 
@@ -543,7 +560,7 @@ func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
 	}
 
 	if active == nil {
-		if err := sm.DNSDelete(group.ID()); err != nil {
+		if err := sm.dnsGate.Delete(group.ID()); err != nil {
 			bslog.Error("failed to reconcile gslb service-group",
 				slog.String("reason", fmt.Errorf("failed to delete DNS records: %w", err).Error()), slog.Any("group", group))
 			return
@@ -561,7 +578,7 @@ func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
 		return
 	}
 
-	if err := sm.DNSCreate(update.Record{
+	if err := sm.dnsGate.Create(update.Record{
 		Name: active.GetMemberOf(), Address: active.GetAddress(), Views: []string{view}, UUID: string(group.ID()),
 	}); err != nil {
 		bslog.Error("failed to reconcile gslb service-group",

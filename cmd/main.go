@@ -107,15 +107,6 @@ func main() {
 	brokers.Init(ctx, valkeyClient, statusRepo, svcGroupRepo, updater)
 
 	dnsHandler.Start(ctx, cancel)
-	updater.Synchronize(ctx)
-
-	//configs := getRandomGSLBConfig()
-	//for _, config := range configs {
-	//	_, err := mgr.RegisterService(config)
-	//	if err != nil {
-	//		bslog.Fatal("could not create service", slog.String("reason", err.Error()))
-	//	}
-	//}
 
 	api := http.NewServeMux()
 
@@ -202,28 +193,3 @@ func main() {
 	// stop event handling
 	events.Stop(shutdown)
 }
-
-//func getRandomGSLBConfig() []model.GSLBConfig {
-//	configs := make([]model.GSLBConfig, 0, 500)
-//
-//	config := model.GSLBConfig{
-//		Fqdn:             "test.example.com",
-//		Ip:               "10.10.0.1",
-//		Port:             "80",
-//		Datacenter:       "DC1",
-//		Interval:         timesutil.FromDuration(time.Second * 5),
-//		Priority:         1,
-//		FailureThreshold: 3,
-//		CheckType:        checks.TCP_FULL,
-//	}
-//
-//	for idx := range cap(configs) {
-//
-//		config.ServiceID = fmt.Sprintf("%d", idx)
-//		config.MemberOf = fmt.Sprintf("%s.%s", config.ServiceID, config.Fqdn)
-//
-//		configs = append(configs, config)
-//	}
-//
-//	return configs
-//}
