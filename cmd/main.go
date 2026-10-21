@@ -111,16 +111,6 @@ func main() {
 
 	dnsHandler.Start(ctx, cancel)
 
-	authStore := authc.NewValkeyStore(valkeyClient)
-	authRegistry := authc.NewRegistry(authStore)
-	authReplay := authc.NewReplay(authStore)
-	tokenIssuer := authc.NewTokenIssuer(
-		config.JWT().Secret(),
-		authc.WithAudience(config.JWT().Audience()),
-		authc.WithIssuer(config.JWT().Issuer()),
-		authc.WithTTL(config.JWT().TTL()),
-	)
-
 	authService, err := auth.Init(authStore)
 	if err != nil {
 		bslog.Fatal("failed to init auth service", slog.String("reason", err.Error()))
