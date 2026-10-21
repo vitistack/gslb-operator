@@ -116,7 +116,7 @@ func main() {
 	authReplay := authc.NewReplay(authStore)
 	tokenIssuer := authc.NewTokenIssuer(
 		config.JWT().Secret(),
-		authc.WithAudience(config.JWT().Issuer()),
+		authc.WithAudience(config.JWT().Audience()),
 		authc.WithIssuer(config.JWT().Issuer()),
 		authc.WithTTL(config.JWT().TTL()),
 	)
