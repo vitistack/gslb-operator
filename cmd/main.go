@@ -153,14 +153,14 @@ func main() {
 		gslbServiceRouter.GET("/status", gslbServicesApiService.GetServiceStatus).Action(authz.StatusRead)
 	}
 
-	api, err := router.Build()
-	if err != nil {
-		bslog.Fatal("unable to build api schema", slog.String("reason", err.Error()))
-	}
-
 	if config.DevMode() {
 		rootRouter.GET("/debug/pprof/", pprof.Index)
 		rootRouter.GET("/debug/pprof/heap/", pprof.Handler("heap").ServeHTTP)
+	}
+
+	api, err := router.Build()
+	if err != nil {
+		bslog.Fatal("unable to build api schema", slog.String("reason", err.Error()))
 	}
 
 	server := http.Server{
