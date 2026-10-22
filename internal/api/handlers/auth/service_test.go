@@ -77,7 +77,7 @@ func buildAssertion(t *testing.T, clientID string, priv ed25519.PrivateKey) stri
 		Subject:   clientID,
 		Audience:  jwt.ClaimStrings{testAudience},
 		IssuedAt:  jwt.NewNumericDate(now),
-		ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute)),
+		ExpiresAt: jwt.NewNumericDate(now.Add(time.Second)),
 		ID:        newJTI(t), // unique per assertion (replay guard)
 	}
 	signed, err := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims).SignedString(priv)
@@ -110,8 +110,8 @@ func TestToken_FirstRegistration(t *testing.T) {
 	pub, _ := genKey(t)
 
 	rec := postToken(t, svc, map[string]string{
-		"client_id":  "client_id",
-		"public_key": encodeKey(pub),
+		"clientId":  "client_id",
+		"publicKey": encodeKey(pub),
 	})
 
 	if rec.Code != http.StatusOK {
@@ -133,15 +133,15 @@ func TestToken_ClientAssertion(t *testing.T) {
 
 	// enrol on first contact (bootstrap)
 	if rec := postToken(t, svc, map[string]string{
-		"client_id":  clientID,
-		"public_key": encodeKey(pub),
+		"clientId":  clientID,
+		"publicKey": encodeKey(pub),
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("bootstrap: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// authenticate against the enrolled key via a signed assertion
 	rec := postToken(t, svc, map[string]string{
-		"client_assertion": buildAssertion(t, clientID, priv),
+		"clientAssertion": buildAssertion(t, clientID, priv),
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("assertion: expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -158,8 +158,8 @@ func TestToken_ClientAssertionReplay(t *testing.T) {
 
 	// enrol on first contact (bootstrap)
 	if rec := postToken(t, svc, map[string]string{
-		"client_id":  clientID,
-		"public_key": encodeKey(pub),
+		"clientId":  clientID,
+		"publicKey": encodeKey(pub),
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("bootstrap: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -168,13 +168,13 @@ func TestToken_ClientAssertionReplay(t *testing.T) {
 	assertion := buildAssertion(t, clientID, priv)
 
 	if rec := postToken(t, svc, map[string]string{
-		"client_assertion": assertion,
+		"clientAssertion": assertion,
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("first use: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	rec := postToken(t, svc, map[string]string{
-		"client_assertion": assertion,
+		"clientAssertion": assertion,
 	})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("replay: expected 401, got %d: %s", rec.Code, rec.Body.String())
@@ -187,27 +187,27 @@ func TestToken_DoubleRegistration(t *testing.T) {
 
 	pub1, _ := genKey(t)
 	if rec := postToken(t, svc, map[string]string{
-		"client_id":  clientID,
-		"public_key": encodeKey(pub1),
+		"clientId":  clientID,
+		"publicKey": encodeKey(pub1),
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("first registration: expected 200, got %d", rec.Code)
 	}
 
 	t.Run("same key is idempotent", func(t *testing.T) {
 		rec := postToken(t, svc, map[string]string{
-			"client_id":  clientID,
-			"public_key": encodeKey(pub1),
+			"clientId":  clientID,
+			"publicKey": encodeKey(pub1),
 		})
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 
 	t.Run("different key conflicts", func(t *testing.T) {
 		pub2, _ := genKey(t)
 		rec := postToken(t, svc, map[string]string{
-			"client_id":  clientID,
-			"public_key": encodeKey(pub2),
+			"clientId":  clientID,
+			"publicKey": encodeKey(pub2),
 		})
 		if rec.Code != http.StatusConflict {
 			t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())

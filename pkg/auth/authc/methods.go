@@ -110,14 +110,13 @@ func (c *ClientAssertion) Authenticate(r *http.Request) (Principal, error) {
 		return Principal{}, fmt.Errorf("%w:%w", ErrUnauthorized, err)
 	}
 
-	ttl := time.Until(claims.ExpiresAt.Time) + c.leeway
-
-	if err := c.replay.Once(r.Context(), claims.ID, ttl); err != nil {
-		return Principal{}, err
+	remaining := time.Until(claims.ExpiresAt.Time)
+	if remaining > time.Second*5 {
+		return Principal{}, ErrTooLongClientAssertionTTL
 	}
 
-	if ttl > time.Second*5 {
-		return Principal{}, ErrTooLongClientAssertionTTL
+	if err := c.replay.Once(r.Context(), claims.ID, remaining+c.leeway); err != nil {
+		return Principal{}, err
 	}
 
 	roles, kv, err := c.registry.Identity(r.Context(), claims.Subject)
