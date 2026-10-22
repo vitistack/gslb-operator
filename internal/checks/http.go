@@ -53,6 +53,15 @@ func NewHTTPChecker(url, dialAddr string, timeout time.Duration, validationScrip
 func (c *HTTPChecker) Check() *HealthCheckResult {
 	c.startRecording()
 	req, err := http.NewRequest(http.MethodGet, c.url, nil)
+	if err != nil {
+		c.endRecording()
+		return &HealthCheckResult{
+			err:       err,
+			Success:   false,
+			CheckTime: c.lastCheck(),
+		}
+	}
+
 	req.Header.Set("User-Agent", "GSLB/"+config.Version)
 	resp, err := c.client.Get(c.url)
 	c.endRecording()
