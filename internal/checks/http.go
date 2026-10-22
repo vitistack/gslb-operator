@@ -63,7 +63,7 @@ func (c *HTTPChecker) Check() *HealthCheckResult {
 	}
 
 	req.Header.Set("User-Agent", "GSLB/"+config.Version)
-	resp, err := c.client.Get(c.url)
+	resp, err := c.client.Do(req)
 	c.endRecording()
 
 	defer func() {
