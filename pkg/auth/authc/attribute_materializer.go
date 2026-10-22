@@ -36,6 +36,10 @@ func (m *AttributeMaterializer) Materialize(ctx context.Context, claims map[stri
 		}
 
 		authorized := attrs[m.authorizedKey]
+		if m.authorizedKey == "" {
+			authorized = append(authorized, "")
+		}
+
 		owned := make([]string, 0, len(claimed))
 		seen := make(map[string]struct{}, len(claimed))
 		for _, v := range claimed {

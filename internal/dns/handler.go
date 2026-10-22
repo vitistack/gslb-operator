@@ -39,9 +39,11 @@ type Handler struct {
 func NewHandler(fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater update.Updater, registry *authc.Registry) *Handler {
 	ownershipClaimer := authc.NewAttributeMaterializer(
 		registry,
-		"zone",
+		"",
 		"memberOf",
-		func(zone, memberOf string) bool { return memberOf == zone || strings.HasSuffix(memberOf, "."+zone) },
+		func(zone, memberOf string) bool {
+			return true /*return memberOf == zone || strings.HasSuffix(memberOf, "."+zone) */
+		},
 	)
 
 	return &Handler{
@@ -59,7 +61,7 @@ func NewHandler(fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater upda
 // clientIDFromRecord derives the enrollment key from a record's owner name,
 // whose leftmost label is the client_id-namespace.
 func clientIDFromRecord(recordName string) (string, bool) {
-	name := strings.TrimSuffix(recordName, ".")
+	/*name := strings.TrimSuffix(recordName, ".")
 	if i := strings.IndexByte(name, '.'); i >= 0 {
 		name = name[:i]
 	}
@@ -67,7 +69,9 @@ func clientIDFromRecord(recordName string) (string, bool) {
 	if i := strings.LastIndexByte(name, '-'); i >= 0 {
 		name = name[:i]
 	}
-
+	*/
+	name, _, _ := strings.Cut(recordName, ".")
+	name = strings.SplitN(name, "-", 2)[1]
 	return name, name != ""
 }
 
@@ -115,6 +119,8 @@ func (h *Handler) handleZoneUpdates(ctx context.Context, zone <-chan []dns.RR, p
 			if !ok {
 				return
 			}
+
+			h.claimOwnership(ctx, records)
 
 			h.bulkHandleRecords(records)
 			h.updater.Synchronize(ctx)
