@@ -149,8 +149,8 @@ func main() {
 	}
 
 	if config.DevMode() {
-		rootRouter.GET("/debug/pprof/", pprof.Index)
-		rootRouter.GET("/debug/pprof/heap/", pprof.Handler("heap").ServeHTTP)
+		rootRouter.GET("/debug/pprof/", pprof.Index).Public()
+		rootRouter.GET("/debug/pprof/heap/", pprof.Handler("heap").ServeHTTP).Public()
 	}
 
 	api, err := router.Build()
