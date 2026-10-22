@@ -193,7 +193,7 @@ func (d *DNSDISTUpdater) Synchronize(ctx context.Context) {
 }
 
 func (d *DNSDISTUpdater) synchronizeServers() error {
-	wg := &errgroup.Group{}
+	wg := &sync.WaitGroup{}
 
 	hashesByView := make(map[string]string)
 	lock := sync.Mutex{}
@@ -202,16 +202,19 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 		return errors.New("no registered dnsdist servers")
 	}
 
+	syncErrors := make(chan error, len(d.servers))
 	for _, server := range d.servers {
-		wg.Go(func() error {
+		wg.Go(func() {
 			lock.Lock()
 			hash, ok := hashesByView[server.selector.View()]
 			lock.Unlock()
 			if !ok {
 				viewHash, err := d.spoofRepo.Hash(server.selector.View())
 				if err != nil {
-					return err
+					syncErrors <- err
+					return
 				}
+
 				lock.Lock()
 				hashesByView[server.selector.View()] = viewHash
 				lock.Unlock()
@@ -230,26 +233,30 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 				})
 
 			if err != nil {
-				return fmt.Errorf("failed to compute %s hash: %w", server.name, err)
+				syncErrors <- fmt.Errorf("failed to compute %s hash: %w", server.name, err)
+				return
 			}
 
 			if hash != serverHash {
 				err = d.do(server.name, func() error { return server.Reconcile(d.spoofRepo.ReadAll()) })
 				if err != nil {
-					return fmt.Errorf("failed to reconcile %s: %w", server.name, err)
+					syncErrors <- fmt.Errorf("failed to reconcile %s: %w", server.name, err)
 				}
-				return nil
 			}
-
-			return nil
 		})
 	}
 
-	if err := wg.Wait(); err != nil {
-		return err
+	wg.Wait()
+	close(syncErrors)
+
+	var allErrors error
+	for err := range syncErrors {
+		if err != nil {
+			allErrors = errors.Join(allErrors, err)
+		}
 	}
 
-	return nil
+	return allErrors
 }
 
 func (d *DNSDISTUpdater) FetchStatus(id string) (service.DNSStatusForService, error) {
