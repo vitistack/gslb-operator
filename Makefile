@@ -17,11 +17,11 @@ build: check-tools ## Build the Go application.
 	@echo "Building GSLB - Operator binary..."
 	@echo "Version: $(VERSION)"
 	@echo "Date: $(DATE)"
-	@go build -ldflags "-s -w -X main.version=$(VERSION)  -X main.buildDate=$(DATE)" -o ./bin/ ./cmd
+	@go build -ldflags "-s -w -X config.version=$(VERSION)  -X config.buildDate=$(DATE)" -o ./bin/ ./cmd
 
 run:
 	@echo "Running GSLB - Operator"
-	@go run -ldflags "-X main.version=0.0.0-test -X main.buildDate=$(DATE)" ./cmd
+	@go run -ldflags "-X config.version=0.0.0-test -X config.buildDate=$(DATE)" ./cmd
 
 test: ## Run tests
 	@echo "Running tests..."

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
 )
 
@@ -20,6 +21,7 @@ type HTTPChecker struct {
 
 func NewHTTPChecker(url, dialAddr string, timeout time.Duration, validationScripts ...*model.LuaScript) Checker {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.IdleConnTimeout = timeout * 2
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
 	if dialAddr != "" {
@@ -50,7 +52,18 @@ func NewHTTPChecker(url, dialAddr string, timeout time.Duration, validationScrip
 
 func (c *HTTPChecker) Check() *HealthCheckResult {
 	c.startRecording()
-	resp, err := c.client.Get(c.url)
+	req, err := http.NewRequest(http.MethodGet, c.url, nil)
+	if err != nil {
+		c.endRecording()
+		return &HealthCheckResult{
+			err:       err,
+			Success:   false,
+			CheckTime: c.lastCheck(),
+		}
+	}
+
+	req.Header.Set("User-Agent", "GSLB/"+config.Version)
+	resp, err := c.client.Do(req)
 	c.endRecording()
 
 	defer func() {

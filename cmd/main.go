@@ -35,15 +35,10 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/rest/router"
 )
 
-var ( // injected at buildtime
-	version   string
-	buildDate string
-)
-
 func main() {
 	bslog.Info("Running GSLB - Operator",
-		slog.String("version", version),
-		slog.String("build-date", buildDate),
+		slog.String("version", config.Version),
+		slog.String("build-date", config.BuildDate),
 		slog.Bool("race", raceEnabled),
 	)
 
