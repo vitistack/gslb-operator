@@ -1,14 +1,18 @@
 package auth
 
 type TokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in"`
+	AccessToken string `json:"accessToken"`
+	TokenType   string `json:"tokenType"`
+	ExpiresIn   int    `json:"expiresIn"`
+}
+
+func (tr TokenResponse) String() string {
+	return tr.TokenType + " " + tr.AccessToken
 }
 
 type LoginPayload struct {
 	ClientID        string `json:"clientId"`
-	PublicKey       string `json:"publicKey"`          // base64 Ed25519 (bootstrap enrolment)
+	PublicKey       string `json:"publicKey"`       // base64 Ed25519 (bootstrap enrolment)
 	ClientAssertion string `json:"clientAssertion"` // signed JWT (private-key-jwt)
 }
 
