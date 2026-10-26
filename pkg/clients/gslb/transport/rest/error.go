@@ -1,11 +1,11 @@
 package rest
 
-import "net/http"
+const maxErrorBodySize = 64 * 1024
 
 type HTTPError struct {
 	err        error
 	StatusCode int
-	Response   *http.Response
+	Body       []byte
 }
 
 func (e *HTTPError) Error() string {

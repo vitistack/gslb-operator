@@ -27,6 +27,10 @@ func NewTransport(basePath string, opts ...Option) *RestTransport {
 	return rt
 }
 
+func (rt *RestTransport) BasePath() string {
+	return rt.basePath
+}
+
 func (rt *RestTransport) doJSON(ctx context.Context, method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {
@@ -54,12 +58,12 @@ func (rt *RestTransport) doJSON(ctx context.Context, method, path string, in, ou
 
 	defer resp.Body.Close()
 
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices { // not 2xx response
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
 		return &HTTPError{
 			err:        fmt.Errorf("unexpected status code: %d %s", resp.StatusCode, string(respBody)),
 			StatusCode: resp.StatusCode,
-			Response:   resp,
+			Body:   respBody,
 		}
 	}
 

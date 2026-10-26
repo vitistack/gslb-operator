@@ -1,16 +1,17 @@
 package override
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/vitistack/gslb-operator/pkg/clients/gslb/transport"
 )
 
 type Client interface {
-	Create() error
-	Get() error
-	Update() error
-	Delete() error
+	Create(context.Context) error
+	Get(context.Context) error
+	Update(context.Context) error
+	Delete(context.Context) error
 }
 
 type OverrideClient struct {
@@ -25,18 +26,18 @@ func NewOverrideClient(transport transport.Transport, memberOf string) *Override
 	}
 }
 
-func (c *OverrideClient) Create() error {
+func (c *OverrideClient) Create(context.Context) error {
 	return nil
 }
 
-func (c *OverrideClient) Get() error {
+func (c *OverrideClient) Get(context.Context) error {
 	return nil
 }
 
-func (c *OverrideClient) Update() error {
+func (c *OverrideClient) Update(context.Context) error {
 	return nil
 }
 
-func (c *OverrideClient) Delete() error {
+func (c *OverrideClient) Delete(context.Context) error {
 	return nil
 }

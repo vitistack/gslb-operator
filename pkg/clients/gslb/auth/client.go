@@ -11,10 +11,14 @@ type Client interface {
 	Token(context.Context, authmodels.LoginPayload) (authmodels.TokenResponse, error)
 }
 
-func NewAuthClient(transport transport.Transport) Client
-
 type AuthClient struct {
 	transport transport.Transport
+}
+
+func NewAuthClient(transport transport.Transport) *AuthClient {
+	return &AuthClient{
+		transport: transport,
+	}
 }
 
 func (c *AuthClient) Token(ctx context.Context, payload authmodels.LoginPayload) (authmodels.TokenResponse, error) {

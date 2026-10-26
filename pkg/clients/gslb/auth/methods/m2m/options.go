@@ -7,7 +7,7 @@ import (
 
 func WithCredentials(creds Credentials) rest.Option {
 	return func(rt *rest.RestTransport) {
-		authClient := auth.NewAuthClient(rt)
+		authClient := auth.NewAuthClient(rest.NewTransport(rt.BasePath()))
 		rest.WithRoundTripper(NewRoundTripper(authClient, creds))(rt)
 	}
 }
