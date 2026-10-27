@@ -15,3 +15,16 @@ const (
 	StatusList Action = "status.list"
 	StatusRead Action = "status.read"
 )
+
+// KnownActions is the full action inventory the operator understands; a
+// policy granting anything outside this set is rejected rather than compiled.
+var KnownActions = []Action{
+	SpoofsList,
+	SpoofsRead,
+	OverrideList,
+	OverrideRead,
+	OverrideCreate,
+	OverrideDelete,
+	StatusList,
+	StatusRead,
+}

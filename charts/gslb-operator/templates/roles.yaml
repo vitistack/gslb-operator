@@ -6,5 +6,5 @@ data:
   policy.yaml: |
     roles:
       {{- with .Values.policy.roles }}
-        {{- toYaml . | nindent 4 }}
+        {{- toYaml . | nindent 6 }}
       {{- end }}

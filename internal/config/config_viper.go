@@ -10,11 +10,10 @@ import (
 )
 
 var secretsKeyMap = map[string]string{
-	"GSLB_NAMESERVER": "gslb.nameserver",
-	"GSLB_ZONE":       "gslb.zone",
+	"GSLB_NAMESERVER":  "gslb.nameserver",
+	"GSLB_ZONE":        "gslb.zone",
 	"GSLB_DNSDIST_KEY": "gslb.dnsdist.key",
-	"JWT_SECRET":      "jwt.secret",
-	"JWT_USER":        "jwt.user",
+	"JWT_SECRET":       "auth.jwt.secret",
 }
 
 func new() (*Config, error) {
@@ -72,6 +71,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.env", "prod")
 	v.SetDefault("server.lua_sandbox", "sandbox.lua")
 	v.SetDefault("server.log_level", "INFO")
+
+	v.SetDefault("auth.policy_file", "policy.yaml")
+	v.SetDefault("auth.jwt.issuer", "gslb_operator")
+	v.SetDefault("auth.jwt.audience", "gslb_operator")
+	v.SetDefault("auth.jwt.ttl", "2h")
 
 	v.SetDefault("api.port", ":8080")
 

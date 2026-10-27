@@ -94,12 +94,19 @@ func (c *ClientAssertion) Authenticate(r *http.Request) (Principal, error) {
 	}
 
 	claims := &jwt.RegisteredClaims{}
+	kv := -1
 	token, err := jwt.ParseWithClaims(payload.ClientAssertion, claims,
 		func(t *jwt.Token) (any, error) {
 			if claims.Subject == "" {
 				return nil, ErrUnauthorized
 			}
-			return c.registry.PublicKey(r.Context(), claims.Subject)
+			key, version, err := c.registry.PublicKey(r.Context(), claims.Subject)
+			if err != nil {
+				return nil, err
+			}
+			kv = version
+
+			return key, nil
 		},
 		jwt.WithValidMethods([]string{"EdDSA"}),
 		jwt.WithAudience(c.audience),
@@ -119,7 +126,7 @@ func (c *ClientAssertion) Authenticate(r *http.Request) (Principal, error) {
 		return Principal{}, err
 	}
 
-	roles, kv, err := c.registry.Identity(r.Context(), claims.Subject)
+	roles, _, err := c.registry.Identity(r.Context(), claims.Subject)
 	if err != nil {
 		return Principal{}, err
 	}

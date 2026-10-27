@@ -1,6 +1,7 @@
 package authc
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -41,7 +42,11 @@ func WithIssuer(iss string) TokenIssuerOption {
 	}
 }
 
-func NewTokenIssuer(signingSecret []byte, opts ...TokenIssuerOption) *TokenIssuer {
+func NewTokenIssuer(signingSecret []byte, opts ...TokenIssuerOption) (*TokenIssuer, error) {
+	if len(signingSecret) == 0 {
+		return nil, errors.New("token-issuer: empty signing secret")
+	}
+
 	ti := &TokenIssuer{
 		signingSecret: signingSecret,
 		ttl:           10 * time.Minute,
@@ -51,7 +56,7 @@ func NewTokenIssuer(signingSecret []byte, opts ...TokenIssuerOption) *TokenIssue
 		opt(ti)
 	}
 
-	return ti
+	return ti, nil
 }
 
 // Issue mints an access token for the principal; returns token + seconds-to-live.

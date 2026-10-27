@@ -9,6 +9,13 @@ data:
       lua_sandbox: sandbox.lua
       log_level: {{ .Values.logLevel }}
 
+    auth:
+      policy_file: policy.yaml
+      jwt:
+        issuer: gslb_operator
+        audience: gslb_operator
+        ttl: {{ .Values.auth.jwt.ttl }}
+
     api:
       port: {{ .Values.settings.port }}
 

@@ -29,6 +29,7 @@ type Handler struct {
 	svcManager    *manager.ServicesManager
 	updater       update.Updater
 	knownServices map[string]struct{} // service.ID: makes it easier to look up using map, but dont need a real value!
+	knownClients  map[string]struct{}
 	claimer       OwnershipClaimer
 	clientID      ClientIDFunc
 	stop          chan struct{}
@@ -51,6 +52,7 @@ func NewHandler(fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater upda
 		svcManager:    mgr,
 		updater:       updater,
 		knownServices: make(map[string]struct{}),
+		knownClients:  make(map[string]struct{}),
 		claimer:       ownershipClaimer,
 		clientID:      clientIDFromRecord,
 		stop:          make(chan struct{}),
@@ -61,18 +63,9 @@ func NewHandler(fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater upda
 // clientIDFromRecord derives the enrollment key from a record's owner name,
 // whose leftmost label is the client_id-namespace.
 func clientIDFromRecord(recordName string) (string, bool) {
-	/*name := strings.TrimSuffix(recordName, ".")
-	if i := strings.IndexByte(name, '.'); i >= 0 {
-		name = name[:i]
-	}
-
-	if i := strings.LastIndexByte(name, '-'); i >= 0 {
-		name = name[:i]
-	}
-	*/
 	name, _, _ := strings.Cut(recordName, ".")
-	name = strings.SplitN(name, "-", 2)[1]
-	return name, name != ""
+	_, name, ok := strings.Cut(name, "-")
+	return name, ok && name != ""
 }
 
 func (h *Handler) Start(ctx context.Context, cancel func()) {
@@ -238,42 +231,61 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 
 // claimOwnership materializes each client's owned memberOf from its claimed
 // value in the config zone, gated by the client's authorized attributes.
+// Clients known from a prior snapshot but absent here (record removed,
+// reassigned, or the zone went empty) have their grant explicitly cleared
+// rather than left stale.
 func (h *Handler) claimOwnership(ctx context.Context, records []dns.RR) {
-	if h.claimer == nil || h.clientID == nil {
-		return
-	}
+    if h.claimer == nil || h.clientID == nil {
+        return
+    }
 
-	claims := make(map[string][]string)
-	for _, record := range records {
-		txt, ok := record.(*dns.TXT)
-		if !ok {
-			continue
-		}
+    claims := make(map[string][]string)
+    for _, record := range records {
+        txt, ok := record.(*dns.TXT)
+        if !ok {
+            continue
+        }
 
-		clientID, ok := h.clientID(txt.Hdr.Name)
-		if !ok {
-			continue
-		}
+        clientID, ok := h.clientID(txt.Hdr.Name)
+        if !ok {
+            continue
+        }
 
-		rawData := strings.Join(txt.Txt, "")
-		data := strings.ReplaceAll(rawData, "\\", "")
-		cfg := model.GSLBConfig{}
-		if err := json.NewDecoder(strings.NewReader(data)).Decode(&cfg); err != nil {
-			continue
-		}
+        if _, exists := claims[clientID]; !exists {
+            claims[clientID] = []string{} // mark present in this snapshot even without a MemberOf claim
+        }
 
-		if cfg.MemberOf == "" {
-			continue
-		}
+        rawData := strings.Join(txt.Txt, "")
+        data := strings.ReplaceAll(rawData, "\\", "")
+        cfg := model.GSLBConfig{}
+        if err := json.NewDecoder(strings.NewReader(data)).Decode(&cfg); err != nil {
+            continue
+        }
 
-		claims[clientID] = append(claims[clientID], cfg.MemberOf)
-	}
+        if cfg.MemberOf == "" {
+            continue
+        }
 
-	if len(claims) == 0 {
-		return
-	}
+        claims[clientID] = append(claims[clientID], cfg.MemberOf)
+    }
 
-	if err := h.claimer.Materialize(ctx, claims); err != nil {
-		bslog.Error("failed to materialize ownership claims", slog.String("reason", err.Error()))
-	}
+    for clientID := range h.knownClients { // reconcile: clear ownership for clients no longer present
+        if _, present := claims[clientID]; !present {
+            claims[clientID] = nil
+        }
+    }
+
+    if len(claims) == 0 {
+        return
+    }
+
+    if err := h.claimer.Materialize(ctx, claims); err != nil {
+        bslog.Error("failed to materialize ownership claims", slog.String("reason", err.Error()))
+    }
+
+    knownClients := make(map[string]struct{}, len(claims))
+    for clientID := range claims {
+        knownClients[clientID] = struct{}{}
+    }
+    h.knownClients = knownClients
 }
