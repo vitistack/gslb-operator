@@ -71,23 +71,25 @@ service:
 # (see: https://gateway-api.sigs.k8s.io/guides/)
 httpRoute:
   # HTTPRoute enabled.
-  enabled: false
+  enabled: true
   # HTTPRoute annotations.
-  annotations: {}
+  annotations: 
+    gatewayapi-operator.vitistack.io/enabled: "true"
+
   # Which Gateways this Route is attached to.
   parentRefs:
-    - name: gateway
-      sectionName: http
-      # namespace: default
+    - name: gslb-operator-gateway
+      sectionName: gslb-operator
+      namespace: gateways
   # Hostnames matching HTTP header.
-  hostnames:
-    - chart-example.local
+  hostnames: []
+  
   # List of rules and filters applied.
   rules:
     - matches:
         - path:
             type: PathPrefix
-            value: /headers
+            value: /
   #   filters:
   #   - type: RequestHeaderModifier
   #     requestHeaderModifier:
