@@ -31,7 +31,7 @@ func NewRegistry(store KVStore) *Registry {
 func (r *Registry) Register(ctx context.Context, clientID string, pub ed25519.PublicKey, roles ...string) error {
 	val, err := json.Marshal(enrollment{
 		PublicKey:  base64.StdEncoding.EncodeToString(pub),
-		Roles: []string{"default"},
+		Roles:      []string{"default"},
 		KeyVersion: 1,
 	})
 	if err != nil {
@@ -149,22 +149,22 @@ func (r *Registry) Identity(ctx context.Context, clientID string) (roles []strin
 	return rec.Roles, rec.KeyVersion, nil
 }
 
-func (r *Registry) PublicKey(ctx context.Context, clientID string) (ed25519.PublicKey, error) {
+func (r *Registry) PublicKey(ctx context.Context, clientID string) (ed25519.PublicKey, int, error) {
 	rec, err := r.enrollmentOf(ctx, clientID)
 	if err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 
 	decoded, err := base64.StdEncoding.DecodeString(rec.PublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("decode key: %w", err)
+		return nil, -1, fmt.Errorf("decode key: %w", err)
 	}
 
-	return ed25519.PublicKey(decoded), nil
+	return ed25519.PublicKey(decoded), rec.KeyVersion, nil
 }
 
 func (r *Registry) Verify(ctx context.Context, clientID string, pub ed25519.PublicKey) error {
-	stored, err := r.PublicKey(ctx, clientID)
+	stored, _, err := r.PublicKey(ctx, clientID)
 	if err != nil {
 		return err
 	}

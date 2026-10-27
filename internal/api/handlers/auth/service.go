@@ -37,6 +37,10 @@ func Init(store authc.KVStore) (*AuthService, error) {
 		return nil, fmt.Errorf("failed to parse policy: %w", err)
 	}
 
+	if err := policy.Validate(authz.KnownActions); err != nil {
+		return nil, fmt.Errorf("invalid policy: %w", err)
+	}
+
 	scopeGuard := authz.NewScopeGuard(
 		authz.NewAttributeScopeGuard(registry, "memberOf"),
 	)
@@ -44,12 +48,24 @@ func Init(store authc.KVStore) (*AuthService, error) {
 	authorizer := authz.NewRBACAuthorizer(policy, scopeGuard)
 	enforcer := authz.NewEnforcer(authorizer, registry)
 
-	tokenIssuer := authc.NewTokenIssuer(
-		config.Auth().JWT().Secret(),
+	
+	tokenIssuerOpts := []authc.TokenIssuerOption{
 		authc.WithAudience(config.Auth().JWT().Audience()),
 		authc.WithIssuer(config.Auth().JWT().Issuer()),
-		authc.WithTTL(config.Auth().JWT().TTL()),
+	}
+	
+	if ttl := config.Auth().JWT().TTL(); ttl > 0 {
+		tokenIssuerOpts = append(tokenIssuerOpts, authc.WithTTL(ttl))
+	}
+	
+	tokenIssuer, err := authc.NewTokenIssuer(
+		config.Auth().JWT().Secret(),
+		tokenIssuerOpts...
 	)
+
+	if err != nil {
+		return nil, err
+	}
 
 	return newAuthService(
 		tokenIssuer,
@@ -74,24 +90,30 @@ func (a *AuthService) Token(w http.ResponseWriter, r *http.Request) {
 	principal, err := a.dispatcher.Authenticate(r)
 	switch {
 	case errors.Is(err, authc.ErrNoMethodDetected), errors.Is(err, authc.ErrUnknownMethod):
-		bslog.Info("token exchange failed", slog.String("reason", "no usable authentication method"))
+		logger.Info("token exchange failed", slog.String("reason", "no usable authentication method"))
 		response.Err(w, response.ErrInvalidInput, "no usable authentication method")
 		return
 	case errors.Is(err, authc.ErrKeyMismatch):
-		bslog.Info("token exchange failed", slog.String("reason", "client_id registered to different key"))
+		logger.Info("token exchange failed", slog.String("reason", "client_id registered to different key"))
 		response.Err(w, response.ErrConflict, "client_id already registered to a different key")
 		return
 	case errors.Is(err, authc.ErrClientExists):
-		bslog.Info("token exchange failed", slog.String("reason", "client enrolled"))
+		logger.Info("token exchange failed", slog.String("reason", "client enrolled"))
 		response.Err(w, response.ErrConflict, "client already enrolled: use private-key-jwt")
 		return
 	case errors.Is(err, authc.ErrReplayed):
+		logger.Info("token exchange failed", slog.String("reason", "client assertion replay"))
 		response.Err(w, response.ErrUnauthorized, "client assertion already used")
+		return
 	case errors.Is(err, authc.ErrTooLongClientAssertionTTL):
+		logger.Info("token exchange failed", slog.String("reason", "client-assertion ttl exceeds max ttl value"))
 		response.Err(w, response.ErrForbidden, "too long TTL on client-assertion")
+		return
+	case errors.Is(err, authc.ErrUnauthorized):
+		logger.Info("token exchange failed", slog.String("reason", "invalid credentials"))
+		response.Err(w, response.ErrUnauthorized, "invalid credentials")
+		return
 	case err != nil:
-		logger.Error("authentication failed", slog.String("reason", err.Error()))
-		response.Err(w, response.ErrInternalError, "authentication unavailable")
 		logger.Error("authentication failed", slog.String("reason", err.Error()))
 		response.Err(w, response.ErrInternalError, "authentication unavailable")
 		return

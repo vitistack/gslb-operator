@@ -29,7 +29,9 @@ func NewValkeyStore(client valkey.Client) *ValkeyStore {
 func (s *ValkeyStore) SetNX(ctx context.Context, key, value string, ttl time.Duration) (bool, error) {
 	var cmd valkey.Completed
 	if ttl > 0 {
-		cmd = s.client.B().Set().Key(key).Value(value).Nx().ExSeconds(int64(ttl.Seconds())).Build()
+		// Round up so the key outlives ttl; Valkey EX only accepts whole seconds.
+		ttlSeconds := int64((ttl + time.Second - 1) / time.Second)
+		cmd = s.client.B().Set().Key(key).Value(value).Nx().ExSeconds(ttlSeconds).Build()
 	} else {
 		cmd = s.client.B().Set().Key(key).Value(value).Nx().Build()
 	}
@@ -64,4 +66,3 @@ func (s *ValkeyStore) Del(ctx context.Context, key string) error {
 	cmd := s.client.B().Del().Key(key).Build()
 	return s.client.Do(ctx, cmd).Error()
 }
-

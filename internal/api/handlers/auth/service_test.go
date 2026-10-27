@@ -27,7 +27,7 @@ func newTestService(t *testing.T) *AuthService {
 	store := authc.NewMemStore()
 	registry := authc.NewRegistry(store)
 	replay := authc.NewReplay(store)
-	issuer := authc.NewTokenIssuer(
+	issuer, _ := authc.NewTokenIssuer(
 		[]byte(testSecret),
 		authc.WithAudience(testAudience),
 		authc.WithIssuer(testIssuer),
