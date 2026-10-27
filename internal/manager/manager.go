@@ -43,6 +43,7 @@ type ServicesManager struct {
 
 	DNSCreate func(...update.Record) error
 	DNSDelete func(string, ...string) error
+	dnsGate   *dnsGate
 
 	pool   *pool.WorkerPool
 	dryrun bool
@@ -87,6 +88,10 @@ func NewManager(opts ...serviceManagerOption) *ServicesManager {
 		pool:               pool,
 		dryrun:             cfg.DryRun,
 	}
+	mgr.dnsGate = newDNSGate(
+		func(records ...update.Record) error { return mgr.DNSCreate(records...) },
+		func(id string, views ...string) error { return mgr.DNSDelete(id, views...) },
+	)
 
 	return mgr
 }
@@ -169,6 +174,18 @@ func (sm *ServicesManager) ColdStart(configs []model.GSLBConfig) {
 			})
 			for view, activeID := range svcGroup.Active {
 				sg.Seed(view, activeID)
+
+				if svcGroup.HasOverride {
+					continue // override addresses aren't tied to a member; let Synchronize pick these up
+				}
+				if member, ok := svcGroup.Members[activeID]; ok && member.Address != nil {
+					sm.dnsGate.Seed(update.Record{
+						Name:    cfg.MemberOf,
+						Address: member.Address,
+						UUID:    sg.ID(),
+						Views:   []string{view},
+					})
+				}
 			}
 		})
 
@@ -360,6 +377,7 @@ func (sm *ServicesManager) RemoveService(id string) error {
 		serviceGroups.Dec()
 	}
 	bslog.Debug("removed service", slog.Any("service", svc))
+	healthcheck.DeleteMetrics(svc.GetMemberOf(), svc.GetID())
 	events.Emit(&events.Event{ // publish delete event for service
 		Type: domainEvents.EventTypeGSLBConfigDelete,
 		Payload: domainEvents.GSLBConfigDeleteEvent{
@@ -391,6 +409,10 @@ func (sm *ServicesManager) updateService(old *service.Service, cfg model.GSLBCon
 	lastConfig := old.GSLBConfig()
 	views := old.GetViews()
 	old.Assign(new) // assigning changed config variables to the registered service
+
+	if lastConfig.MemberOf != cfg.MemberOf || lastConfig.Datacenter != cfg.Datacenter {
+		healthcheck.DeleteMetrics(lastConfig.MemberOf, lastConfig.ServiceID)
+	}
 
 	if oldMemberOf != newMemberOf {
 		sm.memberOfChanged(oldMemberOf, newMemberOf, old)
@@ -519,7 +541,7 @@ func (sm *ServicesManager) handleServiceHealthChange(ctx context.Context) {
 // reconciles the current state of a group to reflect internal state of the manager
 // and external state
 func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
-	active := group.GetActive(view)
+    active := group.GetActive(view)
 
 	wasPreviouslyActive := false
 	if _, ok := group.SeededActive(view); ok {
@@ -527,23 +549,23 @@ func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
 		group.ClearSeed(view)
 	}
 
-	err := sm.svcGroupRepo.Mutate(group.Name(), func(g *model.GSLBServiceGroup) {
-		if g.Active == nil {
-			g.Active = make(map[string]string)
-		}
-		if active != nil {
-			g.Active[view] = active.GetID()
-		} else {
-			delete(g.Active, view)
-		}
-	})
-	if err != nil {
-		bslog.Error("failed to reconcile service-group", slog.String("reason", err.Error()), slog.Any("group", group))
-		return
-	}
+    err := sm.svcGroupRepo.Mutate(group.Name(), func(g *model.GSLBServiceGroup) {
+        if g.Active == nil {
+            g.Active = make(map[string]string)
+        }
+        if active != nil {
+            g.Active[view] = active.GetID()
+        } else {
+            delete(g.Active, view)
+        }
+    })
+    if err != nil {
+        bslog.Error("failed to reconcile service-group", slog.String("reason", err.Error()), slog.Any("group", group))
+        return
+    }
 
 	if active == nil {
-		if err := sm.DNSDelete(group.ID()); err != nil {
+		if err := sm.dnsGate.Delete(group.ID()); err != nil {
 			bslog.Error("failed to reconcile gslb service-group",
 				slog.String("reason", fmt.Errorf("failed to delete DNS records: %w", err).Error()), slog.Any("group", group))
 			return
@@ -561,7 +583,7 @@ func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
 		return
 	}
 
-	if err := sm.DNSCreate(update.Record{
+	if err := sm.dnsGate.Create(update.Record{
 		Name: active.GetMemberOf(), Address: active.GetAddress(), Views: []string{view}, UUID: string(group.ID()),
 	}); err != nil {
 		bslog.Error("failed to reconcile gslb service-group",

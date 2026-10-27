@@ -11,16 +11,21 @@ var (
 			Name: "healthcheck_total",
 			Help: "Total health checks performed",
 		},
-		[]string{"memberOf",  "endpoint", "datacenter", "status"},
+		[]string{"memberOf", "serviceID", "datacenter", "status"},
 	)
 
 	healthCheckDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name: "healthcheck_duration_ms",
-			Help: "Health check duration",
+			Name:    "healthcheck_duration_ms",
+			Help:    "Health check duration",
 			Buckets: []float64{1, 5, 25, 50, 100, 250, 500, 1000, 2500, 5000},
 		},
-		[]string{"memberOf", "endpoint", "datacenter"},
+		[]string{"memberOf", "serviceID", "datacenter"},
 	)
 )
 
+func DeleteMetrics(memberOf, id string) {
+	labels := prometheus.Labels{"memberOf": memberOf, "serviceID": id}
+	healthChecksTotal.DeletePartialMatch(labels)
+	healthCheckDuration.DeletePartialMatch(labels)
+}

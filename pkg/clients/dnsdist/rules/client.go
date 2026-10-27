@@ -38,6 +38,21 @@ func New(transport transport.Transport) Client {
 	}
 }
 
+// RenderAddAction builds the dnsdist console command Add would execute, without executing it.
+// Useful for generating static dnsdist config from the same rule+action builders.
+func RenderAddAction(rule Rule, action Action, opts ...GlobalRuleOptions) string {
+	cmd := fmt.Sprintf("addAction(%s, %s)", rule.luaRule(), action.luaAction())
+
+	if len(opts) > 0 {
+		table := opts[0].luaTable()
+		if table != "" {
+			cmd = fmt.Sprintf("addAction(%s, %s, %s)", rule.luaRule(), action.luaAction(), table)
+		}
+	}
+
+	return cmd
+}
+
 // adds a new rule+action pair
 func (c *rulesClient) Add(rule Rule, action Action, opts ...GlobalRuleOptions) error {
 	cmd := fmt.Sprintf("addAction(%s, %s)", rule.luaRule(), action.luaAction())

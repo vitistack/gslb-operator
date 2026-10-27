@@ -13,9 +13,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/valkey-io/valkey-go"
+	"github.com/vitistack/gslb-operator/internal/api/handlers/auth"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/service"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
-	"github.com/vitistack/gslb-operator/internal/api/routes"
 	"github.com/vitistack/gslb-operator/internal/brokers"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
@@ -24,25 +24,21 @@ import (
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
 	"github.com/vitistack/gslb-operator/internal/repositories/status"
-	"github.com/vitistack/gslb-operator/pkg/auth"
-	"github.com/vitistack/gslb-operator/pkg/auth/jwt"
+	"github.com/vitistack/gslb-operator/pkg/auth/authc"
+	"github.com/vitistack/gslb-operator/pkg/auth/authz"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/lua"
 	serviceModels "github.com/vitistack/gslb-operator/pkg/models/service"
 	valkeyStore "github.com/vitistack/gslb-operator/pkg/persistence/store/valkey"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
-)
-
-var ( // injected at buildtime
-	version   string
-	buildDate string
+	"github.com/vitistack/gslb-operator/pkg/rest/router"
 )
 
 func main() {
 	bslog.Info("Running GSLB - Operator",
-		slog.String("version", version),
-		slog.String("build-date", buildDate),
+		slog.String("version", config.Version),
+		slog.String("build-date", config.BuildDate),
 		slog.Bool("race", raceEnabled),
 	)
 
@@ -95,10 +91,12 @@ func main() {
 		bslog.Error("unable to create updater", slog.String("error", err.Error()))
 	}
 
+	authStore := authc.NewValkeyStore(valkeyClient)
 	dnsHandler := dns.NewHandler(
 		zoneFetcher,
 		mgr,
 		updater,
+		authc.NewRegistry(authStore),
 	)
 
 	background := context.Background()
@@ -107,65 +105,60 @@ func main() {
 	brokers.Init(ctx, valkeyClient, statusRepo, svcGroupRepo, updater)
 
 	dnsHandler.Start(ctx, cancel)
-	updater.Synchronize(ctx)
 
-	//configs := getRandomGSLBConfig()
-	//for _, config := range configs {
-	//	_, err := mgr.RegisterService(config)
-	//	if err != nil {
-	//		bslog.Fatal("could not create service", slog.String("reason", err.Error()))
-	//	}
-	//}
+	authService, err := auth.Init(authStore)
+	if err != nil {
+		bslog.Fatal("failed to init auth service", slog.String("reason", err.Error()))
+	}
 
-	api := http.NewServeMux()
+	// middleware chains
+	securedChain := middleware.Chain(
+		authService.Verify(),
+	)
 
-	// routes handlers
-	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
-
-	// initializing the service jwt self signer
-	jwt.InitServiceTokenManager(config.JWT().Secret(), config.JWT().User())
-
-	// spoofs
-	api.HandleFunc(routes.GET_SPOOFS, middleware.Chain(
+	router := router.New(
+		authService.Enforcer(),
+		slog.Default(),
 		middleware.WithIncomingRequestLogging(slog.Default()),
-		auth.WithTokenValidation(slog.Default()),
-	)(spoofsApiService.GetSpoofs))
+	)
 
-	api.HandleFunc(routes.GET_SPOOFID, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-		auth.WithTokenValidation(slog.Default()),
-	)(spoofsApiService.GetFQDNSpoof))
+	rootRouter := router.Group("/")
+	rootRouter.Handle( // static wiring of prometheus metrics handler
+		http.MethodGet,
+		"/metrics",
+		promhttp.Handler(),
+	).Public()
 
-	//api.HandleFunc(routes.GET_SPOOFS_HASH, middleware.Chain(
-	//	middleware.WithIncomingRequestLogging(slog.Default()),
-	//	auth.WithTokenValidation(slog.Default()),
-	//)(spoofsApiService.GetSpoofsHash))
+	apiRouter := rootRouter.Group("/api/v1")
 
-	// spoofs/override
-	// TODO: add auth!
-	api.HandleFunc(routes.GET_OVERRIDE, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.GetOverride))
-
-	api.HandleFunc(routes.POST_OVERRIDE, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.CreateOverride))
-
-	api.HandleFunc(routes.DELETE_OVERRIDE, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(spoofsApiService.DeleteOverride))
+	authRouter := apiRouter.Group("/auth")
+	authRouter.POST("/token", authService.Token).Public()
 
 	gslbServicesApiService := service.NewGSLBServiceHandler(statusRepo)
-	api.HandleFunc(routes.GET_SERVICE_STATUS, middleware.Chain(
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)(gslbServicesApiService.GetServiceStatus))
+	gslbServiceRouter := apiRouter.Group("/service/{memberOf}").Use(securedChain)
 
-	// metrics
-	api.Handle(routes.METRICS, promhttp.Handler())
+	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
+	gslbServiceRouter.GET("/spoofs", spoofsApiService.GetFQDNSpoof).Use(securedChain).Action(authz.SpoofsRead)
+
+	gslbServiceRouter.GET("/override", spoofsApiService.GetOverride).Action(authz.OverrideRead)
+	gslbServiceRouter.POST("override", spoofsApiService.CreateOverride).Action(authz.OverrideCreate)
+	gslbServiceRouter.DELETE("/override", spoofsApiService.DeleteOverride).Action(authz.OverrideDelete)
+
+	if config.GSLB().StatusEnabled() {
+		gslbServiceRouter.GET("/status", gslbServicesApiService.GetServiceStatus).Action(authz.StatusRead)
+	}
+
+	dnsdistRouter := apiRouter.Group("/dnsdist").Use(securedChain)
+	dnsdistRouter.GET("/config", nil).Action(authz.SpoofsList)
 
 	if config.DevMode() {
-		api.HandleFunc("/debug/pprof/", pprof.Index)
-		api.HandleFunc("/debug/pprof/heap/", pprof.Handler("heap").ServeHTTP)
+		rootRouter.GET("/debug/pprof/", pprof.Index).Public()
+		rootRouter.GET("/debug/pprof/heap/", pprof.Handler("heap").ServeHTTP).Public()
+	}
+
+	api, err := router.Build()
+	if err != nil {
+		bslog.Fatal("unable to build api schema", slog.String("reason", err.Error()))
 	}
 
 	server := http.Server{
@@ -202,28 +195,3 @@ func main() {
 	// stop event handling
 	events.Stop(shutdown)
 }
-
-//func getRandomGSLBConfig() []model.GSLBConfig {
-//	configs := make([]model.GSLBConfig, 0, 500)
-//
-//	config := model.GSLBConfig{
-//		Fqdn:             "test.example.com",
-//		Ip:               "10.10.0.1",
-//		Port:             "80",
-//		Datacenter:       "DC1",
-//		Interval:         timesutil.FromDuration(time.Second * 5),
-//		Priority:         1,
-//		FailureThreshold: 3,
-//		CheckType:        checks.TCP_FULL,
-//	}
-//
-//	for idx := range cap(configs) {
-//
-//		config.ServiceID = fmt.Sprintf("%d", idx)
-//		config.MemberOf = fmt.Sprintf("%s.%s", config.ServiceID, config.Fqdn)
-//
-//		configs = append(configs, config)
-//	}
-//
-//	return configs
-//}

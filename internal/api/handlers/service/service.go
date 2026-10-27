@@ -19,7 +19,7 @@ func NewGSLBServiceHandler(repo *status.StatusRepo) *GSLBServiceHandler {
 
 func (h *GSLBServiceHandler) GetServiceStatus(w http.ResponseWriter, r *http.Request) {
 	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
-	fqdn := r.URL.Query().Get("fqdn")
+	fqdn := r.PathValue("memberOf")
 
 	if fqdn == "" {
 		logger.Info("skipping due to insufficient input parameter", slog.String("reason", "missing path-value memberOf"))

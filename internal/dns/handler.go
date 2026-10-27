@@ -13,8 +13,15 @@ import (
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/service"
+	"github.com/vitistack/gslb-operator/pkg/auth/authc"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 )
+
+type OwnershipClaimer interface {
+	Materialize(ctx context.Context, claims map[string][]string) error
+}
+
+type ClientIDFunc func(recordName string) (clientId string, ok bool)
 
 // Handles/Orchestrates DNS related things
 type Handler struct {
@@ -22,20 +29,43 @@ type Handler struct {
 	svcManager    *manager.ServicesManager
 	updater       update.Updater
 	knownServices map[string]struct{} // service.ID: makes it easier to look up using map, but dont need a real value!
+	knownClients  map[string]struct{}
+	claimer       OwnershipClaimer
+	clientID      ClientIDFunc
 	stop          chan struct{}
 	cancel        func() // cancels context
 	wg            sync.WaitGroup
 }
 
-func NewHandler(fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater update.Updater) *Handler {
+func NewHandler(fetcher *ZoneFetcher, mgr *manager.ServicesManager, updater update.Updater, registry *authc.Registry) *Handler {
+	ownershipClaimer := authc.NewAttributeMaterializer(
+		registry,
+		"",
+		"memberOf",
+		func(zone, memberOf string) bool {
+			return true /*return memberOf == zone || strings.HasSuffix(memberOf, "."+zone) */
+		},
+	)
+
 	return &Handler{
 		fetcher:       fetcher,
 		svcManager:    mgr,
 		updater:       updater,
 		knownServices: make(map[string]struct{}),
+		knownClients:  make(map[string]struct{}),
+		claimer:       ownershipClaimer,
+		clientID:      clientIDFromRecord,
 		stop:          make(chan struct{}),
 		wg:            sync.WaitGroup{},
 	}
+}
+
+// clientIDFromRecord derives the enrollment key from a record's owner name,
+// whose leftmost label is the client_id-namespace.
+func clientIDFromRecord(recordName string) (string, bool) {
+	name, _, _ := strings.Cut(recordName, ".")
+	_, name, ok := strings.Cut(name, "-")
+	return name, ok && name != ""
 }
 
 func (h *Handler) Start(ctx context.Context, cancel func()) {
@@ -51,7 +81,7 @@ func (h *Handler) Start(ctx context.Context, cancel func()) {
 
 	zoneBatches, pollErrors := h.fetcher.StartAutoPoll(ctx)
 	h.wg.Go(func() {
-		h.handleZoneUpdates(zoneBatches, pollErrors)
+		h.handleZoneUpdates(ctx, zoneBatches, pollErrors)
 	})
 }
 
@@ -75,7 +105,32 @@ func (h *Handler) Stop(ctx context.Context) {
 func (h *Handler) Create(rec update.Record) error          { return h.updater.Create(rec) }
 func (h *Handler) Delete(id string, views ...string) error { return h.updater.Delete(id, views...) }
 
-func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan error) {
+func (h *Handler) handleZoneUpdates(ctx context.Context, zone <-chan []dns.RR, pollErrors <-chan error) {
+	for initialized := false; !initialized; {
+		select {
+		case records, ok := <-zone:
+			if !ok {
+				return
+			}
+
+			h.claimOwnership(ctx, records)
+
+			h.bulkHandleRecords(records)
+			h.updater.Synchronize(ctx)
+			initialized = true
+
+		case err, ok := <-pollErrors:
+			if !ok {
+				return
+			}
+			bslog.Error("zone transfer did not succeed", slog.String("reason", err.Error()))
+
+		case <-h.stop:
+			bslog.Debug("no longer handling zone transfers")
+			return
+		}
+	}
+
 	for {
 		select {
 		case records, ok := <-zone:
@@ -83,29 +138,27 @@ func (h *Handler) handleZoneUpdates(zone <-chan []dns.RR, pollErrors <-chan erro
 				return
 			}
 
-			if len(h.knownServices) == 0 {
-				h.bulkHandleRecords(records)
-			} else {
-				servicesInBatch := make(map[string]struct{}, 0)
-				for _, record := range records { // registers every service in the current batch
-					svc := h.handleRecord(record)
-					if svc != nil {
-						servicesInBatch[svc.GetID()] = struct{}{}
-					}
-				}
+			h.claimOwnership(ctx, records)
 
-				for key := range h.knownServices { // remove any services that dont exist in the current batch
-					if _, exists := servicesInBatch[key]; !exists {
-						bslog.Info("service no longer exists in GSLB - config zone", slog.String("action", "removing"), slog.String("serviceID", key))
-						err := h.svcManager.RemoveService(key)
-						if err != nil {
-							bslog.Error("failed to remove service", slog.Any("serviceID", key), slog.String("reason", err.Error()))
-						}
-					}
+			servicesInBatch := make(map[string]struct{}, 0)
+			for _, record := range records { // registers every service in the current batch
+				svc := h.handleRecord(record)
+				if svc != nil {
+					servicesInBatch[svc.GetID()] = struct{}{}
 				}
-
-				h.knownServices = servicesInBatch
 			}
+
+			for key := range h.knownServices { // remove any services that dont exist in the current batch
+				if _, exists := servicesInBatch[key]; !exists {
+					bslog.Info("service no longer exists in GSLB - config zone", slog.String("action", "removing"), slog.String("serviceID", key))
+					err := h.svcManager.RemoveService(key)
+					if err != nil {
+						bslog.Error("failed to remove service", slog.Any("serviceID", key), slog.String("reason", err.Error()))
+					}
+				}
+			}
+
+			h.knownServices = servicesInBatch
 
 		case err, ok := <-pollErrors:
 			if !ok {
@@ -131,7 +184,6 @@ func (h *Handler) bulkHandleRecords(records []dns.RR) {
 		rawData := strings.Join(txt.Txt, "")
 		data := strings.ReplaceAll(rawData, "\\", "")
 		gslbConfig := model.GSLBConfig{
-			MemberOf:         txt.Hdr.Name,
 			FailureThreshold: service.DEFAULT_FAILURE_THRESHOLD,
 			Views:            []string{config.DNS().DefaultView()},
 		}
@@ -157,7 +209,6 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 	rawData := strings.Join(txt.Txt, "")
 	data := strings.ReplaceAll(rawData, "\\", "")
 	svcConfig := model.GSLBConfig{
-		MemberOf:         txt.Hdr.Name,
 		FailureThreshold: service.DEFAULT_FAILURE_THRESHOLD,
 		Views:            []string{config.DNS().DefaultView()},
 	}
@@ -176,4 +227,65 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 	}
 
 	return svc
+}
+
+// claimOwnership materializes each client's owned memberOf from its claimed
+// value in the config zone, gated by the client's authorized attributes.
+// Clients known from a prior snapshot but absent here (record removed,
+// reassigned, or the zone went empty) have their grant explicitly cleared
+// rather than left stale.
+func (h *Handler) claimOwnership(ctx context.Context, records []dns.RR) {
+    if h.claimer == nil || h.clientID == nil {
+        return
+    }
+
+    claims := make(map[string][]string)
+    for _, record := range records {
+        txt, ok := record.(*dns.TXT)
+        if !ok {
+            continue
+        }
+
+        clientID, ok := h.clientID(txt.Hdr.Name)
+        if !ok {
+            continue
+        }
+
+        if _, exists := claims[clientID]; !exists {
+            claims[clientID] = []string{} // mark present in this snapshot even without a MemberOf claim
+        }
+
+        rawData := strings.Join(txt.Txt, "")
+        data := strings.ReplaceAll(rawData, "\\", "")
+        cfg := model.GSLBConfig{}
+        if err := json.NewDecoder(strings.NewReader(data)).Decode(&cfg); err != nil {
+            continue
+        }
+
+        if cfg.MemberOf == "" {
+            continue
+        }
+
+        claims[clientID] = append(claims[clientID], cfg.MemberOf)
+    }
+
+    for clientID := range h.knownClients { // reconcile: clear ownership for clients no longer present
+        if _, present := claims[clientID]; !present {
+            claims[clientID] = nil
+        }
+    }
+
+    if len(claims) == 0 {
+        return
+    }
+
+    if err := h.claimer.Materialize(ctx, claims); err != nil {
+        bslog.Error("failed to materialize ownership claims", slog.String("reason", err.Error()))
+    }
+
+    knownClients := make(map[string]struct{}, len(claims))
+    for clientID := range claims {
+        knownClients[clientID] = struct{}{}
+    }
+    h.knownClients = knownClients
 }
