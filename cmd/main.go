@@ -148,6 +148,9 @@ func main() {
 		gslbServiceRouter.GET("/status", gslbServicesApiService.GetServiceStatus).Action(authz.StatusRead)
 	}
 
+	dnsdistRouter := apiRouter.Group("/dnsdist").Use(securedChain)
+	dnsdistRouter.GET("/config", nil).Action(authz.SpoofsList)
+
 	if config.DevMode() {
 		rootRouter.GET("/debug/pprof/", pprof.Index).Public()
 		rootRouter.GET("/debug/pprof/heap/", pprof.Handler("heap").ServeHTTP).Public()
