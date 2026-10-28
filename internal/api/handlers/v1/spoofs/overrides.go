@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/vitistack/gslb-operator/internal/api/routes"
 	"github.com/vitistack/gslb-operator/internal/manager"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
@@ -22,7 +21,7 @@ import (
 
 func (s *SpoofsService) GetOverride(w http.ResponseWriter, r *http.Request) {
 	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
-	memberOf := r.PathValue(routes.MemberOf)
+	memberOf := r.PathValue("memberOf")
 
 	if memberOf == "" {
 		logger.Info("skipping due to insufficient input parameter", slog.String("reason", "missing path-value memberOf"))
@@ -93,7 +92,7 @@ func (s *SpoofsService) CreateOverride(w http.ResponseWriter, r *http.Request) {
 
 func (s *SpoofsService) DeleteOverride(w http.ResponseWriter, r *http.Request) {
 	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
-	memberOf := r.PathValue(routes.MemberOf)
+	memberOf := r.PathValue("memberOf")
 
 	if memberOf == "" {
 		logger.Info("skipping due to insufficient input parameter",
