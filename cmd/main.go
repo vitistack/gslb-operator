@@ -4,18 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/valkey-io/valkey-go"
-	"github.com/vitistack/gslb-operator/internal/api/handlers/auth"
-	"github.com/vitistack/gslb-operator/internal/api/handlers/service"
-	"github.com/vitistack/gslb-operator/internal/api/handlers/spoofs"
+	"github.com/vitistack/gslb-operator/internal/api"
+	v1Auth "github.com/vitistack/gslb-operator/internal/api/handlers/v1/auth"
+	"github.com/vitistack/gslb-operator/internal/api/routes"
 	"github.com/vitistack/gslb-operator/internal/brokers"
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns"
@@ -25,14 +22,12 @@ import (
 	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
 	"github.com/vitistack/gslb-operator/internal/repositories/status"
 	"github.com/vitistack/gslb-operator/pkg/auth/authc"
-	"github.com/vitistack/gslb-operator/pkg/auth/authz"
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/events"
 	"github.com/vitistack/gslb-operator/pkg/lua"
 	serviceModels "github.com/vitistack/gslb-operator/pkg/models/service"
 	valkeyStore "github.com/vitistack/gslb-operator/pkg/persistence/store/valkey"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
-	"github.com/vitistack/gslb-operator/pkg/rest/router"
 )
 
 func main() {
@@ -106,7 +101,7 @@ func main() {
 
 	dnsHandler.Start(ctx, cancel)
 
-	authService, err := auth.Init(authStore)
+	authService, err := v1Auth.Init(authStore)
 	if err != nil {
 		bslog.Fatal("failed to init auth service", slog.String("reason", err.Error()))
 	}
@@ -116,55 +111,19 @@ func main() {
 		authService.Verify(),
 	)
 
-	router := router.New(
-		authService.Enforcer(),
-		slog.Default(),
-		middleware.WithIncomingRequestLogging(slog.Default()),
-	)
-
-	rootRouter := router.Group("/")
-	rootRouter.Handle( // static wiring of prometheus metrics handler
-		http.MethodGet,
-		"/metrics",
-		promhttp.Handler(),
-	).Public()
-
-	apiRouter := rootRouter.Group("/api/v1")
-
-	authRouter := apiRouter.Group("/auth")
-	authRouter.POST("/token", authService.Token).Public()
-
-	gslbServicesApiService := service.NewGSLBServiceHandler(statusRepo)
-	gslbServiceRouter := apiRouter.Group("/service/{memberOf}").Use(securedChain)
-
-	spoofsApiService := spoofs.NewSpoofsService(servicesStore, mgr)
-	gslbServiceRouter.GET("/spoofs", spoofsApiService.GetFQDNSpoof).Use(securedChain).Action(authz.SpoofsRead)
-
-	gslbServiceRouter.GET("/override", spoofsApiService.GetOverride).Action(authz.OverrideRead)
-	gslbServiceRouter.POST("override", spoofsApiService.CreateOverride).Action(authz.OverrideCreate)
-	gslbServiceRouter.DELETE("/override", spoofsApiService.DeleteOverride).Action(authz.OverrideDelete)
-
-	if config.GSLB().StatusEnabled() {
-		gslbServiceRouter.GET("/status", gslbServicesApiService.GetServiceStatus).Action(authz.StatusRead)
+	deps := routes.Dependencies{
+		AuthService:   authService,
+		SecuredChain:  securedChain,
+		ServicesStore: servicesStore,
+		Manager:       mgr,
+		StatusRepo:    statusRepo,
 	}
 
-	dnsdistRouter := apiRouter.Group("/dnsdist").Use(securedChain)
-	dnsdistRouter.GET("/config", nil).Action(authz.SpoofsList)
-
-	if config.DevMode() {
-		rootRouter.GET("/debug/pprof/", pprof.Index).Public()
-		rootRouter.GET("/debug/pprof/heap/", pprof.Handler("heap").ServeHTTP).Public()
-	}
-
-	api, err := router.Build()
+	server, err := api.Init(deps)
 	if err != nil {
-		bslog.Fatal("unable to build api schema", slog.String("reason", err.Error()))
+		bslog.Fatal("could not initialize API routes", slog.String("reason", err.Error()))
 	}
 
-	server := http.Server{
-		Addr:    config.API().Port(),
-		Handler: api,
-	}
 	serverErr := make(chan error, 1)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)

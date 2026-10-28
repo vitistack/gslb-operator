@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"slices"
 	"context"
 	"log/slog"
 	"net/http"
@@ -11,8 +12,8 @@ type MiddlewareFunc func(next http.HandlerFunc) http.HandlerFunc
 
 func Chain(mws ...MiddlewareFunc) MiddlewareFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
-		for i := len(mws) - 1; i >= 0; i-- {
-			next = mws[i](next)
+		for _, mw := range slices.Backward(mws) {
+			next = mw(next)
 		}
 		return next
 	}
@@ -40,4 +41,8 @@ func WithIncomingRequestLogging(logger *slog.Logger) MiddlewareFunc {
 			next.ServeHTTP(w, r)
 		}
 	}
+}
+
+func Passthrough() MiddlewareFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc { return next }
 }
