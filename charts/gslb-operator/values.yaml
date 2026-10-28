@@ -79,7 +79,7 @@ httpRoute:
   # Which Gateways this Route is attached to.
   parentRefs:
     - name: gslb-operator-gateway
-      sectionName: gslb-operator
+      #sectionName: gslb-operator
       namespace: gateways
   # Hostnames matching HTTP header.
   hostnames: []
