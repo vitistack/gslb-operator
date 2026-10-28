@@ -19,7 +19,7 @@ func Register(parent *router.RouteGroup, deps routes.Dependencies) *router.Route
 
 	deps.SecuredChain = middleware.Passthrough()
 
-	g := parent.VersionGroup("/test")
+	g := parent.VersionGroup("/test").Public()
 	Mount(g, deps, handlers(deps))
 	bslog.Warn("mounted unauthenticated test API mirror", slog.String("prefix", g.Prefix()))
 	return g
