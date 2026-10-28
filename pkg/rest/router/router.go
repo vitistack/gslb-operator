@@ -30,16 +30,28 @@ func New(enforcer *authz.Enforcer, logger *slog.Logger, global ...middleware.Mid
 	}
 }
 
+// endpoint identifies a route independent of which version mounted it, so
+// Build() can tell "same action, same endpoint, different version" (allowed)
+// apart from "same action reused on a genuinely different endpoint" (rejected).
+type endpoint struct {
+	method    string
+	canonical string
+}
+
 // Build flattens the group tree, validates the invariants, wires middleware +
 // enforcement, and returns the handler. It fails fast so a misconfigured route
 // can never reach serving.
 func (rt *Router) Build() (http.Handler, error) {
-	seenAction := map[authz.Action]string{}
+	seenAction := map[authz.Action]endpoint{}
 	seenRoute := map[string]struct{}{}
 
-	var walk func(g *RouteGroup, prefix string, mws []middleware.MiddlewareFunc, public bool) error
-	walk = func(g *RouteGroup, prefix string, mws []middleware.MiddlewareFunc, public bool) error {
+	var walk func(g *RouteGroup, prefix, canonicalPrefix string, mws []middleware.MiddlewareFunc, public bool) error
+	walk = func(g *RouteGroup, prefix, canonicalPrefix string, mws []middleware.MiddlewareFunc, public bool) error {
 		gp := joinPattern(prefix, g.prefix)
+		gc := canonicalPrefix
+		if !g.versionSegment {
+			gc = joinPattern(canonicalPrefix, g.prefix)
+		}
 		gmws := append(append([]middleware.MiddlewareFunc{}, mws...), g.mws...)
 		gpublic := public || g.public
 
@@ -52,10 +64,12 @@ func (rt *Router) Build() (http.Handler, error) {
 			}
 
 			if r.action != "" {
-				if prev, dup := seenAction[r.action]; dup {
-					return fmt.Errorf("action %q reused by %q and %q", r.action, prev, r.method+" "+full)
+				ep := endpoint{method: r.method, canonical: joinPattern(gc, r.pattern)}
+				if prev, dup := seenAction[r.action]; dup && prev != ep {
+					return fmt.Errorf("action %q reused by %q and %q", r.action,
+						prev.method+" "+prev.canonical, ep.method+" "+ep.canonical)
 				}
-				seenAction[r.action] = r.method + " " + full
+				seenAction[r.action] = ep
 			}
 
 			key := r.method + " " + full
@@ -75,14 +89,14 @@ func (rt *Router) Build() (http.Handler, error) {
 		}
 
 		for _, c := range g.children {
-			if err := walk(c, gp, gmws, gpublic); err != nil {
+			if err := walk(c, gp, gc, gmws, gpublic); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 
-	if err := walk(rt.RouteGroup, "", nil, false); err != nil {
+	if err := walk(rt.RouteGroup, "", "", nil, false); err != nil {
 		return nil, err
 	}
 
@@ -90,16 +104,24 @@ func (rt *Router) Build() (http.Handler, error) {
 	return rt.mux, nil
 }
 
-// Actions returns the registered action inventory (whole tree), so the policy
-// loader can reject any role referencing an action that doesn't exist.
+// Actions returns the registered action inventory (whole tree, de-duplicated
+// since the same action can legitimately appear once per version plus once
+// for the "latest" alias), so the policy loader can reject any role
+// referencing an action that doesn't exist.
 func (rt *Router) Actions() []authz.Action {
+	seen := map[authz.Action]struct{}{}
 	var out []authz.Action
 	var walk func(g *RouteGroup)
 	walk = func(g *RouteGroup) {
 		for _, r := range g.routes {
-			if r.action != "" {
-				out = append(out, r.action)
+			if r.action == "" {
+				continue
 			}
+			if _, dup := seen[r.action]; dup {
+				continue
+			}
+			seen[r.action] = struct{}{}
+			out = append(out, r.action)
 		}
 		for _, c := range g.children {
 			walk(c)
