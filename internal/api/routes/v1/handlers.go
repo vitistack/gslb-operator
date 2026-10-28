@@ -7,6 +7,7 @@ import (
 	"github.com/vitistack/gslb-operator/internal/api/handlers/v1/service"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/v1/spoofs"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/pkg/auth/authz"
 	"github.com/vitistack/gslb-operator/pkg/rest/router"
 )
@@ -52,7 +53,7 @@ func Mount(g *router.RouteGroup, deps routes.Dependencies, h Handlers) {
 	gslbServiceRouter.POST("override", h.OverrideCreate).Action(authz.OverrideCreate)
 	gslbServiceRouter.DELETE("/override", h.OverrideDelete).Action(authz.OverrideDelete)
 
-	if deps.StatusEnabled {
+	if config.GSLB().StatusEnabled() {
 		gslbServiceRouter.GET("/status", h.ServiceStatus).Action(authz.StatusRead)
 	}
 

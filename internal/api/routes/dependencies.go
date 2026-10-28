@@ -17,5 +17,4 @@ type Dependencies struct {
 	ServicesStore persistence.Store[model.GSLBServiceGroup]
 	Manager       *manager.ServicesManager
 	StatusRepo    *status.StatusRepo
-	StatusEnabled bool
 }
