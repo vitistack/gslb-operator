@@ -45,8 +45,8 @@ func (rt *Router) Build() (http.Handler, error) {
 	seenAction := map[authz.Action]endpoint{}
 	seenRoute := map[string]struct{}{}
 
-	var walk func(g *RouteGroup, prefix, canonicalPrefix string, mws []middleware.MiddlewareFunc, public bool) error
-	walk = func(g *RouteGroup, prefix, canonicalPrefix string, mws []middleware.MiddlewareFunc, public bool) error {
+	var walk func(g *RouteGroup, prefix, canonicalPrefix string, mws []middleware.MiddlewareFunc, public bool, globals []middleware.MiddlewareFunc) error
+	walk = func(g *RouteGroup, prefix, canonicalPrefix string, mws []middleware.MiddlewareFunc, public bool, globals []middleware.MiddlewareFunc) error {
 		gp := joinPattern(prefix, g.prefix)
 		gc := canonicalPrefix
 		if !g.versionSegment {
@@ -54,6 +54,10 @@ func (rt *Router) Build() (http.Handler, error) {
 		}
 		gmws := append(append([]middleware.MiddlewareFunc{}, mws...), g.mws...)
 		gpublic := public || g.public
+		ggloblals := globals
+		if g.globalOverride {
+			ggloblals = g.globalMws
+		}
 
 		for _, r := range g.routes {
 			full := joinPattern(gp, r.pattern)
@@ -78,7 +82,12 @@ func (rt *Router) Build() (http.Handler, error) {
 			}
 			seenRoute[key] = struct{}{}
 
-			chain := append([]middleware.MiddlewareFunc{}, rt.global...)
+			rglobals := ggloblals
+			if r.globalOverride {
+				rglobals = r.globalMws
+			}
+
+			chain := append([]middleware.MiddlewareFunc{}, rglobals...)
 			chain = append(chain, gmws...)
 			chain = append(chain, r.mws...)
 			if !isPublic && rt.enforcer != nil {
@@ -89,14 +98,14 @@ func (rt *Router) Build() (http.Handler, error) {
 		}
 
 		for _, c := range g.children {
-			if err := walk(c, gp, gc, gmws, gpublic); err != nil {
+			if err := walk(c, gp, gc, gmws, gpublic, ggloblals); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 
-	if err := walk(rt.RouteGroup, "", "", nil, false); err != nil {
+	if err := walk(rt.RouteGroup, "", "", nil, false, rt.global); err != nil {
 		return nil, err
 	}
 

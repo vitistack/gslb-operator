@@ -13,6 +13,8 @@ type RouteGroup struct {
 	public         bool
 	versionSegment bool // see VersionGroup
 	mws            []middleware.MiddlewareFunc
+	globalMws      []middleware.MiddlewareFunc
+	globalOverride bool
 	routes         []*Route
 	children       []*RouteGroup
 }
@@ -37,6 +39,12 @@ func (g *RouteGroup) VersionGroup(prefix string) *RouteGroup {
 
 // Prefix returns this group's own path segment (not the fully resolved path).
 func (g *RouteGroup) Prefix() string { return g.prefix }
+
+func (g *RouteGroup) UseGlobal(mws ...middleware.MiddlewareFunc) *RouteGroup {
+	g.globalMws = append(g.globalMws, mws...)
+	g.globalOverride = true
+	return g
+}
 
 func (g *RouteGroup) Use(mw ...middleware.MiddlewareFunc) *RouteGroup {
 	g.mws = append(g.mws, mw...)
