@@ -33,6 +33,8 @@ data:
       status:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      nameserver: {{ .Values.gslb.nameserver }}
+      zone: {{ .Values.gslb.zone }}
       site: {{ .Values.datacenter }}
       poll_interval: {{ .Values.settings.poll_interval }}
       {{- with .Values.dnsdist }}
