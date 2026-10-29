@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/netip"
 	"slices"
+	"strings"
 	"uuid"
 )
 
@@ -51,19 +52,47 @@ func Addr(remoteAddr string, headers http.Header, trustedPrefixes []netip.Prefix
 	}
 
 	for _, prefix := range trustedPrefixes {
-		if prefix.Contains(ip.Addr()) {
-			if xForwardedFor := headers.Get("X-Forwarded-For"); xForwardedFor != "" {
-				return xForwardedFor
-			}
+		if !prefix.Contains(ip.Addr()) {
+			continue
+		}
 
-			if xRealIp := headers.Get("X-Real-Ip"); xRealIp != "" {
-				return xRealIp
+		if xForwardedFor := headers.Get("X-Forwarded-For"); xForwardedFor != "" {
+			if addr, ok := xForwardedForUntrustedAddress(xForwardedFor, trustedPrefixes); ok {
+				return addr
 			}
+		}
 
+		if xRealIp := headers.Get("X-Real-Ip"); xRealIp != "" {
+			return xRealIp
 		}
 	}
 
 	return ip.Addr().String()
+}
+
+func xForwardedForUntrustedAddress(chain string, trustedPrefixes []netip.Prefix) (string, bool) {
+	hops := strings.Split(chain, ",")
+
+	for _, hop := range slices.Backward(hops) {
+		candidate, err := netip.ParseAddr(strings.TrimSpace(hop))
+		if err != nil {
+			continue // malformed hop
+		}
+
+		trusted := false
+		for _, prefix := range trustedPrefixes {
+			if prefix.Contains(candidate) {
+				trusted = true
+				break
+			}
+		}
+
+		if !trusted {
+			return candidate.String(), true
+		}
+	}
+
+	return "", false
 }
 
 func Passthrough() MiddlewareFunc {

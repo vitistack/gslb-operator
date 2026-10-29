@@ -180,6 +180,7 @@ settings:
   env: dev
   sandbox: sandbox.lua
   port: :3000
+  trusted_prefixes: []
   poll_interval: 1m
   log_level: DEBUG
   vk_addr: gslb-valkey-service.gslb-operator.svc.cluster.local:6379
