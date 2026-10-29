@@ -10,8 +10,6 @@ import (
 )
 
 var secretsKeyMap = map[string]string{
-	"GSLB_NAMESERVER":  "gslb.nameserver",
-	"GSLB_ZONE":        "gslb.zone",
 	"GSLB_DNSDIST_KEY": "gslb.dnsdist.key",
 	"JWT_SECRET":       "auth.jwt.secret",
 }
@@ -85,7 +83,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("split_dns.defaultView", "default")
 
 	v.SetDefault("gslb.poll_interval", "1m")
-	v.SetDefault("gslb.dnsdist_servers_file", "./secrets/GSLB_DNSDIST_SERVERS")
 
 	v.SetDefault("mq.enabled", false)
 
@@ -102,7 +99,6 @@ func loadSecrets(v *viper.Viper, flags FeatureFlags, dir string) (loaded, total 
 	}
 
 	if flags.MQ.Enabled {
-		secretsKeyMap["MQ_ENDPOINT"] = "mq.endpoint"
 		secretsKeyMap["MQ_PASS"] = "mq.pass"
 		secretsKeyMap["MQ_USER"] = "mq.user"
 	}
