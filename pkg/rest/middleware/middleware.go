@@ -21,14 +21,14 @@ func Chain(mws ...MiddlewareFunc) MiddlewareFunc {
 	}
 }
 
-func WithIncomingRequestLogging(logger *slog.Logger, trustedPrefixes []netip.Prefix) MiddlewareFunc {
+func WithIncomingRequestLogging(logger *slog.Logger, level slog.Level, trustedPrefixes []netip.Prefix) MiddlewareFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			parent := r.Context() // re-use request context
 
 			r = r.WithContext(context.WithValue(parent, "id", uuid.NewV7().String()))
 
-			logger.Info("incoming request",
+			logger.Log(context.Background(), level, "incoming request",
 				slog.GroupAttrs(
 					"meta_data",
 					slog.Any("request_id", r.Context().Value("id")),

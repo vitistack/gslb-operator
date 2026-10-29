@@ -24,13 +24,13 @@ func Init(deps routes.Dependencies) (*http.Server, error) {
 	router := router.New(
 		deps.AuthService.Enforcer(),
 		slog.Default(),
-		middleware.WithIncomingRequestLogging(slog.Default(), prefixes),
+		middleware.WithIncomingRequestLogging(slog.Default(), slog.LevelInfo, prefixes),
 	)
 
 	rootRouter := router.Group("/")
 
 	debug.Register(rootRouter)
-	metrics.Register(rootRouter)
+	metrics.Register(rootRouter).UseGlobal(middleware.WithIncomingRequestLogging(slog.Default(), slog.LevelDebug, prefixes))
 
 	apiRouter := rootRouter.Group("/api")
 
