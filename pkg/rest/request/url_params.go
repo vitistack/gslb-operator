@@ -18,21 +18,34 @@ func UnMarshallParams[T any](urlValues url.Values, dest *T) error {
 	}
 
 	numFields := val.NumField()
+	knownParams := make(map[string]struct{}, numFields)
 	for i := range numFields {
 		field := val.Field(i)
 		fieldType := valType.Field(i)
 
 		tag, tagOK := fieldType.Tag.Lookup("param")
+		if !tagOK {
+			continue
+		}
+		knownParams[tag] = struct{}{}
+
 		value := ""
 		if urlValues.Has(tag) {
 			value = urlValues.Get(tag)
 		}
 
-		if tagOK && value != "" {
+		if value != "" {
 			err := setField(field, value)
 			if err != nil {
 				return fmt.Errorf("unable to marshall url params: %s", err.Error())
 			}
+		}
+	}
+
+	// reject query params that have no matching `param` tag on dest
+	for key := range urlValues {
+		if _, ok := knownParams[key]; !ok {
+			return fmt.Errorf("unknown url param: %s", key)
 		}
 	}
 
