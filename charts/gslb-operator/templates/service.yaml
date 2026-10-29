@@ -7,7 +7,6 @@ metadata:
     {{- include "gslb-operator.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
-  externalTrafficPolicy: Local
   ports:
     - port: {{ .Values.service.port }}
       targetPort: {{ trimPrefix ":" .Values.settings.port }}
