@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net/netip"
 	"os"
 	"time"
 
@@ -189,11 +190,24 @@ func (s *server) LogLevel() slog.Level {
 
 // API configuration
 type api struct {
-	PORT string `mapstructure:"port"`
+	PORT            string   `mapstructure:"port"`
+	TrustedPrefixes []string `mapstructure:"trusted_prefixes"`
 }
 
 func (a *api) Port() string {
 	return a.PORT
+}
+
+func (a *api) TrustedCIDRPrefixes() ([]netip.Prefix, error) {
+	prefixes := make([]netip.Prefix, 0, len(a.TrustedPrefixes))
+	for _, cidr := range a.TrustedPrefixes {
+		p, err := netip.ParsePrefix(cidr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid api.trusted_proxies entry %q: %w", cidr, err)
+		}
+		prefixes = append(prefixes, p)
+	}
+	return prefixes, nil
 }
 
 type splitDns struct {

@@ -78,6 +78,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.jwt.ttl", "2h")
 
 	v.SetDefault("api.port", ":8080")
+	v.SetDefault("api.trusted_prefixes", []string{})
 
 	v.SetDefault("split_dns.enabled", true)
 	v.SetDefault("split_dns.views", []string{"default"})
