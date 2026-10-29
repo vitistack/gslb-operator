@@ -7,7 +7,9 @@ metadata:
     {{- include "gslb-operator.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
+  {{- if or (eq .Values.service.type "NodePort") (eq .Values.service.type "LoadBalancer") }}
   externalTrafficPolicy: Local
+  {{- end }}
   ports:
     - port: {{ .Values.service.port }}
       targetPort: {{ trimPrefix ":" .Values.settings.port }}

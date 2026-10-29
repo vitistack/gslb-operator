@@ -16,10 +16,15 @@ import (
 )
 
 func Init(deps routes.Dependencies) (*http.Server, error) {
+	prefixes, err := config.API().TrustedCIDRPrefixes()
+	if err != nil {
+		return nil, fmt.Errorf("invalid trusted proxies config: %w", err)
+	}
+
 	router := router.New(
 		deps.AuthService.Enforcer(),
 		slog.Default(),
-		middleware.WithIncomingRequestLogging(slog.Default()),
+		middleware.WithIncomingRequestLogging(slog.Default(), prefixes),
 	)
 
 	rootRouter := router.Group("/")

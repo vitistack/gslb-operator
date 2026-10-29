@@ -18,6 +18,10 @@ data:
 
     api:
       port: {{ .Values.settings.port }}
+      {{- with .Values.settings.trusted_prefixes }}
+      trusted_prefixes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 
     split_dns:
       enabled: {{ .Values.split_dns.enabled }}
