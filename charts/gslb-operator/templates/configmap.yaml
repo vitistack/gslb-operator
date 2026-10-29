@@ -28,32 +28,28 @@ data:
       defaultView: {{ .Values.split_dns.defaultView }}
       views: {{- toYaml .Values.split_dns.views | nindent 8 }}
 
-
     gslb:
+      {{- with .Values.gslb.status }}
       status:
-        enabled: false
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       site: {{ .Values.datacenter }}
-      poll_interval: 1m
+      poll_interval: {{ .Values.settings.poll_interval }}
       {{- with .Values.dnsdist }}
       dnsdist:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 
-
     valkey:
       enabled: true
       addr: {{ .Values.settings.vk_addr }}
 
-
-    {{- if .Values.mq.enabled }}
+    {{- with .Values.mq }}
     mq:
-      enabled: true
+      {{- toYaml . | nindent 8 }}
     {{- end }}
 
-    {{- if .Values.webhooks.enabled }}
+    {{- with .Values.webhooks }}
     webhooks:
-      enabled: true
-      notifications:
-        slack:
-          enabled: false
-    {{- end }}
+      {{- toYaml . | nindent 8 }}
+    {{- end}}
