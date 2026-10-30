@@ -50,7 +50,7 @@ func NewStatusBroker(ctx context.Context, statusRepo *status.StatusRepo, groupRe
 		amqpUrlPrefix = "amqps://"
 	}
 	wg := sync.WaitGroup{}
-	scheduler := scheduler.NewScheduler[string](time.Second*5, &wg)
+	scheduler := scheduler.NewScheduler[string](time.Minute*5, &wg)
 
 	broker := &StatusBroker{
 		statusRepo:       statusRepo,
