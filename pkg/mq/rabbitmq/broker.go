@@ -63,6 +63,11 @@ func New[T any](ctx context.Context, ampqURL string, opts ...brokerOption[T]) mq
 		opt(broker)
 	}
 
+	broker.logger = broker.logger.With(
+		slog.String("exchange", broker.exchange),
+		slog.String("queue", broker.queue),
+	)
+
 	// Separate connections so a slow/blocked consumer connection can never
 	// stall publishing (and vice versa).
 	pubConn := connection.NewConnection(ctx, connection.Publish, ampqURL)
@@ -227,14 +232,25 @@ func (b *Broker[T]) Publish(ctx context.Context, payload T) error {
 		return fmt.Errorf("mq: broker failed to retrieve channel: %w", err)
 	}
 
-	b.logger.Info("mq: publishing message", slog.String("message_id", msg.MessageId))
+	b.logger.Info("mq: publishing message",
+		slog.String("message_id", msg.MessageId),
+		slog.String("message_type", fmt.Sprintf("%T", payload)),
+		slog.Int("body_bytes", len(body)),
+	)
 
-	return channel.Publish(
+	if err := channel.Publish(
 		ctx,
 		b.exchange,
 		b.queue,
 		msg,
-	)
+	); err != nil {
+		b.logger.Error("mq: failed to publish message",
+			slog.String("message_id", msg.MessageId),
+			slog.String("reason", err.Error()),
+		)
+		return fmt.Errorf("mq: failed to publish message: %w", err)
+	}
+	return nil
 }
 
 func (b *Broker[T]) Subscribe(ctx context.Context, handler mq.MessageHandler[T]) error {
@@ -262,27 +278,53 @@ func (b *Broker[T]) Subscribe(ctx context.Context, handler mq.MessageHandler[T])
 }
 
 func (b *Broker[T]) handle(ctx context.Context, delivery amqp.Delivery, handler mq.MessageHandler[T]) {
-	var msg T
-	if err := json.Unmarshal(delivery.Body, &msg); err != nil {
-		delivery.Nack(false, false)
-		return
-	}
+    start := time.Now()
 
-	b.logger.Info("mq: received new message", slog.String("message_id", delivery.MessageId))
+    var msg T
+    if err := json.Unmarshal(delivery.Body, &msg); err != nil {
+        b.logger.Error("mq: failed to unmarshal message, discarding",
+            slog.String("message_id", delivery.MessageId),
+            slog.Uint64("delivery_tag", delivery.DeliveryTag),
+            slog.Bool("redelivered", delivery.Redelivered),
+            slog.Int("body_bytes", len(delivery.Body)),
+            slog.String("reason", err.Error()),
+        )
+        delivery.Nack(false, false)
+        return
+    }
 
-	err := handler(ctx, msg)
-	if err != nil {
-		delivery.Reject(false)
-		return
-	}
+    b.logger.Info("mq: received message",
+        slog.String("message_id", delivery.MessageId),
+        slog.String("message_type", fmt.Sprintf("%T", msg)),
+        slog.String("consumer_tag", delivery.ConsumerTag),
+        slog.Uint64("delivery_tag", delivery.DeliveryTag),
+        slog.Bool("redelivered", delivery.Redelivered),
+        slog.Int("body_bytes", len(delivery.Body)),
+    )
 
-	err = delivery.Ack(true)
-	if err != nil {
-		b.logger.Error("mq: could not acknowledge delivery",
-			slog.String("reason", err.Error()),
-			slog.String("id", delivery.MessageId),
-		)
-	}
+    if err := handler(ctx, msg); err != nil {
+        b.logger.Error("mq: handler failed, rejecting message",
+            slog.String("message_id", delivery.MessageId),
+            slog.Uint64("delivery_tag", delivery.DeliveryTag),
+            slog.String("reason", err.Error()),
+        )
+        delivery.Reject(false)
+        return
+    }
+
+    if err := delivery.Ack(true); err != nil {
+        b.logger.Error("mq: could not acknowledge delivery",
+            slog.String("message_id", delivery.MessageId),
+            slog.Uint64("delivery_tag", delivery.DeliveryTag),
+            slog.String("reason", err.Error()),
+        )
+        return
+    }
+
+    b.logger.Debug("mq: message processed",
+        slog.String("message_id", delivery.MessageId),
+        slog.Duration("elapsed", time.Since(start)),
+    )
 }
 
 func (b *Broker[T]) Close(ctx context.Context) error {
