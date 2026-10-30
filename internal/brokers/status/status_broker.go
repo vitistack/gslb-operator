@@ -50,7 +50,7 @@ func NewStatusBroker(ctx context.Context, statusRepo *status.StatusRepo, groupRe
 		amqpUrlPrefix = "amqps://"
 	}
 	wg := sync.WaitGroup{}
-	scheduler := scheduler.NewScheduler[string](time.Minute*5, &wg)
+	scheduler := scheduler.NewScheduler[string](time.Second*5, &wg)
 
 	broker := &StatusBroker{
 		statusRepo:       statusRepo,
@@ -68,9 +68,10 @@ func NewStatusBroker(ctx context.Context, statusRepo *status.StatusRepo, groupRe
 				mqCfg.Endpoint(),
 			),
 			rabbitmq.WithExchange[serviceModels.SiteGSLBServiceStatus]("ex.gslb.service-status"),
-			rabbitmq.WithQueue[serviceModels.SiteGSLBServiceStatus]("q.gslb.service-status"),
+			rabbitmq.WithQueue[serviceModels.SiteGSLBServiceStatus](fmt.Sprintf("q.gslb.service-status.%s", config.GSLB().Site())),
 			rabbitmq.WithFanout[serviceModels.SiteGSLBServiceStatus](),
 			rabbitmq.WithPrefetch[serviceModels.SiteGSLBServiceStatus](150),
+			rabbitmq.WithConsumerTag[serviceModels.SiteGSLBServiceStatus](fmt.Sprintf("gslb-operator-%s", config.GSLB().Site())),
 		),
 	}
 	broker.scheduler.OnTick(func(memberOf string) {
