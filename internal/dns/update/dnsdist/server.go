@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"uuid"
 
 	"github.com/vitistack/gslb-operator/internal/dns/update"
 	dnsviews "github.com/vitistack/gslb-operator/internal/dns/views"
@@ -212,62 +211,62 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 	return nil
 }
 
-func (s *server) BulkStatus() (map[uuid.UUID]service.DNSServerStatusForService, error) {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
-
-	baseStatus := service.DNSServerStatusForService{
-		Programmed: true,
-		Host:       s.name,
-		View:       s.selector.View(),
-		Address:    nil,
-	}
-
-	statuses := make(map[uuid.UUID]service.DNSServerStatusForService)
-
-	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
-	if err != nil {
-		return nil, fmt.Errorf("%s in view %s: failed to fetch rule-set: %w", s.name, s.selector.View(), err)
-	}
-
-	IterateRuleSet(rawRuleSet).
-		Filter(func(rl rules.RuleLine) bool { return strings.Contains(rl.Action, "spoof") }).
-		Each(
-			func(rl rules.RuleLine) {
-				rawAddress := strings.TrimPrefix(rl.Action, "spoof in ")
-				status := baseStatus
-				status.Address, err = ip.FromString(rawAddress)
-				if err != nil {
-					bslog.Error(
-						"failed to generate status",
-						slog.Group("server",
-							slog.String("name", s.name),
-							slog.String("view", s.selector.View()),
-						),
-						slog.String("reason", fmt.Errorf("failed to parse spoof-address from RuleAction: %w", err).Error()),
-					)
-					return
-				}
-
-				id, err := uuid.Parse(rl.UUID)
-				if err != nil {
-					bslog.Error(
-						"failed to generate status",
-						slog.Group("server",
-							slog.String("name", s.name),
-							slog.String("view", s.selector.View()),
-						),
-						slog.String("reason", fmt.Errorf("failed to parse rule-line uuid: %w", err).Error()),
-					)
-					return
-				}
-
-				statuses[id] = status
-			},
-		)
-
-	return statuses, nil
-}
+//func (s *server) BulkStatus() (map[uuid.UUID]service.DNSServerStatusForService, error) {
+//	s.lock.RLock()
+//	defer s.lock.RUnlock()
+//
+//	baseStatus := service.DNSServerStatusForService{
+//		Programmed: true,
+//		Host:       s.name,
+//		View:       s.selector.View(),
+//		Address:    nil,
+//	}
+//
+//	statuses := make(map[uuid.UUID]service.DNSServerStatusForService)
+//
+//	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
+//	if err != nil {
+//		return nil, fmt.Errorf("%s in view %s: failed to fetch rule-set: %w", s.name, s.selector.View(), err)
+//	}
+//
+//	IterateRuleSet(rawRuleSet).
+//		Filter(func(rl rules.RuleLine) bool { return strings.Contains(rl.Action, "spoof") }).
+//		Each(
+//			func(rl rules.RuleLine) {
+//				rawAddress := strings.TrimPrefix(rl.Action, "spoof in ")
+//				status := baseStatus
+//				status.Address, err = ip.FromString(rawAddress)
+//				if err != nil {
+//					bslog.Error(
+//						"failed to generate status",
+//						slog.Group("server",
+//							slog.String("name", s.name),
+//							slog.String("view", s.selector.View()),
+//						),
+//						slog.String("reason", fmt.Errorf("failed to parse spoof-address from RuleAction: %w", err).Error()),
+//					)
+//					return
+//				}
+//
+//				id, err := uuid.Parse(rl.UUID)
+//				if err != nil {
+//					bslog.Error(
+//						"failed to generate status",
+//						slog.Group("server",
+//							slog.String("name", s.name),
+//							slog.String("view", s.selector.View()),
+//						),
+//						slog.String("reason", fmt.Errorf("failed to parse rule-line uuid: %w", err).Error()),
+//					)
+//					return
+//				}
+//
+//				statuses[id] = status
+//			},
+//		)
+//
+//	return statuses, nil
+//}
 
 func (s *server) Status(uuid string) (service.DNSServerStatusForService, error) {
 	s.lock.RLock()
