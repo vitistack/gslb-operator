@@ -6,12 +6,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"time"
-	"uuid"
 
 	"github.com/vitistack/gslb-operator/internal/dns/update"
 	dnsviews "github.com/vitistack/gslb-operator/internal/dns/views"
@@ -27,6 +27,11 @@ import (
 )
 
 var dnsdistRuleLineRegexPattern = regexp.MustCompile(`\S+`)
+
+var dnsdistRuleUUIDRegexPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// matches candidate IPv4/IPv6 tokens in a rule action, validated below with netip
+var dnsdistActionAddressRegexPattern = regexp.MustCompile(`[0-9a-fA-F.:]+`)
 
 type server struct {
 	name     string
@@ -147,8 +152,7 @@ func (s *server) Hash() (string, error) {
 			},
 		).
 		Each(func(rl rules.RuleLine) {
-			address := strings.TrimPrefix(rl.Action, "spoof in ")
-			spoofEntries = append(spoofEntries, rl.UUID+":"+address)
+			spoofEntries = append(spoofEntries, rl.UUID+":"+spoofActionAddress(rl.Action))
 		})
 
 	slices.Sort(spoofEntries)
@@ -207,62 +211,62 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 	return nil
 }
 
-func (s *server) BulkStatus() (map[uuid.UUID]service.DNSServerStatusForService, error) {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
-
-	baseStatus := service.DNSServerStatusForService{
-		Programmed: true,
-		Host:       s.name,
-		View:       s.selector.View(),
-		Address:    nil,
-	}
-
-	statuses := make(map[uuid.UUID]service.DNSServerStatusForService)
-
-	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
-	if err != nil {
-		return nil, fmt.Errorf("%s in view %s: failed to fetch rule-set: %w", s.name, s.selector.View(), err)
-	}
-
-	IterateRuleSet(rawRuleSet).
-		Filter(func(rl rules.RuleLine) bool { return strings.Contains(rl.Action, "spoof") }).
-		Each(
-			func(rl rules.RuleLine) {
-				rawAddress := strings.TrimPrefix(rl.Action, "spoof in ")
-				status := baseStatus
-				status.Address, err = ip.FromString(rawAddress)
-				if err != nil {
-					bslog.Error(
-						"failed to generate status",
-						slog.Group("server",
-							slog.String("name", s.name),
-							slog.String("view", s.selector.View()),
-						),
-						slog.String("reason", fmt.Errorf("failed to parse spoof-address from RuleAction: %w", err).Error()),
-					)
-					return
-				}
-
-				id, err := uuid.Parse(rl.UUID)
-				if err != nil {
-					bslog.Error(
-						"failed to generate status",
-						slog.Group("server",
-							slog.String("name", s.name),
-							slog.String("view", s.selector.View()),
-						),
-						slog.String("reason", fmt.Errorf("failed to parse rule-line uuid: %w", err).Error()),
-					)
-					return
-				}
-
-				statuses[id] = status
-			},
-		)
-
-	return statuses, nil
-}
+//func (s *server) BulkStatus() (map[uuid.UUID]service.DNSServerStatusForService, error) {
+//	s.lock.RLock()
+//	defer s.lock.RUnlock()
+//
+//	baseStatus := service.DNSServerStatusForService{
+//		Programmed: true,
+//		Host:       s.name,
+//		View:       s.selector.View(),
+//		Address:    nil,
+//	}
+//
+//	statuses := make(map[uuid.UUID]service.DNSServerStatusForService)
+//
+//	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
+//	if err != nil {
+//		return nil, fmt.Errorf("%s in view %s: failed to fetch rule-set: %w", s.name, s.selector.View(), err)
+//	}
+//
+//	IterateRuleSet(rawRuleSet).
+//		Filter(func(rl rules.RuleLine) bool { return strings.Contains(rl.Action, "spoof") }).
+//		Each(
+//			func(rl rules.RuleLine) {
+//				rawAddress := strings.TrimPrefix(rl.Action, "spoof in ")
+//				status := baseStatus
+//				status.Address, err = ip.FromString(rawAddress)
+//				if err != nil {
+//					bslog.Error(
+//						"failed to generate status",
+//						slog.Group("server",
+//							slog.String("name", s.name),
+//							slog.String("view", s.selector.View()),
+//						),
+//						slog.String("reason", fmt.Errorf("failed to parse spoof-address from RuleAction: %w", err).Error()),
+//					)
+//					return
+//				}
+//
+//				id, err := uuid.Parse(rl.UUID)
+//				if err != nil {
+//					bslog.Error(
+//						"failed to generate status",
+//						slog.Group("server",
+//							slog.String("name", s.name),
+//							slog.String("view", s.selector.View()),
+//						),
+//						slog.String("reason", fmt.Errorf("failed to parse rule-line uuid: %w", err).Error()),
+//					)
+//					return
+//				}
+//
+//				statuses[id] = status
+//			},
+//		)
+//
+//	return statuses, nil
+//}
 
 func (s *server) Status(uuid string) (service.DNSServerStatusForService, error) {
 	s.lock.RLock()
@@ -285,10 +289,7 @@ func (s *server) Status(uuid string) (service.DNSServerStatusForService, error) 
 		return status, nil // no status for uuid
 	}
 
-	actionTrimmer := strings.NewReplacer("spoof in", "", " ", "") // removes all whitespace and prefixed spoof in for action
-	rawAddress := actionTrimmer.Replace(rule.Action)
-
-	status.Address, err = ip.FromString(rawAddress)
+	status.Address, err = ip.FromString(spoofActionAddress(rule.Action))
 	if err != nil {
 		return status, fmt.Errorf("failed to parse ip address: %w", err)
 	}
@@ -298,26 +299,24 @@ func (s *server) Status(uuid string) (service.DNSServerStatusForService, error) 
 
 func MapStringToDNSDistRule(ruleLine string) rules.RuleLine {
 	matches := dnsdistRuleLineRegexPattern.FindAllString(ruleLine, -1)
-	if len(matches) > 0 {
-		rule := rules.RuleLine{
-			ID: matches[0],
-		}
-		if len(matches) == 8 {
-			rule.Name = ""
-			rule.UUID = matches[1]
-			rule.Matches = matches[3]
-			rule.Rule = matches[4]
-			rule.Action = strings.Join(matches[5:], " ")
-		} else if len(matches) == 9 {
-			rule.Name = matches[1]
-			rule.UUID = matches[2]
-			rule.Matches = matches[4]
-			rule.Rule = matches[5]
-			rule.Action = strings.Join(matches[6:], " ")
-		}
+	if len(matches) == 0 {
+		return rules.RuleLine{}
+	}
+
+	rule := rules.RuleLine{ID: matches[0]}
+
+	uuidPos := slices.IndexFunc(matches, func(s string) bool { return dnsdistRuleUUIDRegexPattern.MatchString(s) })
+	if uuidPos == -1 || uuidPos+2 >= len(matches) {
 		return rule
 	}
-	return rules.RuleLine{}
+
+	rule.Name = strings.Join(matches[1:uuidPos], " ")
+	rule.UUID = matches[uuidPos]
+	rule.Matches = matches[uuidPos+1]
+	rule.Rule = matches[uuidPos+2]
+	rule.Action = strings.Join(matches[uuidPos+3:], " ")
+
+	return rule
 }
 
 func IterateRuleSet(ruleSet string) iter.Iterator[rules.RuleLine] {
@@ -336,4 +335,14 @@ func IterateRuleSet(ruleSet string) iter.Iterator[rules.RuleLine] {
 
 	// 1 skip because the first line is always the header line for rules
 	return baseIter.Skip(1).Map(MapStringToDNSDistRule)
+}
+
+func spoofActionAddress(action string) string {
+	addresses := make([]string, 0, 2)
+	for _, candidate := range dnsdistActionAddressRegexPattern.FindAllString(action, -1) {
+		if _, err := netip.ParseAddr(candidate); err == nil {
+			addresses = append(addresses, candidate)
+		}
+	}
+	return strings.Join(addresses, ",")
 }
