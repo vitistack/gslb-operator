@@ -59,3 +59,9 @@ func WithLogger[T any](l *slog.Logger) brokerOption[T] {
 		broker.logger = l
 	}
 }
+
+func WithConsumerTag[T any](tag string) brokerOption[T] {
+	return func(broker *Broker[T]) {
+		broker.consumerTag = tag
+	}
+}
