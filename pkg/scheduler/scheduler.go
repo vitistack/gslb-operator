@@ -142,13 +142,14 @@ func (s *Scheduler[T]) reSchedule(item *ScheduledItem[T]) {
 	}
 
 	if !item.shouldReSchedule {
-		// just return since the service is now removed from the heap
+		heap.Remove(&s.heap, idx)
 		return
 	}
 
 	item.nextCheckTime = time.Now().Add(s.newTickInterval()) // initiate the next checktime
 
-	heap.Push(&s.heap, item)
+	// item is still present at idx (Peek doesn't remove it) - re-sift in place instead of pushing a duplicate
+	heap.Fix(&s.heap, idx)
 
 	if s.heap.Len() == 0 {
 		s.startLoop()

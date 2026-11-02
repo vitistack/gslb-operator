@@ -41,7 +41,7 @@ func Init(ctx context.Context, client valkey.Client, statusRepo *status.StatusRe
 			webhooks_broker.Init(ctx, webhooksStore)
 		}
 
-		if config.GSLB().StatusEnabled() {
+		if config.GSLB().Status().Enabled() {
 			bslog.Debug("gslb site status enabled: initializing status broker")
 			status_broker.Init(ctx, statusRepo, serviceGroupRepo, dnsStatusFetcher)
 		}
@@ -52,7 +52,7 @@ func Init(ctx context.Context, client valkey.Client, statusRepo *status.StatusRe
 		bslog.Error("unable to create webhooks broker", slog.String("reason", "feature-flag mq not enabled"))
 	}
 
-	if config.GSLB().StatusEnabled() {
+	if config.GSLB().Status().Enabled() {
 		bslog.Error("unable to create gslb-service status broker", slog.String("reason", "feature-flag mq not enabled"))
 	}
 }

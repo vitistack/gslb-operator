@@ -235,22 +235,20 @@ func (s *splitDns) DNSViews() []string {
 
 // gslb configuration
 type gslb struct {
-	Status struct {
-		Enabled bool `mapstructure:"enabled"`
-	} `mapstructure:"status"`
-	SITE         string  `mapstructure:"site"`
-	ZONE         string  `mapstructure:"zone"`
-	NS           string  `mapstructure:"nameserver"`
-	PollInterval string  `mapstructure:"poll_interval"`
-	DIST         dnsdist `mapstructure:"dnsdist"`
+	STATUS       gslbStatus `mapstructure:"status"`
+	SITE         string     `mapstructure:"site"`
+	ZONE         string     `mapstructure:"zone"`
+	NS           string     `mapstructure:"nameserver"`
+	PollInterval string     `mapstructure:"poll_interval"`
+	DIST         dnsdist    `mapstructure:"dnsdist"`
 }
 
 func (g *gslb) Site() string {
 	return g.SITE
 }
 
-func (g *gslb) StatusEnabled() bool {
-	return g.Status.Enabled
+func (g *gslb) Status() *gslbStatus {
+	return &g.STATUS
 }
 
 func (g *gslb) Zone() string {
@@ -272,6 +270,23 @@ func (g *gslb) Poll() (timesutil.Duration, error) {
 
 func (g *gslb) DNSDIST() *dnsdist {
 	return &g.DIST
+}
+
+type gslbStatus struct {
+	ENABLED     bool   `mapstructure:"enabled"`
+	PubInterval string `mapstructure:"publish_interval"`
+}
+
+func (g *gslbStatus) Enabled() bool {
+	return g.ENABLED
+}
+
+func (g *gslbStatus) PublishInterval() (time.Duration, error) {
+	dur, err := time.ParseDuration(g.PubInterval)
+	if err != nil {
+		return 0, fmt.Errorf("invalid configurated publish interval: %s: %w", g.PubInterval, err)
+	}
+	return dur, nil
 }
 
 type dnsdist struct {
