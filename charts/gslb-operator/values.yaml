@@ -208,6 +208,10 @@ vault:
     - secretKey: MQ_USER
       property: mq-user
 
+api:
+  test:
+    enabled: false
+
 split_dns:
   enabled: true
 
