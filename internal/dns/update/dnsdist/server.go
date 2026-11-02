@@ -216,7 +216,7 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 	}
 
 	defer func() {
-		bslog.Info("reconcilation result",
+		bslog.Info("reconcile result",
 			slog.Group("server",
 				slog.String("name", s.name),
 				slog.String("view", s.selector.View()),
