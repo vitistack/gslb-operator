@@ -191,11 +191,16 @@ func (s *server) LogLevel() slog.Level {
 // API configuration
 type api struct {
 	PORT            string   `mapstructure:"port"`
+	TEST            bool     `mapstructure:"test"`
 	TrustedPrefixes []string `mapstructure:"trusted_prefixes"`
 }
 
 func (a *api) Port() string {
 	return a.PORT
+}
+
+func (a *api) Test() bool {
+	return a.TEST
 }
 
 func (a *api) TrustedCIDRPrefixes() ([]netip.Prefix, error) {

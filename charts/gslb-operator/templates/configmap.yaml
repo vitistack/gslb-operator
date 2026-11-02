@@ -18,6 +18,7 @@ data:
 
     api:
       port: {{ .Values.settings.port }}
+      test: {{ .Values.api.test.enabled }}
       {{- with .Values.settings.trusted_prefixes }}
       trusted_prefixes:
         {{- toYaml . | nindent 8 }}

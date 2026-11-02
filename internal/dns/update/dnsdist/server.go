@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -182,12 +183,17 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 		return fmt.Errorf("failed to list rules: %w", err)
 	}
 
+	var clearOldRulesErr error
 	for rule := range IterateRuleSet(rawRuleSet).
 		Filter(func(rl rules.RuleLine) bool { return strings.Contains(rl.Action, "spoof") }) {
 		err := s.client.Rules().Remove(rule.UUID)
 		if err != nil {
-			return fmt.Errorf("%s failed to remove configured spoofs: %w", s.name, err)
+			clearOldRulesErr = errors.Join(clearOldRulesErr, err)
 		}
+	}
+
+	if clearOldRulesErr != nil {
+		return fmt.Errorf("failed to remove spoofs: %w", clearOldRulesErr)
 	}
 
 	for spoof := range gslbSpoofs.Filter(func(spoof spoofs.Spoof) bool { return spoof.View == s.selector.View() }) { // add all spoofs that does not exist but should
