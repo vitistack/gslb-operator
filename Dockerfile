@@ -4,8 +4,8 @@ LABEL MAINTAINER="espen.wobbes@nhn.no"
 
 ARG VERSION
 ARG DATE
-# Optional override: RACE=1 forces on, RACE=0 forces off. Empty = auto-detect from VERSION.
-ARG RACE=auto
+# RACE=1/true builds with the race detector (CGO), anything else builds without it.
+ARG RACE=false
 
 WORKDIR /app
 
@@ -16,20 +16,12 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-# Auto-enable the race detector for staging/rc tags (e.g. v1.2.3-staging, v1.2.3-rc1).
 RUN set -eux; \
-    race="${RACE:-auto}"; \
-    if [ -z "$race" ] || [ "$race" = "auto" ]; then \
-        case "${VERSION:-}" in \
-            *staging*|*-rc*) race=1 ;; \
-            *) race=0 ;; \
-        esac; \
-    fi; \
-    if [ "$race" = "1" ] || [ "$race" = "true" ]; then \
-        echo "Building WITH race detector (VERSION=${VERSION:-})"; \
+    if [ "$RACE" = "1" ] || [ "$RACE" = "true" ]; then \
+        echo "Building WITH race detector"; \
         CGO_ENABLED=1 go build -race -ldflags "-X config.version=${VERSION:-} -X config.buildDate=${DATE:-}" -o gslb-operator ./cmd; \
     else \
-        echo "Building WITHOUT race detector (VERSION=${VERSION:-})"; \
+        echo "Building WITHOUT race detector"; \
         CGO_ENABLED=0 go build -ldflags "-s -w -X config.version=${VERSION:-} -X config.buildDate=${DATE:-}" -o gslb-operator ./cmd; \
     fi
 
