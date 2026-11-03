@@ -20,8 +20,8 @@ build: check-tools ## Build the Go application.
 	@go build -ldflags "-s -w -X github.com/vitistack/gslb-operator/internal/config.Version=$(VERSION)  -X github.com/vitistack/gslb-operator/internal/config.BuildDate=$(DATE)" -o ./bin/ ./cmd
 
 run:
-    @echo "Running GSLB - Operator"
-    @go run -ldflags "-X github.com/vitistack/gslb-operator/internal/config.Version=0.0.0-test -X github.com/vitistack/gslb-operator/internal/config.BuildDate=$(DATE)" ./cmd
+	@echo "Running GSLB - Operator"
+	@go run -ldflags "-X github.com/vitistack/gslb-operator/internal/config.Version=0.0.0-test -X github.com/vitistack/gslb-operator/internal/config.BuildDate=$(DATE)" ./cmd
 
 test: ## Run tests
 	@echo "Running tests..."
