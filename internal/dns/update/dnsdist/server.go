@@ -35,6 +35,12 @@ var dnsdistRuleUUIDRegexPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F
 // matches candidate IPv4/IPv6 tokens in a rule action, validated below with netip
 var dnsdistActionAddressRegexPattern = regexp.MustCompile(`[0-9a-fA-F.:]+`)
 
+const gslbManagedRulePrefix = "gslb-include:"
+
+func managedRuleName(name string) string {
+	return gslbManagedRulePrefix + name
+}
+
 type server struct {
 	name     string
 	client   dnsdist.Client
@@ -69,7 +75,7 @@ func (s *server) Create(records ...update.Record) error {
 				}
 			}
 		}
-
+		ruleName := managedRuleName(rec.Name)
 		err = s.client.Rules().Add(
 			rules.QNameRule(rec.Name),
 			rules.SpoofAction(
@@ -77,7 +83,7 @@ func (s *server) Create(records ...update.Record) error {
 				rules.SpoofActionOptions{TTL: new(30), AA: new(true)},
 			),
 			rules.GlobalRuleOptions{
-				Name: &rec.Name,
+				Name: &ruleName,
 				UUID: &rec.UUID,
 			},
 		)
@@ -201,14 +207,16 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 	totalToCreate, created := 0, 0
 	for spoof := range gslbSpoofs.Filter(func(spoof spoofs.Spoof) bool { return spoof.View == s.selector.View() }) { // add all spoofs that does not exist but should
 		totalToCreate++
+		ruleName := managedRuleName(spoof.Name)
 		err = s.client.Rules().Add(
 			rules.QNameRule(spoof.FQDN),
 			rules.SpoofAction(spoof.Address.Strings(), rules.SpoofActionOptions{TTL: new(30), AA: new(true)}),
 			rules.GlobalRuleOptions{
-				Name: &spoof.Name,
+				Name: &ruleName,
 				UUID: &spoof.UUID,
 			},
 		)
+
 		if err != nil {
 			createErrors = errors.Join(createErrors, err)
 		} else {
