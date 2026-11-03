@@ -53,7 +53,7 @@ func Mount(g *router.RouteGroup, deps routes.Dependencies, h Handlers) {
 	gslbServiceRouter.POST("override", h.OverrideCreate).Action(authz.OverrideCreate)
 	gslbServiceRouter.DELETE("/override", h.OverrideDelete).Action(authz.OverrideDelete)
 
-	if config.GSLB().StatusEnabled() {
+	if config.GSLB().Status().Enabled() {
 		gslbServiceRouter.GET("/status", h.ServiceStatus).Action(authz.StatusRead)
 	}
 

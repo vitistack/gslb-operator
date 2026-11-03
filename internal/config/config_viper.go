@@ -84,6 +84,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("split_dns.defaultView", "default")
 
 	v.SetDefault("gslb.poll_interval", "1m")
+	v.SetDefault("gslb.status.enabled", false)
+	v.SetDefault("gslb.status.publish_interval", "5m")
 
 	v.SetDefault("mq.enabled", false)
 
