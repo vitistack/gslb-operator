@@ -87,6 +87,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("gslb.status.enabled", false)
 	v.SetDefault("gslb.status.publish_interval", "5m")
 
+	v.SetDefault("gslb.dnsdist.ignore_tag", "gslb-ignore")
+
 	v.SetDefault("mq.enabled", false)
 
 	v.SetDefault("webhooks.enabled", false)

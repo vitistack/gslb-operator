@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns/update"
 	dnsviews "github.com/vitistack/gslb-operator/internal/dns/views"
 	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
@@ -366,7 +367,13 @@ func IterateRuleSet(ruleSet string, includeDupes bool) iter.Iterator[rules.RuleL
 	seen := make(map[string]bool)
 
 	// 1 skip because the first line is always the header line for rules
-	iter := baseIter.Skip(1).Map(MapStringToDNSDistRule)
+	iter := baseIter.Skip(1).Map(MapStringToDNSDistRule).Filter(func(rl rules.RuleLine) bool {
+		if rl.Name == "" {
+			return true // continue
+		}
+		return !strings.HasPrefix(rl.Name, config.GSLB().DNSDIST().IgnoreTag())
+	})
+
 	if includeDupes {
 		return iter
 	}
