@@ -37,10 +37,19 @@ jobs:
       - name: Check if version already published
         id: check
         run: |
-          if helm pull oci://ghcr.io/vitistack/helm/gslb-operator --version "${{ steps.chart.outputs.version }}" -d /tmp/chart-check >/dev/null 2>&1; then
+          set +e
+          mkdir -p /tmp/chart-check
+          pull_output=$(helm pull oci://ghcr.io/vitistack/helm/gslb-operator --version "${{ steps.chart.outputs.version }}" -d /tmp/chart-check 2>&1)
+          pull_status=$?
+          set -e
+          if [ "$pull_status" -eq 0 ]; then
             echo "published=true" >> "$GITHUB_OUTPUT"
-          else
+          elif echo "$pull_output" | grep -qiE 'not found|manifest unknown|404'; then
             echo "published=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$pull_output" >&2
+            echo "::error::Could not determine whether chart version ${{ steps.chart.outputs.version }} is published (lookup failed, not a 'not found' result)"
+            exit 1
           fi
 
       - name: package and push chart
