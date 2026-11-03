@@ -19,10 +19,10 @@ COPY . .
 RUN set -eux; \
     if [ "$RACE" = "1" ] || [ "$RACE" = "true" ]; then \
         echo "Building WITH race detector"; \
-        CGO_ENABLED=1 go build -race -ldflags "-X config.version=${VERSION:-} -X config.buildDate=${DATE:-}" -o gslb-operator ./cmd; \
+        CGO_ENABLED=1 go build -race -ldflags "-X config.Version=${VERSION:-} -X config.BuildDate=${DATE:-}" -o gslb-operator ./cmd; \
     else \
         echo "Building WITHOUT race detector"; \
-        CGO_ENABLED=0 go build -ldflags "-s -w -X config.version=${VERSION:-} -X config.buildDate=${DATE:-}" -o gslb-operator ./cmd; \
+        CGO_ENABLED=0 go build -ldflags "-s -w -X config.Version=${VERSION:-} -X config.BuildDate=${DATE:-}" -o gslb-operator ./cmd; \
     fi
 
 FROM alpine:3.23

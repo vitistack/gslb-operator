@@ -17,11 +17,11 @@ build: check-tools ## Build the Go application.
 	@echo "Building GSLB - Operator binary..."
 	@echo "Version: $(VERSION)"
 	@echo "Date: $(DATE)"
-	@go build -ldflags "-s -w -X config.version=$(VERSION)  -X config.buildDate=$(DATE)" -o ./bin/ ./cmd
+	@go build -ldflags "-s -w -X config.Version=$(VERSION)  -X config.BuildDate=$(DATE)" -o ./bin/ ./cmd
 
 run:
 	@echo "Running GSLB - Operator"
-	@go run -ldflags "-X config.version=0.0.0-test -X config.buildDate=$(DATE)" ./cmd
+	@go run -ldflags "-X config.Version=0.0.0-test -X config.BuildDate=$(DATE)" ./cmd
 
 test: ## Run tests
 	@echo "Running tests..."
@@ -41,7 +41,7 @@ update-deps: ## Update dependencies
 	@go mod tidy
 	@echo "Dependencies updated!"
 
-update-deps-safe: ## Update dependencies to versions at least DAYS old (default 14), guards against supply-chain attacks
+update-deps-safe: ## Update dependencies to Versions at least DAYS old (default 14), guards against supply-chain attacks
 	@echo "Updating dependencies published more than $(or $(DAYS), 7) days ago..."
 	@go run ./cmd/dependencies/main.go -days $(or $(days), 7)
 	@echo "Dependencies updated!"
