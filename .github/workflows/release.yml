@@ -108,7 +108,7 @@ jobs:
           arm64_digest=$(cat /tmp/digests/arm64.txt)
           race_amd64_digest=$(cat /tmp/digests/race-amd64.txt)
 
-          tags=(-t "${IMAGE}:${VERSION}")
+          tags=(-t "${IMAGE}:${VERSION}" -t "${IMAGE}:${VERSION#v}")
           # only float "latest" for full releases, not -rc/-staging prerelease tags
           case "$VERSION" in
             *-*) ;;
