@@ -107,7 +107,6 @@ jobs:
           amd64_digest=$(cat /tmp/digests/amd64.txt)
           arm64_digest=$(cat /tmp/digests/arm64.txt)
           race_amd64_digest=$(cat /tmp/digests/race-amd64.txt)
-          race_arm64_digest=$(cat /tmp/digests/race-arm64.txt)
 
           tags=(-t "${IMAGE}:${VERSION}")
           # only float "latest" for full releases, not -rc/-staging prerelease tags
@@ -119,4 +118,4 @@ jobs:
             "${IMAGE}@${amd64_digest}" "${IMAGE}@${arm64_digest}"
 
           docker buildx imagetools create -t "${IMAGE}:${VERSION}-race" \
-            "${IMAGE}@${race_amd64_digest}" "${IMAGE}@${race_arm64_digest}"
+            "${IMAGE}@${race_amd64_digest}"
