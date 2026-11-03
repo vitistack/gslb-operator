@@ -28,10 +28,6 @@ jobs:
             platform: linux/amd64
             race: "true"
             suffix: race-amd64
-          - arch: arm64
-            platform: linux/arm64
-            race: "true"
-            suffix: race-arm64
     steps:
       - name: checkout code
         uses: actions/checkout@v4
