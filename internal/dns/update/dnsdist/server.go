@@ -379,6 +379,11 @@ func IterateRuleSet(ruleSet string, includeDupes bool) iter.Iterator[rules.RuleL
 		if rl.Name == "" {
 			return true // continue
 		}
+
+		if strings.HasPrefix(rl.Name, gslbManagedRulePrefix) {
+			return true
+		}
+
 		ignoreTag := config.GSLB().DNSDIST().IgnoreTag()
 		return ignoreTag == "" || !strings.HasPrefix(rl.Name, ignoreTag)
 	})
