@@ -1,0 +1,54 @@
+name: Release Helm Chart
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "charts/gslb-operator/**"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v4
+
+      - name: Install helm
+        uses: azure/setup-helm@v1
+        with:
+          version: v3.16.4
+
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login -u ${{ github.actor }} ghcr.io --password-stdin
+
+      - name: Read chart version
+        id: chart
+        run: |
+          VERSION=$(grep -m1 '^version:' charts/gslb-operator/Chart.yaml | awk '{print $2}')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # helm OCI tags are mutable by default - check first so we never silently overwrite a released version
+      - name: Check if version already published
+        id: check
+        run: |
+          if helm pull oci://ghcr.io/vitistack/helm/gslb-operator --version "${{ steps.chart.outputs.version }}" -d /tmp/chart-check >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: package and push chart
+        if: steps.check.outputs.published == 'false'
+        run: |
+          helm package charts/gslb-operator
+          helm push gslb-operator-${{ steps.chart.outputs.version }}.tgz oci://ghcr.io/vitistack/helm/
+
+      - name: skip (version already published)
+        if: steps.check.outputs.published == 'true'
+        run: echo "Chart version ${{ steps.chart.outputs.version }} is already published - nothing to do."
