@@ -293,12 +293,17 @@ func (g *gslbStatus) PublishInterval() (time.Duration, error) {
 }
 
 type dnsdist struct {
-	Secret  string                `mapstructure:"key"`
-	SERVERS []model.DNSDISTServer `mapstructure:"servers"`
+	Secret     string                `mapstructure:"key"`
+	IgnoredTag string                `mapstructure:"ignore_tag"`
+	SERVERS    []model.DNSDISTServer `mapstructure:"servers"`
 }
 
 func (d *dnsdist) Key() string {
 	return d.Secret
+}
+
+func (d *dnsdist) IgnoreTag() string {
+	return d.IgnoredTag
 }
 
 func (d *dnsdist) Servers() []model.DNSDISTServer {
