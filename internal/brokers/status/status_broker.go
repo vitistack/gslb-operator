@@ -250,7 +250,10 @@ func (s *StatusBroker) PublishStatusForGroup(group string, lastSeen time.Time) e
 	}
 
 	if len(serviceGroup.Members) == 0 {
-		// remove from scheduler if empty group
+		siteStatus.Health = service.DOWN
+		if err := s.Publish(context.Background(), siteStatus); err != nil {
+			return err
+		}
 		s.scheduler.Remove(func(s string) bool { return s == group })
 		return nil
 	}
