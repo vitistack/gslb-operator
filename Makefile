@@ -17,7 +17,7 @@ build: check-tools ## Build the Go application.
 	@echo "Building GSLB - Operator binary..."
 	@echo "Version: $(VERSION)"
 	@echo "Date: $(DATE)"
-	@go build -ldflags "-s -w -X config.Version=$(VERSION)  -X config.BuildDate=$(DATE)" -o ./bin/ ./cmd
+	@go build -ldflags "-s -w -X github.com/vitistack/gslb-operator/internal/config.Version=$(VERSION)  -X github.com/vitistack/gslb-operator/internal/config.BuildDate=$(DATE)" -o ./bin/ ./cmd
 
 run:
 	@echo "Running GSLB - Operator"
