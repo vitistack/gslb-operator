@@ -286,8 +286,8 @@ func (g *gslbStatus) PublishInterval() (time.Duration, error) {
 	if err != nil {
 		return 0, fmt.Errorf("invalid configurated publish interval: %s: %w", g.PubInterval, err)
 	}
-	if dur <= 0 {
-		return 0, fmt.Errorf("publish interval must be positive: %s", g.PubInterval)
+	if dur < 100*time.Millisecond {
+		return 0, fmt.Errorf("publish interval must be at least 100ms: %s", g.PubInterval)
 	}
 	return dur, nil
 }
