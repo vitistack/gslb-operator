@@ -12,6 +12,10 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: release-helm-chart
+  cancel-in-progress: false
+
 jobs:
   publish-chart:
     runs-on: ubuntu-latest
