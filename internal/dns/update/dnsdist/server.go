@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/dns/update"
 	dnsviews "github.com/vitistack/gslb-operator/internal/dns/views"
 	domainEvents "github.com/vitistack/gslb-operator/internal/model/events"
@@ -32,6 +34,12 @@ var dnsdistRuleUUIDRegexPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F
 
 // matches candidate IPv4/IPv6 tokens in a rule action, validated below with netip
 var dnsdistActionAddressRegexPattern = regexp.MustCompile(`[0-9a-fA-F.:]+`)
+
+const gslbManagedRulePrefix = "gslb-include:"
+
+func managedRuleName(name string) string {
+	return gslbManagedRulePrefix + name
+}
 
 type server struct {
 	name     string
@@ -67,7 +75,7 @@ func (s *server) Create(records ...update.Record) error {
 				}
 			}
 		}
-
+		ruleName := managedRuleName(rec.Name)
 		err = s.client.Rules().Add(
 			rules.QNameRule(rec.Name),
 			rules.SpoofAction(
@@ -75,7 +83,7 @@ func (s *server) Create(records ...update.Record) error {
 				rules.SpoofActionOptions{TTL: new(30), AA: new(true)},
 			),
 			rules.GlobalRuleOptions{
-				Name: &rec.Name,
+				Name: &ruleName,
 				UUID: &rec.UUID,
 			},
 		)
@@ -145,7 +153,7 @@ func (s *server) Hash() (string, error) {
 	}
 
 	spoofEntries := make([]string, 0)
-	IterateRuleSet(rawRuleSet).
+	IterateRuleSet(rawRuleSet, true).
 		Filter(
 			func(rl rules.RuleLine) bool {
 				return strings.Contains(rl.Action, "spoof")
@@ -182,26 +190,57 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 		return fmt.Errorf("failed to list rules: %w", err)
 	}
 
-	for rule := range IterateRuleSet(rawRuleSet).
+	var clearOldRulesErr error
+	totalToDelete, deleted := 0, 0
+	for rule := range IterateRuleSet(rawRuleSet, false).
 		Filter(func(rl rules.RuleLine) bool { return strings.Contains(rl.Action, "spoof") }) {
+		totalToDelete++
 		err := s.client.Rules().Remove(rule.UUID)
 		if err != nil {
-			return fmt.Errorf("%s failed to remove configured spoofs: %w", s.name, err)
+			clearOldRulesErr = errors.Join(clearOldRulesErr, err)
+		} else {
+			deleted++
 		}
 	}
 
+	var createErrors error
+	totalToCreate, created := 0, 0
 	for spoof := range gslbSpoofs.Filter(func(spoof spoofs.Spoof) bool { return spoof.View == s.selector.View() }) { // add all spoofs that does not exist but should
+		totalToCreate++
+		ruleName := managedRuleName(spoof.Name)
 		err = s.client.Rules().Add(
 			rules.QNameRule(spoof.FQDN),
 			rules.SpoofAction(spoof.Address.Strings(), rules.SpoofActionOptions{TTL: new(30), AA: new(true)}),
 			rules.GlobalRuleOptions{
-				Name: &spoof.Name,
+				Name: &ruleName,
 				UUID: &spoof.UUID,
 			},
 		)
+
 		if err != nil {
-			return fmt.Errorf("failed to add spoofs: %w", err)
+			createErrors = errors.Join(createErrors, err)
+		} else {
+			created++
 		}
+	}
+
+	defer func() {
+		bslog.Info("reconcile result",
+			slog.Group("server",
+				slog.String("name", s.name),
+				slog.String("view", s.selector.View()),
+			),
+			slog.Group("result",
+				slog.Int("toDelete", totalToDelete),
+				slog.Int("deleted", deleted),
+				slog.Int("toCreate", totalToCreate),
+				slog.Int("created", created),
+			),
+		)
+	}()
+
+	if clearOldRulesErr != nil || createErrors != nil {
+		return fmt.Errorf("failed to reconcile spoofs: %w", errors.Join(clearOldRulesErr, createErrors))
 	}
 
 	if err = finish(); err != nil {
@@ -284,7 +323,7 @@ func (s *server) Status(uuid string) (service.DNSServerStatusForService, error) 
 		return service.DNSServerStatusForService{}, fmt.Errorf("failed to fetch rules: %w", err)
 	}
 
-	rule, ok := IterateRuleSet(rawRuleSet).Find(func(rl rules.RuleLine) bool { return rl.UUID == uuid })
+	rule, ok := IterateRuleSet(rawRuleSet, false).Find(func(rl rules.RuleLine) bool { return rl.UUID == uuid })
 	if !ok {
 		return status, nil // no status for uuid
 	}
@@ -319,7 +358,7 @@ func MapStringToDNSDistRule(ruleLine string) rules.RuleLine {
 	return rule
 }
 
-func IterateRuleSet(ruleSet string) iter.Iterator[rules.RuleLine] {
+func IterateRuleSet(ruleSet string, includeDupes bool) iter.Iterator[rules.RuleLine] {
 	reader := strings.NewReader(ruleSet)
 	lines := bufio.NewScanner(reader)
 
@@ -333,8 +372,39 @@ func IterateRuleSet(ruleSet string) iter.Iterator[rules.RuleLine] {
 		},
 	)
 
+	seen := make(map[string]bool)
+
 	// 1 skip because the first line is always the header line for rules
-	return baseIter.Skip(1).Map(MapStringToDNSDistRule)
+	iter := baseIter.Skip(1).Map(MapStringToDNSDistRule).Filter(func(rl rules.RuleLine) bool {
+		if rl.Name == "" {
+			return true // continue
+		}
+
+		if strings.HasPrefix(rl.Name, gslbManagedRulePrefix) {
+			return true
+		}
+
+		ignoreTag := config.GSLB().DNSDIST().IgnoreTag()
+		return ignoreTag == "" || !strings.HasPrefix(rl.Name, ignoreTag)
+	})
+
+	if includeDupes {
+		return iter
+	}
+
+	return iter.Filter(func(rl rules.RuleLine) bool {
+		if rl.UUID == "" {
+			return true
+		}
+
+		if seen[rl.UUID] {
+			return false
+		}
+
+		seen[rl.UUID] = true
+		return true
+	})
+
 }
 
 func spoofActionAddress(action string) string {

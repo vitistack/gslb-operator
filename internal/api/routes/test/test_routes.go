@@ -13,7 +13,7 @@ import (
 )
 
 func Register(parent *router.RouteGroup, deps routes.Dependencies) *router.RouteGroup {
-	if !config.DevMode() {
+	if !config.API().Test() {
 		return nil
 	}
 

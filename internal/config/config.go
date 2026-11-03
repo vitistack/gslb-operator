@@ -191,11 +191,16 @@ func (s *server) LogLevel() slog.Level {
 // API configuration
 type api struct {
 	PORT            string   `mapstructure:"port"`
+	TEST            bool     `mapstructure:"test"`
 	TrustedPrefixes []string `mapstructure:"trusted_prefixes"`
 }
 
 func (a *api) Port() string {
 	return a.PORT
+}
+
+func (a *api) Test() bool {
+	return a.TEST
 }
 
 func (a *api) TrustedCIDRPrefixes() ([]netip.Prefix, error) {
@@ -230,22 +235,20 @@ func (s *splitDns) DNSViews() []string {
 
 // gslb configuration
 type gslb struct {
-	Status struct {
-		Enabled bool `mapstructure:"enabled"`
-	} `mapstructure:"status"`
-	SITE         string  `mapstructure:"site"`
-	ZONE         string  `mapstructure:"zone"`
-	NS           string  `mapstructure:"nameserver"`
-	PollInterval string  `mapstructure:"poll_interval"`
-	DIST         dnsdist `mapstructure:"dnsdist"`
+	STATUS       gslbStatus `mapstructure:"status"`
+	SITE         string     `mapstructure:"site"`
+	ZONE         string     `mapstructure:"zone"`
+	NS           string     `mapstructure:"nameserver"`
+	PollInterval string     `mapstructure:"poll_interval"`
+	DIST         dnsdist    `mapstructure:"dnsdist"`
 }
 
 func (g *gslb) Site() string {
 	return g.SITE
 }
 
-func (g *gslb) StatusEnabled() bool {
-	return g.Status.Enabled
+func (g *gslb) Status() *gslbStatus {
+	return &g.STATUS
 }
 
 func (g *gslb) Zone() string {
@@ -269,13 +272,38 @@ func (g *gslb) DNSDIST() *dnsdist {
 	return &g.DIST
 }
 
+type gslbStatus struct {
+	ENABLED     bool   `mapstructure:"enabled"`
+	PubInterval string `mapstructure:"publish_interval"`
+}
+
+func (g *gslbStatus) Enabled() bool {
+	return g.ENABLED
+}
+
+func (g *gslbStatus) PublishInterval() (time.Duration, error) {
+	dur, err := time.ParseDuration(g.PubInterval)
+	if err != nil {
+		return 0, fmt.Errorf("invalid configurated publish interval: %s: %w", g.PubInterval, err)
+	}
+	if dur < 100*time.Millisecond {
+		return 0, fmt.Errorf("publish interval must be at least 100ms: %s", g.PubInterval)
+	}
+	return dur, nil
+}
+
 type dnsdist struct {
-	Secret  string                `mapstructure:"key"`
-	SERVERS []model.DNSDISTServer `mapstructure:"servers"`
+	Secret     string                `mapstructure:"key"`
+	IgnoredTag string                `mapstructure:"ignore_tag"`
+	SERVERS    []model.DNSDISTServer `mapstructure:"servers"`
 }
 
 func (d *dnsdist) Key() string {
 	return d.Secret
+}
+
+func (d *dnsdist) IgnoreTag() string {
+	return d.IgnoredTag
 }
 
 func (d *dnsdist) Servers() []model.DNSDISTServer {

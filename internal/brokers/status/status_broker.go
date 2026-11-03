@@ -34,7 +34,7 @@ type StatusBroker struct {
 }
 
 func Init(ctx context.Context, statusRepo *status.StatusRepo, groupRepo *servicegroup.ServiceGroupRepo, dnsStatusFetcher dns.StatusFetcher) {
-	if config.GSLB().StatusEnabled() {
+	if config.GSLB().Status().Enabled() {
 		NewStatusBroker(ctx, statusRepo, groupRepo, dnsStatusFetcher).Subscribe(ctx)
 	}
 }
@@ -50,7 +50,12 @@ func NewStatusBroker(ctx context.Context, statusRepo *status.StatusRepo, groupRe
 		amqpUrlPrefix = "amqps://"
 	}
 	wg := sync.WaitGroup{}
-	scheduler := scheduler.NewScheduler[string](time.Minute*5, &wg)
+
+	pubInterval, err := config.GSLB().Status().PublishInterval()
+	if err != nil {
+		bslog.Fatal("failed to create status-broker", slog.String("reason", err.Error()))
+	}
+	scheduler := scheduler.NewScheduler[string](pubInterval, &wg)
 
 	broker := &StatusBroker{
 		statusRepo:       statusRepo,
@@ -187,6 +192,10 @@ func (s *StatusBroker) Handle(e *events.Event) {
 		s.reconcileScheduledGroup(event.GetMemberOf())
 	}
 
+	if !s.scheduler.Has(func(s string) bool { return s == event.GetMemberOf() }) {
+		s.scheduler.Schedule(event.GetMemberOf())
+	}
+
 	if err := s.PublishStatusForGroup(event.GetMemberOf(), e.Timestamp); err != nil {
 		bslog.Error(
 			"failed to publish gslb-site status for "+event.GetMemberOf(),
@@ -238,6 +247,15 @@ func (s *StatusBroker) PublishStatusForGroup(group string, lastSeen time.Time) e
 	serviceGroup, err := s.serviceGroupRepo.Read(group)
 	if err != nil {
 		return err
+	}
+
+	if len(serviceGroup.Members) == 0 {
+		siteStatus.Health = service.DOWN
+		if err := s.Publish(context.Background(), siteStatus); err != nil {
+			return err
+		}
+		s.scheduler.Remove(func(s string) bool { return s == group })
+		return nil
 	}
 
 	siteStatus.Health = service.HEALTHY

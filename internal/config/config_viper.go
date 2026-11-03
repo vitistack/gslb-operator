@@ -76,6 +76,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.jwt.ttl", "2h")
 
 	v.SetDefault("api.port", ":8080")
+	v.SetDefault("api.test", false)
 	v.SetDefault("api.trusted_prefixes", []string{})
 
 	v.SetDefault("split_dns.enabled", true)
@@ -83,6 +84,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("split_dns.defaultView", "default")
 
 	v.SetDefault("gslb.poll_interval", "1m")
+	v.SetDefault("gslb.status.enabled", false)
+	v.SetDefault("gslb.status.publish_interval", "5m")
+
+	v.SetDefault("gslb.dnsdist.ignore_tag", "gslb-ignore")
 
 	v.SetDefault("mq.enabled", false)
 

@@ -59,7 +59,7 @@ func main() {
 	}
 
 	var statusRepo *status.StatusRepo
-	if config.GSLB().StatusEnabled() {
+	if config.GSLB().Status().Enabled() {
 		statusStore, err := valkeyStore.NewStore[serviceModels.GSLBServiceStatus](valkeyClient, "gslb:service_status", time.Minute*10)
 		if err != nil {
 			bslog.Fatal("failed to create valkey store for gslb service-status", slog.String("reason", err.Error()))
@@ -80,7 +80,7 @@ func main() {
 
 	updater, err := dnsdist.NewDNSDISTUpdater(servicesStore)
 	if err != nil {
-		if config.GSLB().StatusEnabled() {
+		if config.GSLB().Status().Enabled() {
 			bslog.Fatal("fatal error: unable to create updater", slog.String("error", err.Error()))
 		}
 		bslog.Error("unable to create updater", slog.String("error", err.Error()))
