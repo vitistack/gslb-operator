@@ -96,6 +96,7 @@ func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *http.Request) 
 	items := make([]service.Member, 0, len(group.Members))
 	iter.FromMap(group.Members).
 		Skip(skip).
+		Take(page.PageSize).
 		Each(func(s string, g model.GSLBService) {
 			items = append(
 				items,
