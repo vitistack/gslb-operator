@@ -14,6 +14,9 @@ const (
 
 	StatusList Action = "status.list"
 	StatusRead Action = "status.read"
+
+	MembersList Action = "members.list"
+	MembersRead Action = "members.read"
 )
 
 // KnownActions is the full action inventory the operator understands; a
@@ -27,4 +30,6 @@ var KnownActions = []Action{
 	OverrideDelete,
 	StatusList,
 	StatusRead,
+	MembersList,
+	MembersRead,
 }

@@ -14,9 +14,8 @@ type Client interface {
 }
 
 type client struct {
-	authClient    auth.Client
-	serviceClient *service.ServiceClient
-	transport     transport.Transport
+	authClient auth.Client
+	transport  transport.Transport
 }
 
 func NewClient(transport transport.Transport) *client {

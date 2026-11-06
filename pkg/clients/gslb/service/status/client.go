@@ -17,10 +17,10 @@ type StatusClient struct {
 	path      string
 }
 
-func NewStatusClient(transport transport.Transport, memberOf string) *StatusClient {
+func NewStatusClient(transport transport.Transport, basePath string) *StatusClient {
 	return &StatusClient{
 		transport: transport,
-		path:      fmt.Sprintf("/service/%s/status", memberOf),
+		path:      fmt.Sprintf("%s/status", basePath),
 	}
 }
 
