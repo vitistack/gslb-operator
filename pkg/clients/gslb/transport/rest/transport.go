@@ -63,7 +63,7 @@ func (rt *RestTransport) doJSON(ctx context.Context, method, path string, in, ou
 		return &HTTPError{
 			err:        fmt.Errorf("unexpected status code: %d %s", resp.StatusCode, string(respBody)),
 			StatusCode: resp.StatusCode,
-			Body:   respBody,
+			Body:       respBody,
 		}
 	}
 
@@ -94,4 +94,33 @@ func (rt *RestTransport) PatchJSON(ctx context.Context, path string, body, out a
 
 func (rt *RestTransport) Delete(ctx context.Context, path string) error {
 	return rt.doJSON(ctx, http.MethodDelete, path, nil, nil)
+}
+
+func (rt *RestTransport) GetText(ctx context.Context, path string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rt.basePath+path, nil)
+	if err != nil {
+		return "", fmt.Errorf("could not create request: %w", err)
+	}
+
+	resp, err := rt.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
+		return "", &HTTPError{
+			err:        fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+			StatusCode: resp.StatusCode,
+			Body:       body,
+		}
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("could not read response: %w", err)
+	}
+
+	return string(body), nil
 }
