@@ -76,7 +76,7 @@ func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *http.Request) 
 	group, err := h.svcGroupRepo.Read(memberOf)
 	if err != nil {
 		logger.Error("failed to get service group", slog.String("reason", err.Error()), slog.String("memberOf", memberOf))
-		response.Err(w, response.ErrInvalidInput, "unexpected error")
+		response.Err(w, response.ErrInternalError, "unexpected error")
 		return
 	}
 
