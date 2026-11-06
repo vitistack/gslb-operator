@@ -68,11 +68,18 @@ func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *http.Request) 
 	}
 
 	page := pagination.NewPaginationParams()
-	err := request.UnMarshallParams(r.URL.Query(), page)
-	if err != nil {
+	if err := request.UnMarshallParams(r.URL.Query(), page); err != nil {
 		logger.Error("failed to parse pagination parameters", slog.String("reason", err.Error()))
 		response.Err(w, response.ErrInvalidInput, "invalid pagination parameters")
 		return
+	}
+
+	defaults := pagination.NewPaginationParams()
+	if page.Page < 1 {
+		page.Page = defaults.Page
+	}
+	if page.PageSize < 1 {
+		page.PageSize = defaults.PageSize
 	}
 
 	group, err := h.svcGroupRepo.Read(memberOf)
@@ -85,14 +92,6 @@ func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *http.Request) 
 	if group.Members == nil {
 		response.Err(w, response.ErrNotFound, fmt.Sprintf("%s: not found", memberOf))
 		return
-	}
-
-	defaults := pagination.NewPaginationParams()
-	if page.Page < 1 {
-		page.Page = defaults.Page
-	}
-	if page.PageSize < 1 {
-		page.PageSize = defaults.PageSize
 	}
 
 	skip := (page.Page - 1) * page.PageSize
