@@ -3,7 +3,9 @@ package service
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
 
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
@@ -92,12 +94,15 @@ func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *http.Request) 
 	if page.PageSize < 1 {
 		page.PageSize = defaults.PageSize
 	}
+
 	skip := (page.Page - 1) * page.PageSize
-	items := make([]service.Member, 0, len(group.Members))
-	iter.FromMap(group.Members).
+	ids := slices.Sorted(maps.Keys(group.Members))
+	items := make([]service.Member, 0, min(len(ids), max(page.PageSize, 0)))
+	iter.FromSlice(ids).
 		Skip(skip).
 		Take(page.PageSize).
-		Each(func(s string, g model.GSLBService) {
+		Each(func(id string) {
+			g := group.Members[id]
 			items = append(
 				items,
 				service.Member{
