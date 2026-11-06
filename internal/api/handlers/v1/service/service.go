@@ -85,6 +85,13 @@ func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	defaults := pagination.NewPaginationParams()
+	if page.Page < 1 {
+		page.Page = defaults.Page
+	}
+	if page.PageSize < 1 {
+		page.PageSize = defaults.PageSize
+	}
 	skip := (page.Page - 1) * page.PageSize
 	items := make([]service.Member, 0, len(group.Members))
 	iter.FromMap(group.Members).
