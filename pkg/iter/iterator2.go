@@ -55,7 +55,7 @@ func (i Iterator2[K, V]) Skip(n int) Iterator2[K, V] {
 	return func(yield func(K, V) bool) {
 		counter := 0
 		for key, val := range i {
-			if counter <= n {
+			if counter < n {
 				counter++
 				continue
 			}

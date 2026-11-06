@@ -223,7 +223,7 @@ func serviceFields(s model.GSLBService) *slack.SectionBlock {
 		healthy = "Yes"
 	}
 	return slack.NewSectionBlock(nil, []*slack.TextBlockObject{
-		field("FQDN", s.Fqdn),
+		//field("FQDN", s.Fqdn),
 		//field("IP", s.IP.String()),
 		field("Datacenter", s.Datacenter),
 		field("Healthy", healthy),
