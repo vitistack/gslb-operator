@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/vitistack/gslb-operator/internal/dns/update/dnsdist"
 	"github.com/vitistack/gslb-operator/pkg/clients/dnsdist/rules"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
@@ -42,12 +43,12 @@ type luaEncoder struct{}
 
 func (luaEncoder) encode(w http.ResponseWriter, result []spoofs.Spoof) error {
 	var builder strings.Builder
-
 	for _, spoof := range result {
+		ruleName := dnsdist.ManagedRuleName(spoof.Name)
 		builder.WriteString(rules.RenderAddAction(
 			rules.QNameRule(spoof.FQDN),
 			rules.SpoofAction(spoof.Address.Strings(), rules.SpoofActionOptions{TTL: new(30), AA: new(true)}),
-			rules.GlobalRuleOptions{Name: &spoof.Name, UUID: &spoof.UUID},
+			rules.GlobalRuleOptions{Name: &ruleName, UUID: &spoof.UUID},
 		))
 		builder.WriteByte('\n')
 	}

@@ -37,7 +37,7 @@ var dnsdistActionAddressRegexPattern = regexp.MustCompile(`[0-9a-fA-F.:]+`)
 
 const gslbManagedRulePrefix = "gslb-include:"
 
-func managedRuleName(name string) string {
+func ManagedRuleName(name string) string {
 	return gslbManagedRulePrefix + name
 }
 
@@ -75,7 +75,7 @@ func (s *server) Create(records ...update.Record) error {
 				}
 			}
 		}
-		ruleName := managedRuleName(rec.Name)
+		ruleName := ManagedRuleName(rec.Name)
 		err = s.client.Rules().Add(
 			rules.QNameRule(rec.Name),
 			rules.SpoofAction(
@@ -207,7 +207,7 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 	totalToCreate, created := 0, 0
 	for spoof := range gslbSpoofs.Filter(func(spoof spoofs.Spoof) bool { return spoof.View == s.selector.View() }) { // add all spoofs that does not exist but should
 		totalToCreate++
-		ruleName := managedRuleName(spoof.Name)
+		ruleName := ManagedRuleName(spoof.Name)
 		err = s.client.Rules().Add(
 			rules.QNameRule(spoof.FQDN),
 			rules.SpoofAction(spoof.Address.Strings(), rules.SpoofActionOptions{TTL: new(30), AA: new(true)}),
