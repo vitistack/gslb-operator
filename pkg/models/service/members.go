@@ -2,12 +2,7 @@ package service
 
 import (
 	"github.com/vitistack/gslb-operator/internal/utils/ip"
-	"github.com/vitistack/gslb-operator/pkg/models/pagination"
 )
-
-type Members struct {
-	pagination.Pagination[Member]
-}
 
 type Member struct {
 	ID        string     `json:"id"`

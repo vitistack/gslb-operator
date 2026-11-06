@@ -16,10 +16,10 @@ type SpoofsClient struct {
 	path      string
 }
 
-func NewSpoofClient(transport transport.Transport, memberOf string) *SpoofsClient {
+func NewSpoofClient(transport transport.Transport, basePath string) *SpoofsClient {
 	return &SpoofsClient{
 		transport: transport,
-		path:      fmt.Sprintf("/service/%s/spoofs", memberOf),
+		path:      fmt.Sprintf("%s/spoofs", basePath),
 	}
 }
 

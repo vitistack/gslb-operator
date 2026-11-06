@@ -12,9 +12,8 @@ type Client interface {
 }
 
 type client struct {
-	authClient    auth.Client
-	serviceClient *service.ServiceClient
-	transport     transport.Transport
+	authClient auth.Client
+	transport  transport.Transport
 }
 
 func NewClient(transport transport.Transport) Client {
@@ -30,4 +29,7 @@ func (c *client) Auth() auth.Client {
 
 func (c *client) Service(memberOf string) service.Client {
 	return service.NewServiceClient(c.transport, memberOf)
+}
+
+func (c *client) test() {
 }
