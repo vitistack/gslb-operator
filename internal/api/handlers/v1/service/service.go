@@ -56,7 +56,7 @@ func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *router.Request
 	memberOf := r.Param("memberOf")
 
 	queryParameters := service.GetMembersParams{
-		Views: strings.Join(config.DNS().DNSViews(), ","), // defaults to all views
+		Views: strings.Join(append(slices.Clone(config.DNS().DNSViews()), config.DNS().DefaultView()), ","), // defaults to all views
 	}
 	if err := request.UnmarshalParams(r.URL.Query(), &queryParameters); err != nil {
 		r.Log().Error("failed to parse request parameters", slog.String("reason", err.Error()))
