@@ -1,8 +1,6 @@
 package v1
 
 import (
-	"net/http"
-
 	"github.com/vitistack/gslb-operator/internal/api/handlers/v1/dnsdist"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/v1/service"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/v1/spoofs"
@@ -15,29 +13,33 @@ import (
 // Handlers is every endpoint v1 serves. A later version overrides only the
 // field(s) it changed and leaves the rest as v1's defaults.
 type Handlers struct {
-	Token          http.HandlerFunc
-	Spoofs         http.HandlerFunc
-	OverrideGet    http.HandlerFunc
-	OverrideCreate http.HandlerFunc
-	OverrideDelete http.HandlerFunc
-	ServiceStatus  http.HandlerFunc
-	DNSDistConfig  http.HandlerFunc
+	Token            router.HandlerFunc
+	Spoofs           router.HandlerFunc
+	OverrideGet      router.HandlerFunc
+	OverrideCreate   router.HandlerFunc
+	OverrideDelete   router.HandlerFunc
+	ServiceStatusGet router.HandlerFunc
+	MembersGet       router.HandlerFunc
+	MembersIdGet     router.HandlerFunc
+	DNSDistConfigGet router.HandlerFunc
 }
 
 // DefaultHandlers builds v1's own handlers from deps.
 func DefaultHandlers(deps routes.Dependencies) Handlers {
-	statusHandler := service.NewGSLBServiceHandler(deps.StatusRepo)
+	serviceHandler := service.NewGSLBServiceHandler(deps.StatusRepo, deps.ServicesStore)
 	spoofsHandler := spoofs.NewSpoofsService(deps.ServicesStore, deps.Manager)
 	dnsdistHandler := dnsdist.NewDNSDistService(deps.ServicesStore)
 
 	return Handlers{
-		Token:          deps.AuthService.Token,
-		Spoofs:         spoofsHandler.GetFQDNSpoof,
-		OverrideGet:    spoofsHandler.GetOverride,
-		OverrideCreate: spoofsHandler.CreateOverride,
-		OverrideDelete: spoofsHandler.DeleteOverride,
-		ServiceStatus:  statusHandler.GetServiceStatus,
-		DNSDistConfig:  dnsdistHandler.GetConfig,
+		Token:            deps.AuthService.Token,
+		Spoofs:           spoofsHandler.GetFQDNSpoof,
+		OverrideGet:      spoofsHandler.GetOverride,
+		OverrideCreate:   spoofsHandler.CreateOverride,
+		OverrideDelete:   spoofsHandler.DeleteOverride,
+		ServiceStatusGet: serviceHandler.GetServiceStatus,
+		MembersGet:       serviceHandler.GetMembers,
+		MembersIdGet:     serviceHandler.GetMembersId,
+		DNSDistConfigGet: dnsdistHandler.GetConfig,
 	}
 }
 
@@ -48,15 +50,17 @@ func Mount(g *router.RouteGroup, deps routes.Dependencies, h Handlers) {
 	authRouter.POST("/token", h.Token).Public()
 
 	gslbServiceRouter := g.Group("/service/{memberOf}").Use(deps.SecuredChain)
+	gslbServiceRouter.GET("/members", h.MembersGet).Use(deps.SecuredChain).Action(authz.MembersList)
+	gslbServiceRouter.GET("/members/{id}", h.MembersIdGet).Use(deps.SecuredChain).Action(authz.MembersRead)
 	gslbServiceRouter.GET("/spoofs", h.Spoofs).Use(deps.SecuredChain).Action(authz.SpoofsRead)
 	gslbServiceRouter.GET("/override", h.OverrideGet).Action(authz.OverrideRead)
-	gslbServiceRouter.POST("override", h.OverrideCreate).Action(authz.OverrideCreate)
+	gslbServiceRouter.POST("/override", h.OverrideCreate).Action(authz.OverrideCreate)
 	gslbServiceRouter.DELETE("/override", h.OverrideDelete).Action(authz.OverrideDelete)
 
 	if config.GSLB().Status().Enabled() {
-		gslbServiceRouter.GET("/status", h.ServiceStatus).Action(authz.StatusRead)
+		gslbServiceRouter.GET("/status", h.ServiceStatusGet).Action(authz.StatusRead)
 	}
 
 	dnsdistRouter := g.Group("/dnsdist").Use(deps.SecuredChain)
-	dnsdistRouter.GET("/config", h.DNSDistConfig).Action(authz.SpoofsList)
+	dnsdistRouter.GET("/config", h.DNSDistConfigGet).Action(authz.SpoofsList)
 }

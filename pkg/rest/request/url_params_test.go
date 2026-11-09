@@ -44,7 +44,7 @@ func TestUnMarshallParams(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotErr := UnMarshallParams(tt.urlValues, &tt.dest)
+			gotErr := UnmarshalParams(tt.urlValues, &tt.dest)
 			if gotErr != nil {
 				if !tt.wantErr {
 					t.Errorf("MarshallParams() failed: %v", gotErr)

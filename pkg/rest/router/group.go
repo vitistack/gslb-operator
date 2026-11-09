@@ -53,33 +53,35 @@ func (g *RouteGroup) Use(mw ...middleware.MiddlewareFunc) *RouteGroup {
 
 func (g *RouteGroup) Public() *RouteGroup { g.public = true; return g }
 
-func (g *RouteGroup) GET(pattern string, h http.HandlerFunc) *Route {
+func (g *RouteGroup) GET(pattern string, h HandlerFunc) *Route {
 	return g.handle(http.MethodGet, pattern, h)
 }
 
-func (g *RouteGroup) POST(pattern string, h http.HandlerFunc) *Route {
+func (g *RouteGroup) POST(pattern string, h HandlerFunc) *Route {
 	return g.handle(http.MethodPost, pattern, h)
 }
 
-func (g *RouteGroup) PUT(pattern string, h http.HandlerFunc) *Route {
+func (g *RouteGroup) PUT(pattern string, h HandlerFunc) *Route {
 	return g.handle(http.MethodPut, pattern, h)
 }
 
-func (g *RouteGroup) PATCH(pattern string, h http.HandlerFunc) *Route {
+func (g *RouteGroup) PATCH(pattern string, h HandlerFunc) *Route {
 	return g.handle(http.MethodPatch, pattern, h)
 }
 
-func (g *RouteGroup) DELETE(pattern string, h http.HandlerFunc) *Route {
+func (g *RouteGroup) DELETE(pattern string, h HandlerFunc) *Route {
 	return g.handle(http.MethodDelete, pattern, h)
 }
 
 // Handle registers a full http.Handler (e.g. promhttp.Handler()) by adapting
 // its ServeHTTP, so it goes through the same middleware and enforcement chain.
 func (g *RouteGroup) Handle(method, pattern string, h http.Handler) *Route {
-	return g.handle(method, pattern, h.ServeHTTP)
+	return g.handle(method, pattern, func(w http.ResponseWriter, r *Request) {
+		h.ServeHTTP(w, r.Request)
+	})
 }
 
-func (g *RouteGroup) handle(method, pattern string, h http.HandlerFunc) *Route {
+func (g *RouteGroup) handle(method, pattern string, h HandlerFunc) *Route {
 	r := &Route{method: method, pattern: pattern, handler: h}
 	g.routes = append(g.routes, r)
 	return r

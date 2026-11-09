@@ -9,12 +9,12 @@ import (
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/spoof"
-	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/dnsdist"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
+	"github.com/vitistack/gslb-operator/pkg/rest/router"
 )
 
 type DNSDistService struct {
@@ -27,20 +27,18 @@ func NewDNSDistService(store persistence.Store[model.GSLBServiceGroup]) *DNSDist
 	}
 }
 
-func (s *DNSDistService) GetConfig(w http.ResponseWriter, r *http.Request) {
-	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
-
+func (s *DNSDistService) GetConfig(w http.ResponseWriter, r *router.Request) {
 	params := dnsdist.GetConfigParams{}
-	err := request.UnMarshallParams(r.URL.Query(), &params)
+	err := request.UnmarshalParams(r.URL.Query(), &params)
 	if err != nil {
-		logger.Error("failed to unmarshall request query-parameters", slog.String("reason", err.Error()))
+		r.Log().Error("failed to unmarshall request query-parameters", slog.String("reason", err.Error()))
 		response.Err(w, response.ErrInvalidInput, "query-parameters not valid")
 		return
 	}
 
 	encoder, err := newOutputEncoder(params.Format)
 	if err != nil {
-		logger.Error("unsupported output format requested", slog.String("reason", err.Error()))
+		r.Log().Error("unsupported output format requested", slog.String("reason", err.Error()))
 		response.Err(w, response.ErrInvalidInput, err.Error())
 		return
 	}
@@ -59,12 +57,12 @@ func (s *DNSDistService) GetConfig(w http.ResponseWriter, r *http.Request) {
 	).Collect()
 
 	if err := finish(); err != nil {
-		logger.Error("failed to iterate spoofs", slog.String("reason", err.Error()))
+		r.Log().Error("failed to iterate spoofs", slog.String("reason", err.Error()))
 		response.Err(w, response.ErrInternalError, "unexpected error ocurred")
 		return
 	}
 
 	if err := encoder.encode(w, result); err != nil {
-		logger.Error("failed to write config response", slog.String("reason", err.Error()))
+		r.Log().Error("failed to write config response", slog.String("reason", err.Error()))
 	}
 }

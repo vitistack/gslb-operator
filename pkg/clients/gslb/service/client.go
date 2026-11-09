@@ -1,6 +1,7 @@
 package service
 
 import (
+	"github.com/vitistack/gslb-operator/pkg/clients/gslb/service/members"
 	"github.com/vitistack/gslb-operator/pkg/clients/gslb/service/override"
 	"github.com/vitistack/gslb-operator/pkg/clients/gslb/service/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/clients/gslb/service/status"
@@ -11,28 +12,33 @@ type Client interface {
 	Status() status.Client
 	Spoofs() spoofs.Client
 	Override() override.Client
+	Members() members.Client
 }
 
-type ServiceClient struct {
-	memberOf  string
+type serviceClient struct {
 	transport transport.Transport
+	path      string
 }
 
-func NewServiceClient(transport transport.Transport, memberOf string) *ServiceClient {
-	return &ServiceClient{
+func NewServiceClient(transport transport.Transport, memberOf string) *serviceClient {
+	return &serviceClient{
 		transport: transport,
-		memberOf:  memberOf,
+		path:      "/service/" + memberOf,
 	}
 }
 
-func (c *ServiceClient) Status() status.Client {
-	return status.NewStatusClient(c.transport, c.memberOf)
+func (c *serviceClient) Status() status.Client {
+	return status.NewStatusClient(c.transport, c.path)
 }
 
-func (c *ServiceClient) Spoofs() spoofs.Client {
-	return spoofs.NewSpoofClient(c.transport, c.memberOf)
+func (c *serviceClient) Spoofs() spoofs.Client {
+	return spoofs.NewSpoofClient(c.transport, c.path)
 }
 
-func (c *ServiceClient) Override() override.Client {
-	return override.NewOverrideClient(c.transport, c.memberOf)
+func (c *serviceClient) Override() override.Client {
+	return override.NewOverrideClient(c.transport, c.path)
+}
+
+func (c *serviceClient) Members() members.Client {
+	return members.NewMembersClient(c.transport, c.path)
 }

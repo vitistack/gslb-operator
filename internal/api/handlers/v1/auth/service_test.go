@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/vitistack/gslb-operator/pkg/auth/authc"
 	"github.com/vitistack/gslb-operator/pkg/models/auth"
+	"github.com/vitistack/gslb-operator/pkg/rest/router"
 )
 
 const (
@@ -52,7 +54,7 @@ func postToken(t *testing.T, svc *AuthService, body map[string]string) *httptest
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
-	svc.Token(rec, req)
+	svc.Token(rec, router.NewRequest(req, slog.Default()))
 	return rec
 }
 

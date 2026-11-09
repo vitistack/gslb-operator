@@ -19,10 +19,10 @@ type OverrideClient struct {
 	path      string
 }
 
-func NewOverrideClient(transport transport.Transport, memberOf string) *OverrideClient {
+func NewOverrideClient(transport transport.Transport, basePath string) *OverrideClient {
 	return &OverrideClient{
 		transport: transport,
-		path:      fmt.Sprintf("/service/%s/override", memberOf),
+		path:      fmt.Sprintf("%s/override", basePath),
 	}
 }
 

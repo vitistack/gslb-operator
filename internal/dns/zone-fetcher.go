@@ -112,12 +112,12 @@ func (f *ZoneFetcher) AXFRTransfer(ctx context.Context, zone chan []dns.RR, tran
 	}
 
 	bslog.Debug("starting zone-transfer")
-	f.client.Transfer = &dns.Transfer{}
 	msg := dns.NewMsg(f.Zone, dns.TypeAXFR)
 
-	envelopes, err := f.client.TransferIn(ctx, msg, "tcp", f.Server)
+	envelopes, err := f.client.TransferIn(ctx, msg, f.Server, nil)
 	if err != nil {
 		transferErrors <- fmt.Errorf("could not transfer zone: %v from server: %v:%w", f.Zone, f.Server, err)
+		return
 	}
 	records := make([]dns.RR, 0)
 	for {

@@ -1,8 +1,6 @@
 package router
 
 import (
-	"net/http"
-
 	"github.com/vitistack/gslb-operator/pkg/auth/authz"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 )
@@ -14,7 +12,7 @@ type Route struct {
 	pattern        string
 	action         authz.Action
 	public         bool
-	handler        http.HandlerFunc
+	handler        HandlerFunc
 	mws            []middleware.MiddlewareFunc
 	globalMws      []middleware.MiddlewareFunc
 	globalOverride bool
