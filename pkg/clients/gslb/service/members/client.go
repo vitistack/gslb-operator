@@ -7,10 +7,11 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/clients/gslb/transport"
 	"github.com/vitistack/gslb-operator/pkg/models/pagination"
 	"github.com/vitistack/gslb-operator/pkg/models/service"
+	"github.com/vitistack/gslb-operator/pkg/rest/request"
 )
 
 type Client interface {
-	Get(ctx context.Context) (pagination.Pagination[service.Member], error)
+	Get(ctx context.Context, params *service.GetMembersParams) (pagination.Pagination[service.Member], error)
 	GetID(ctx context.Context, id string) (service.Member, error)
 }
 
@@ -26,9 +27,10 @@ func NewMembersClient(transport transport.Transport, basePath string) *membersCl
 	}
 }
 
-func (c *membersClient) Get(ctx context.Context) (pagination.Pagination[service.Member], error) {
+func (c *membersClient) Get(ctx context.Context, params *service.GetMembersParams) (pagination.Pagination[service.Member], error) {
 	var resp pagination.Pagination[service.Member]
-	if err := c.transport.GetJSON(ctx, c.path, &resp); err != nil {
+	queryParameters := request.MarshallParams(params)
+	if err := c.transport.GetJSON(ctx, c.path+queryParameters.Encode(), &resp); err != nil {
 		return pagination.Pagination[service.Member]{}, err
 	}
 

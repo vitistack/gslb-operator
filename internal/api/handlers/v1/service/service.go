@@ -6,7 +6,9 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 
+	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
 	"github.com/vitistack/gslb-operator/internal/repositories/status"
@@ -67,20 +69,15 @@ func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	page := pagination.NewPaginationParams()
-	if err := request.UnMarshallParams(r.URL.Query(), page); err != nil {
-		logger.Error("failed to parse pagination parameters", slog.String("reason", err.Error()))
-		response.Err(w, response.ErrInvalidInput, "invalid pagination parameters")
+	queryParameters := service.GetMembersParams{
+		Views: strings.Join(config.DNS().DNSViews(), ","), // defaults to all views
+	}
+	if err := request.UnmarshalParams(r.URL.Query(), &queryParameters); err != nil {
+		logger.Error("failed to parse request parameters", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInvalidInput, "invalid query parameters")
 		return
 	}
-
-	defaults := pagination.NewPaginationParams()
-	if page.Page < 1 {
-		page.Page = defaults.Page
-	}
-	if page.PageSize < 1 {
-		page.PageSize = defaults.PageSize
-	}
+	page := pagination.EnsureDefaults(&queryParameters.PaginationParams)
 
 	group, err := h.svcGroupRepo.Read(memberOf)
 	if err != nil {
@@ -94,28 +91,31 @@ func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	skip := (page.Page - 1) * page.PageSize
-	ids := slices.Sorted(maps.Keys(group.Members))
-	items := make([]service.Member, 0, min(len(ids), max(page.PageSize, 0)))
-	iter.FromSlice(ids).
-		Skip(skip).
-		Take(page.PageSize).
-		Each(func(id string) {
+	views := strings.Split(queryParameters.Views, ",")
+	matches := iter.FromSlice(slices.Sorted(maps.Keys(group.Members))).
+		Map(func(id string) service.Member {
 			g := group.Members[id]
-			items = append(
-				items,
-				service.Member{
-					ID:        g.ID,
-					Priority:  g.Priority,
-					DC:        g.Datacenter,
-					Views:     g.Views,
-					Address:   g.Address,
-					IsHealthy: g.IsHealthy,
-				},
-			)
-		})
+			return service.Member{
+				ID:        g.ID,
+				Priority:  g.Priority,
+				DC:        g.Datacenter,
+				Views:     g.Views,
+				Address:   g.Address,
+				IsHealthy: g.IsHealthy,
+			}
+		}).
+		Filter(func(m service.Member) bool {
+			if !slices.ContainsFunc(m.Views, func(v string) bool { return slices.Contains(views, v) }) {
+				return false
+			}
+			return queryParameters.IsHealthy == nil || m.IsHealthy == *queryParameters.IsHealthy
+		}).
+		Collect()
 
-	resp := pagination.NewPaginationResult(page, len(group.Members), items)
+	skip := (page.Page - 1) * page.PageSize
+	items := iter.FromSlice(matches).Skip(skip).Take(page.PageSize).Collect()
+
+	resp := pagination.NewPaginationResult(page, len(matches), items)
 	response.JSON(w, http.StatusOK, resp)
 }
 

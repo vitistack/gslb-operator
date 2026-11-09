@@ -5,7 +5,14 @@ import (
 	"fmt"
 
 	"github.com/vitistack/gslb-operator/internal/utils/ip"
+	"github.com/vitistack/gslb-operator/pkg/models/pagination"
 )
+
+type GetMembersParams struct {
+	Views     string `param:"views"`
+	IsHealthy *bool  `param:"isHealthy"`
+	pagination.PaginationParams
+}
 
 type Member struct {
 	ID        string     `json:"id"`

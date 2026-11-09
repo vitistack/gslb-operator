@@ -31,7 +31,7 @@ func (s *DNSDistService) GetConfig(w http.ResponseWriter, r *http.Request) {
 	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
 
 	params := dnsdist.GetConfigParams{}
-	err := request.UnMarshallParams(r.URL.Query(), &params)
+	err := request.UnmarshalParams(r.URL.Query(), &params)
 	if err != nil {
 		logger.Error("failed to unmarshall request query-parameters", slog.String("reason", err.Error()))
 		response.Err(w, response.ErrInvalidInput, "query-parameters not valid")
