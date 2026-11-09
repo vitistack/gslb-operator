@@ -440,8 +440,8 @@ func (s *Service) GSLBService() *model.GSLBService {
 	defer s.mu.Unlock()
 	out := &model.GSLBService{
 		ID:           s.id,
+		Priority:     s.priority,
 		MemberOf:     s.memberOf,
-		Fqdn:         s.fqdn,
 		Port:         s.port,
 		Datacenter:   s.datacenter,
 		Views:        s.views,

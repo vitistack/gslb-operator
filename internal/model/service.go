@@ -68,8 +68,8 @@ func (g GSLBServiceGroup) Spoof(views ...string) *spoofs.Spoof {
 // services that are configured with gslb config end up as a service.Service
 type GSLBService struct {
 	ID           string     `json:"id"`
+	Priority     int        `json:"priority,omitempty"`
 	MemberOf     string     `json:"memberOf"`
-	Fqdn         string     `json:"fqdn"`
 	Port         string     `json:"port"`
 	Datacenter   string     `json:"datacenter"`
 	Views        []string   `json:"views"`

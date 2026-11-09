@@ -7,13 +7,11 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/pagination"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
-	"github.com/vitistack/gslb-operator/pkg/rest/request"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
 )
 
 func (ss *SpoofsService) GetSpoofs(w http.ResponseWriter, r *http.Request) {
-	params := pagination.NewPaginationParams()
-	err := request.UnMarshallParams(r.URL.Query(), params)
+	params, err := pagination.NewPaginationParams(r.URL.Query())
 	if err != nil {
 		response.Err(w, response.ErrInvalidInput, "could not parse request parameters")
 		bslog.Error("unable to parse request parameters", slog.String("reason", err.Error()))
