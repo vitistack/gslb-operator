@@ -17,21 +17,15 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
+	"github.com/vitistack/gslb-operator/pkg/rest/router"
 )
 
-func (s *SpoofsService) GetOverride(w http.ResponseWriter, r *http.Request) {
-	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
-	memberOf := r.PathValue("memberOf")
-
-	if memberOf == "" {
-		logger.Info("skipping due to insufficient input parameter", slog.String("reason", "missing path-value memberOf"))
-		response.Err(w, response.ErrInvalidInput, "missing path-value")
-		return
-	}
+func (s *SpoofsService) GetOverride(w http.ResponseWriter, r *router.Request) {
+	memberOf := r.Param("memberOf")
 
 	group, err := s.svcGroupRepo.Read(memberOf)
 	if err != nil {
-		logger.Error("could not fetch service group",
+		r.Log().Error("could not fetch service group",
 			slog.String("memberOf", memberOf),
 			slog.String("reason", err.Error()),
 		)
@@ -40,14 +34,14 @@ func (s *SpoofsService) GetOverride(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !group.HasOverride {
-		logger.Info("no active override", slog.String("serviceGroup", memberOf))
+		r.Log().Info("no active override", slog.String("serviceGroup", memberOf))
 		response.Err(w, response.ErrNotFound, "no active override for: "+memberOf)
 		return
 	}
 
 	err = response.JSON(w, http.StatusOK, map[string]any{"override": group.Active})
 	if err != nil {
-		logger.Error("failed to create json response",
+		r.Log().Error("failed to create json response",
 			slog.String("reason", err.Error()),
 			slog.Group(
 				"override",
@@ -56,12 +50,10 @@ func (s *SpoofsService) GetOverride(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *SpoofsService) CreateOverride(w http.ResponseWriter, r *http.Request) {
-	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
+func (s *SpoofsService) CreateOverride(w http.ResponseWriter, r *router.Request) {
 	override := spoofs.Override{}
-
 	if err := json.NewDecoder(r.Body).Decode(&override); err != nil {
-		logger.Error("failed to decode request body",
+		r.Log().Error("failed to decode request body",
 			slog.String("reason", err.Error()),
 		)
 		response.Err(w, response.ErrInvalidInput, "invalid request body")
@@ -71,12 +63,12 @@ func (s *SpoofsService) CreateOverride(w http.ResponseWriter, r *http.Request) {
 	err := s.overrideApplier.CreateOverride(override)
 	if err != nil {
 		if errors.Is(err, manager.ErrServiceGroupNotFound) {
-			logger.Info("skipping request", slog.String("reason", err.Error()))
+			r.Log().Info("skipping request", slog.String("reason", err.Error()))
 			response.Err(w, response.ErrNotFound, override.MemberOf+" not found")
 			return
 		}
 
-		logger.Error("failed to create override",
+		r.Log().Error("failed to create override",
 			slog.String("reason", err.Error()),
 			slog.Any("override", override),
 		)
@@ -90,21 +82,12 @@ func (s *SpoofsService) CreateOverride(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
-func (s *SpoofsService) DeleteOverride(w http.ResponseWriter, r *http.Request) {
-	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
-	memberOf := r.PathValue("memberOf")
-
-	if memberOf == "" {
-		logger.Info("skipping due to insufficient input parameter",
-			slog.String("reason", "missing path-value memberOf"),
-		)
-		response.Err(w, response.ErrInvalidInput, "missing path-value")
-		return
-	}
+func (s *SpoofsService) DeleteOverride(w http.ResponseWriter, r *router.Request) {
+	memberOf := r.Param("memberOf")
 
 	err := s.overrideApplier.RemoveOverride(memberOf)
 	if err != nil {
-		logger.Error("failed to delete override",
+		r.Log().Error("failed to delete override",
 			slog.String("reason", err.Error()),
 			slog.String("memberOf", memberOf),
 		)

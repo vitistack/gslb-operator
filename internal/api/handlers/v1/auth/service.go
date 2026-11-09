@@ -11,10 +11,10 @@ import (
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/pkg/auth/authc"
 	"github.com/vitistack/gslb-operator/pkg/auth/authz"
-	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/auth"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
+	"github.com/vitistack/gslb-operator/pkg/rest/router"
 )
 
 type AuthService struct {
@@ -48,19 +48,18 @@ func Init(store authc.KVStore) (*AuthService, error) {
 	authorizer := authz.NewRBACAuthorizer(policy, scopeGuard)
 	enforcer := authz.NewEnforcer(authorizer, registry)
 
-	
 	tokenIssuerOpts := []authc.TokenIssuerOption{
 		authc.WithAudience(config.Auth().JWT().Audience()),
 		authc.WithIssuer(config.Auth().JWT().Issuer()),
 	}
-	
+
 	if ttl := config.Auth().JWT().TTL(); ttl > 0 {
 		tokenIssuerOpts = append(tokenIssuerOpts, authc.WithTTL(ttl))
 	}
-	
+
 	tokenIssuer, err := authc.NewTokenIssuer(
 		config.Auth().JWT().Secret(),
-		tokenIssuerOpts...
+		tokenIssuerOpts...,
 	)
 
 	if err != nil {
@@ -84,49 +83,47 @@ func newAuthService(issuer *authc.TokenIssuer, enforcer *authz.Enforcer, authent
 }
 
 // verify a credential and issue a short-lived access token
-func (a *AuthService) Token(w http.ResponseWriter, r *http.Request) {
-	logger := bslog.With("request_id", r.Context().Value("id"))
-
-	principal, err := a.dispatcher.Authenticate(r)
+func (a *AuthService) Token(w http.ResponseWriter, r *router.Request) {
+	principal, err := a.dispatcher.Authenticate(r.Request)
 	switch {
 	case errors.Is(err, authc.ErrNoMethodDetected), errors.Is(err, authc.ErrUnknownMethod):
-		logger.Info("token exchange failed", slog.String("reason", "no usable authentication method"))
+		r.Log().Info("token exchange failed", slog.String("reason", "no usable authentication method"))
 		response.Err(w, response.ErrInvalidInput, "no usable authentication method")
 		return
 	case errors.Is(err, authc.ErrKeyMismatch):
-		logger.Info("token exchange failed", slog.String("reason", "client_id registered to different key"))
+		r.Log().Info("token exchange failed", slog.String("reason", "client_id registered to different key"))
 		response.Err(w, response.ErrConflict, "client_id already registered to a different key")
 		return
 	case errors.Is(err, authc.ErrClientExists):
-		logger.Info("token exchange failed", slog.String("reason", "client enrolled"))
+		r.Log().Info("token exchange failed", slog.String("reason", "client enrolled"))
 		response.Err(w, response.ErrConflict, "client already enrolled: use private-key-jwt")
 		return
 	case errors.Is(err, authc.ErrReplayed):
-		logger.Info("token exchange failed", slog.String("reason", "client assertion replay"))
+		r.Log().Info("token exchange failed", slog.String("reason", "client assertion replay"))
 		response.Err(w, response.ErrUnauthorized, "client assertion already used")
 		return
 	case errors.Is(err, authc.ErrTooLongClientAssertionTTL):
-		logger.Info("token exchange failed", slog.String("reason", "client-assertion ttl exceeds max ttl value"))
+		r.Log().Info("token exchange failed", slog.String("reason", "client-assertion ttl exceeds max ttl value"))
 		response.Err(w, response.ErrForbidden, "too long TTL on client-assertion")
 		return
 	case errors.Is(err, authc.ErrUnauthorized):
-		logger.Info("token exchange failed", slog.String("reason", "invalid credentials"))
+		r.Log().Info("token exchange failed", slog.String("reason", "invalid credentials"))
 		response.Err(w, response.ErrUnauthorized, "invalid credentials")
 		return
 	case err != nil:
-		logger.Error("authentication failed", slog.String("reason", err.Error()))
+		r.Log().Error("authentication failed", slog.String("reason", err.Error()))
 		response.Err(w, response.ErrInternalError, "authentication unavailable")
 		return
 	}
 
 	token, expiresIn, err := a.issuer.Issue(principal)
 	if err != nil {
-		logger.Error("token issue failed", slog.String("reason", err.Error()))
+		r.Log().Error("token issue failed", slog.String("reason", err.Error()))
 		response.Err(w, response.ErrInternalError, "could not issue token")
 		return
 	}
 
-	logger.Info(
+	r.Log().Info(
 		"authenticated",
 		slog.String("subject", principal.Subject),
 		slog.String("method", principal.Method),
