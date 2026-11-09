@@ -3,6 +3,7 @@ package members
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/vitistack/gslb-operator/pkg/clients/gslb/transport"
 	"github.com/vitistack/gslb-operator/pkg/models/pagination"
@@ -39,7 +40,7 @@ func (c *membersClient) Get(ctx context.Context, params *service.GetMembersParam
 
 func (c *membersClient) GetID(ctx context.Context, id string) (service.Member, error) {
 	var resp service.Member
-	if err := c.transport.GetJSON(ctx, fmt.Sprintf("%s/%s", c.path, id), &resp); err != nil {
+	if err := c.transport.GetJSON(ctx, fmt.Sprintf("%s/%s", c.path, url.PathEscape(id)), &resp); err != nil {
 		return service.Member{}, err
 	}
 
