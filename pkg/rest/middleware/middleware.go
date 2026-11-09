@@ -39,6 +39,9 @@ func (rw *ResponseWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Unwrap lets http.ResponseController reach Flush/Hijack on the underlying writer.
+func (rw *ResponseWriter) Unwrap() http.ResponseWriter { return rw.ResponseWriter }
+
 func WithRequestLogging(logger *slog.Logger, level slog.Level, trustedPrefixes []netip.Prefix) MiddlewareFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
