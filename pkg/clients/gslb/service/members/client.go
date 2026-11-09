@@ -30,7 +30,7 @@ func NewMembersClient(transport transport.Transport, basePath string) *membersCl
 func (c *membersClient) Get(ctx context.Context, params *service.GetMembersParams) (pagination.Pagination[service.Member], error) {
 	var resp pagination.Pagination[service.Member]
 	queryParameters := request.MarshallParams(params)
-	if err := c.transport.GetJSON(ctx, c.path+queryParameters.Encode(), &resp); err != nil {
+	if err := c.transport.GetJSON(ctx, c.path+"?"+queryParameters.Encode(), &resp); err != nil {
 		return pagination.Pagination[service.Member]{}, err
 	}
 
