@@ -1,8 +1,6 @@
 package v1
 
 import (
-	"net/http"
-
 	"github.com/vitistack/gslb-operator/internal/api/handlers/v1/dnsdist"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/v1/service"
 	"github.com/vitistack/gslb-operator/internal/api/handlers/v1/spoofs"
@@ -15,15 +13,15 @@ import (
 // Handlers is every endpoint v1 serves. A later version overrides only the
 // field(s) it changed and leaves the rest as v1's defaults.
 type Handlers struct {
-	Token            http.HandlerFunc
-	Spoofs           http.HandlerFunc
-	OverrideGet      http.HandlerFunc
-	OverrideCreate   http.HandlerFunc
-	OverrideDelete   http.HandlerFunc
-	ServiceStatusGet http.HandlerFunc
-	MembersGet       http.HandlerFunc
-	MembersIdGet     http.HandlerFunc
-	DNSDistConfigGet http.HandlerFunc
+	Token            router.HandlerFunc
+	Spoofs           router.HandlerFunc
+	OverrideGet      router.HandlerFunc
+	OverrideCreate   router.HandlerFunc
+	OverrideDelete   router.HandlerFunc
+	ServiceStatusGet router.HandlerFunc
+	MembersGet       router.HandlerFunc
+	MembersIdGet     router.HandlerFunc
+	DNSDistConfigGet router.HandlerFunc
 }
 
 // DefaultHandlers builds v1's own handlers from deps.

@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+	"time"
 	"uuid"
 )
 
@@ -21,17 +22,39 @@ func Chain(mws ...MiddlewareFunc) MiddlewareFunc {
 	}
 }
 
-func WithIncomingRequestLogging(logger *slog.Logger, level slog.Level, trustedPrefixes []netip.Prefix) MiddlewareFunc {
+type ResponseWriter struct {
+	http.ResponseWriter
+	StatusCode int
+	Bytes      int
+}
+
+func (rw *ResponseWriter) WriteHeader(statusCode int) {
+	rw.StatusCode = statusCode
+	rw.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (rw *ResponseWriter) Write(b []byte) (int, error) {
+	n, err := rw.ResponseWriter.Write(b)
+	rw.Bytes += n
+	return n, err
+}
+
+// Unwrap lets http.ResponseController reach Flush/Hijack on the underlying writer.
+func (rw *ResponseWriter) Unwrap() http.ResponseWriter { return rw.ResponseWriter }
+
+func WithRequestLogging(logger *slog.Logger, level slog.Level, trustedPrefixes []netip.Prefix) MiddlewareFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
 			parent := r.Context() // re-use request context
 
 			r = r.WithContext(context.WithValue(parent, "id", uuid.NewV7().String()))
+			requestID := slog.Any("request_id", r.Context().Value("id"))
 
 			logger.Log(context.Background(), level, "incoming request",
 				slog.GroupAttrs(
 					"meta_data",
-					slog.Any("request_id", r.Context().Value("id")),
+					requestID,
 					slog.String("method", r.Method),
 					slog.String("remote_host", Addr(r.RemoteAddr, r.Header, trustedPrefixes)),
 					slog.String("route", r.URL.String()),
@@ -40,7 +63,21 @@ func WithIncomingRequestLogging(logger *slog.Logger, level slog.Level, trustedPr
 				),
 			)
 
-			next.ServeHTTP(w, r)
+			rw := &ResponseWriter{ResponseWriter: w, StatusCode: http.StatusOK}
+			next.ServeHTTP(rw, r)
+
+			logger.Log(r.Context(), level, "response",
+				slog.GroupAttrs(
+					"meta_data",
+					requestID,
+					slog.String("method", r.Method),
+					slog.String("route", r.URL.Path),
+					slog.Int("status_code", rw.StatusCode),
+					slog.Int("bytes", rw.Bytes),
+					slog.String("content_type", rw.Header().Get("Content-Type")),
+					slog.String("took", time.Since(start).String()),
+				),
+			)
 		}
 	}
 }

@@ -90,11 +90,12 @@ func (rt *Router) Build() (http.Handler, error) {
 			chain := append([]middleware.MiddlewareFunc{}, rglobals...)
 			chain = append(chain, gmws...)
 			chain = append(chain, r.mws...)
+			chain = append(chain, rt.requirePathValues(full))
 			if !isPublic && rt.enforcer != nil {
 				chain = append(chain, rt.enforcer.Enforce(r.action, full, rt.logger))
 			}
 
-			rt.mux.HandleFunc(key, middleware.Chain(chain...)(r.handler))
+			rt.mux.HandleFunc(key, middleware.Chain(chain...)(rt.adapt(full, r.handler)))
 		}
 
 		for _, c := range g.children {

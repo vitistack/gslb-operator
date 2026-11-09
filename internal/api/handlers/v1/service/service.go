@@ -12,13 +12,13 @@ import (
 	"github.com/vitistack/gslb-operator/internal/model"
 	"github.com/vitistack/gslb-operator/internal/repositories/servicegroup"
 	"github.com/vitistack/gslb-operator/internal/repositories/status"
-	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/iter"
 	"github.com/vitistack/gslb-operator/pkg/models/pagination"
 	"github.com/vitistack/gslb-operator/pkg/models/service"
 	"github.com/vitistack/gslb-operator/pkg/persistence"
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
+	"github.com/vitistack/gslb-operator/pkg/rest/router"
 )
 
 type GSLBServiceHandler struct {
@@ -33,47 +33,33 @@ func NewGSLBServiceHandler(statusRepo *status.StatusRepo, serviceStore persisten
 	}
 }
 
-func (h *GSLBServiceHandler) GetServiceStatus(w http.ResponseWriter, r *http.Request) {
-	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
-	fqdn := r.PathValue("memberOf")
+func (h *GSLBServiceHandler) GetServiceStatus(w http.ResponseWriter, r *router.Request) {
+	memberOf := r.Param("memberOf") // can assume populated
 
-	if fqdn == "" {
-		logger.Info("skipping due to insufficient input parameter", slog.String("reason", "missing path-value memberOf"))
-		response.Err(w, response.ErrInvalidInput, "missing path-value")
-		return
-	}
-
-	status, err := h.statusRepo.Read(fqdn)
+	status, err := h.statusRepo.Read(memberOf)
 	if err != nil {
-		logger.Error("failed to get status", slog.String("reason", err.Error()), slog.String("fqdn", fqdn))
+		r.Log().Error("failed to get status", slog.String("reason", err.Error()), slog.String("memberOf", memberOf))
 		response.Err(w, response.ErrInternalError, "unexpected error")
 		return
 	}
 
 	if status.MemberOf == "" {
-		logger.Info("could not find status for service", slog.String("fqdn", fqdn))
-		response.Err(w, response.ErrNotFound, "no status available yet for: "+fqdn)
+		r.Log().Info("could not find status for service", slog.String("memberOf", memberOf))
+		response.Err(w, response.ErrNotFound, "no status available yet for: "+memberOf)
 		return
 	}
 
 	response.JSON(w, http.StatusOK, status)
 }
 
-func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *http.Request) {
-	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
-	memberOf := r.PathValue("memberOf")
-
-	if memberOf == "" {
-		logger.Info("skipping due to insufficient input parameter", slog.String("reason", "missing path-value memberOf"))
-		response.Err(w, response.ErrInvalidInput, "missing path-value")
-		return
-	}
+func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *router.Request) {
+	memberOf := r.Param("memberOf")
 
 	queryParameters := service.GetMembersParams{
 		Views: strings.Join(config.DNS().DNSViews(), ","), // defaults to all views
 	}
 	if err := request.UnmarshalParams(r.URL.Query(), &queryParameters); err != nil {
-		logger.Error("failed to parse request parameters", slog.String("reason", err.Error()))
+		r.Log().Error("failed to parse request parameters", slog.String("reason", err.Error()))
 		response.Err(w, response.ErrInvalidInput, "invalid query parameters")
 		return
 	}
@@ -81,7 +67,7 @@ func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *http.Request) 
 
 	group, err := h.svcGroupRepo.Read(memberOf)
 	if err != nil {
-		logger.Error("failed to get service group", slog.String("reason", err.Error()), slog.String("memberOf", memberOf))
+		r.Log().Error("failed to get service group", slog.String("reason", err.Error()), slog.String("memberOf", memberOf))
 		response.Err(w, response.ErrInternalError, "unexpected error")
 		return
 	}
@@ -119,20 +105,13 @@ func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *http.Request) 
 	response.JSON(w, http.StatusOK, resp)
 }
 
-func (h *GSLBServiceHandler) GetMembersId(w http.ResponseWriter, r *http.Request) {
-	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
-	memberOf := r.PathValue("memberOf")
-	memberId := r.PathValue("id")
-
-	if memberOf == "" || memberId == "" {
-		logger.Info("skipping due to insufficient input parameters", slog.String("reason", "missing path-value"))
-		response.Err(w, response.ErrInvalidInput, "missing path-value")
-		return
-	}
+func (h *GSLBServiceHandler) GetMembersId(w http.ResponseWriter, r *router.Request) {
+	memberOf := r.Param("memberOf")
+	memberId := r.Param("id")
 
 	group, err := h.svcGroupRepo.Read(memberOf)
 	if err != nil {
-		logger.Error("failed to get service group", slog.String("reason", err.Error()), slog.String("memberOf", memberOf))
+		r.Log().Error("failed to get service group", slog.String("reason", err.Error()), slog.String("memberOf", memberOf))
 		response.Err(w, response.ErrInternalError, "unexpected error")
 		return
 	}

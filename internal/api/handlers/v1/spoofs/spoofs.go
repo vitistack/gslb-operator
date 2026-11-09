@@ -8,9 +8,10 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/models/pagination"
 	"github.com/vitistack/gslb-operator/pkg/models/spoofs"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
+	"github.com/vitistack/gslb-operator/pkg/rest/router"
 )
 
-func (ss *SpoofsService) GetSpoofs(w http.ResponseWriter, r *http.Request) {
+func (ss *SpoofsService) GetSpoofs(w http.ResponseWriter, r *router.Request) {
 	params, err := pagination.NewPaginationParams(r.URL.Query())
 	if err != nil {
 		response.Err(w, response.ErrInvalidInput, "could not parse request parameters")
@@ -40,16 +41,12 @@ func (ss *SpoofsService) GetSpoofs(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, resp)
 }
 
-func (ss *SpoofsService) GetFQDNSpoof(w http.ResponseWriter, r *http.Request) {
-	fqdn := r.PathValue("memberOf")
-	if fqdn == "" {
-		response.Err(w, response.ErrInvalidInput, "empty id is not valid")
-		return
-	}
+func (ss *SpoofsService) GetFQDNSpoof(w http.ResponseWriter, r *router.Request) {
+	memberOf := r.Param("memberOf")
 
-	spoof, err := ss.spoofRepo.Read(fqdn)
+	spoof, err := ss.spoofRepo.Read(memberOf)
 	if err != nil {
-		msg := "unable to fetch spoof with id: " + fqdn
+		msg := "unable to fetch spoof with id: " + memberOf
 		response.Err(w, response.ErrInternalError, msg)
 		bslog.Error(msg, slog.String("reason", err.Error()))
 		return
@@ -58,7 +55,7 @@ func (ss *SpoofsService) GetFQDNSpoof(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, spoof)
 }
 
-//func (ss *SpoofsService) GetSpoofsHash(w http.ResponseWriter, r *http.Request) {
+//func (ss *SpoofsService) GetSpoofsHash(w http.ResponseWriter, r *router.Request) {
 //	data, err := ss.spoofRepo.ReadAll()
 //	if err != nil {
 //		response.Err(w, response.ErrInternalError, "unable to fetch spoofs from storage")

@@ -1,6 +1,7 @@
 package debug
 
 import (
+	"net/http"
 	"net/http/pprof"
 
 	"github.com/vitistack/gslb-operator/internal/config"
@@ -14,8 +15,8 @@ func Register(parent *router.RouteGroup) *router.RouteGroup {
 	if config.DevMode() {
 		g = parent.Group("/debug").Public()
 
-		g.GET("/pprof/", pprof.Index)
-		g.GET("/pprof/heap/", pprof.Handler("heap").ServeHTTP)
+		g.Handle(http.MethodGet, "/pprof/", http.HandlerFunc(pprof.Index))
+		g.Handle(http.MethodGet, "/pprof/heap/", pprof.Handler("heap"))
 
 		bslog.Info("mounted debug API")
 	}
