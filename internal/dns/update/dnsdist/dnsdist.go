@@ -238,6 +238,14 @@ func (d *DNSDISTUpdater) synchronizeServers() error {
 			}
 
 			if hash != serverHash {
+				bslog.Debug(
+					"inconsistent spoof rules hash",
+					slog.Group(
+						"hashes",
+						slog.String("desired", hash),
+						slog.String(server.name, serverHash),
+					),
+				)
 				err = d.do(server.name, func() error { return server.Reconcile(d.spoofRepo.ReadAll()) })
 				if err != nil {
 					syncErrors <- fmt.Errorf("failed to reconcile %s: %w", server.name, err)
