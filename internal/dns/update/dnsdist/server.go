@@ -167,6 +167,7 @@ func (s *server) Hash() (string, error) {
 
 	joinedUUIDs := strings.Join(spoofEntries, ",")
 	rawHash := sha256.Sum256([]byte(joinedUUIDs))
+
 	return hex.EncodeToString(rawHash[:]), nil
 }
 
@@ -185,6 +186,11 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 		}
 	}()
 
+	desired := gslbSpoofs.Filter(func(spoof spoofs.Spoof) bool { return spoof.View == s.selector.View() }).Collect()
+	if err = finish(); err != nil {
+		return fmt.Errorf("failed to read spoofs: %w", err)
+	}
+
 	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
 	if err != nil {
 		return fmt.Errorf("failed to list rules: %w", err)
@@ -195,32 +201,44 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 	for rule := range IterateRuleSet(rawRuleSet, false).
 		Filter(func(rl rules.RuleLine) bool { return strings.Contains(rl.Action, "spoof") }) {
 		totalToDelete++
-		err := s.client.Rules().Remove(rule.UUID)
-		if err != nil {
+		if err := s.client.Rules().Remove(rule.UUID); err != nil {
 			clearOldRulesErr = errors.Join(clearOldRulesErr, err)
 		} else {
 			deleted++
+			bslog.Debug(
+				"successfully deleted rule",
+				slog.Group(
+					"spoof",
+					slog.String("name", rule.Name),
+					slog.String("uuid", rule.UUID),
+					slog.String("action", rule.Action),
+				),
+			)
 		}
 	}
 
 	var createErrors error
-	totalToCreate, created := 0, 0
-	for spoof := range gslbSpoofs.Filter(func(spoof spoofs.Spoof) bool { return spoof.View == s.selector.View() }) { // add all spoofs that does not exist but should
-		totalToCreate++
+	totalToCreate, created := len(desired), 0
+	for _, spoof := range desired {
 		ruleName := ManagedRuleName(spoof.Name)
-		err = s.client.Rules().Add(
+		err := s.client.Rules().Add(
 			rules.QNameRule(spoof.FQDN),
 			rules.SpoofAction(spoof.Address.Strings(), rules.SpoofActionOptions{TTL: new(30), AA: new(true)}),
-			rules.GlobalRuleOptions{
-				Name: &ruleName,
-				UUID: &spoof.UUID,
-			},
+			rules.GlobalRuleOptions{Name: &ruleName, UUID: &spoof.UUID},
 		)
-
 		if err != nil {
 			createErrors = errors.Join(createErrors, err)
 		} else {
 			created++
+			bslog.Debug(
+				"successfully created spoof",
+				slog.Group(
+					"spoof",
+					slog.String("name", spoof.Name),
+					slog.String("uuid", spoof.UUID),
+					slog.String("address", spoof.Address.String()),
+				),
+			)
 		}
 	}
 
@@ -243,69 +261,8 @@ func (s *server) Reconcile(gslbSpoofs iter.Iterator[spoofs.Spoof], finish func()
 		return fmt.Errorf("failed to reconcile spoofs: %w", errors.Join(clearOldRulesErr, createErrors))
 	}
 
-	if err = finish(); err != nil {
-		return fmt.Errorf("failed to fetch spoof: %w", err)
-	}
-
 	return nil
 }
-
-//func (s *server) BulkStatus() (map[uuid.UUID]service.DNSServerStatusForService, error) {
-//	s.lock.RLock()
-//	defer s.lock.RUnlock()
-//
-//	baseStatus := service.DNSServerStatusForService{
-//		Programmed: true,
-//		Host:       s.name,
-//		View:       s.selector.View(),
-//		Address:    nil,
-//	}
-//
-//	statuses := make(map[uuid.UUID]service.DNSServerStatusForService)
-//
-//	rawRuleSet, err := s.client.Rules().List(&rules.ListOptions{ShowUUIDs: new(true)})
-//	if err != nil {
-//		return nil, fmt.Errorf("%s in view %s: failed to fetch rule-set: %w", s.name, s.selector.View(), err)
-//	}
-//
-//	IterateRuleSet(rawRuleSet).
-//		Filter(func(rl rules.RuleLine) bool { return strings.Contains(rl.Action, "spoof") }).
-//		Each(
-//			func(rl rules.RuleLine) {
-//				rawAddress := strings.TrimPrefix(rl.Action, "spoof in ")
-//				status := baseStatus
-//				status.Address, err = ip.FromString(rawAddress)
-//				if err != nil {
-//					bslog.Error(
-//						"failed to generate status",
-//						slog.Group("server",
-//							slog.String("name", s.name),
-//							slog.String("view", s.selector.View()),
-//						),
-//						slog.String("reason", fmt.Errorf("failed to parse spoof-address from RuleAction: %w", err).Error()),
-//					)
-//					return
-//				}
-//
-//				id, err := uuid.Parse(rl.UUID)
-//				if err != nil {
-//					bslog.Error(
-//						"failed to generate status",
-//						slog.Group("server",
-//							slog.String("name", s.name),
-//							slog.String("view", s.selector.View()),
-//						),
-//						slog.String("reason", fmt.Errorf("failed to parse rule-line uuid: %w", err).Error()),
-//					)
-//					return
-//				}
-//
-//				statuses[id] = status
-//			},
-//		)
-//
-//	return statuses, nil
-//}
 
 func (s *server) Status(uuid string) (service.DNSServerStatusForService, error) {
 	s.lock.RLock()

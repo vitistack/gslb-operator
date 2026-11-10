@@ -45,10 +45,11 @@ func (r *SpoofRepo) Read(memberOf string, views ...string) (spoofModel.Spoof, er
 }
 
 func (r *SpoofRepo) ReadAll() (iter.Iterator[spoofModel.Spoof], func() error) {
-	groups, finish := r.store.LoadAll()
+	groups, storeFinish := r.store.LoadAll()
 
 	var iterError error
 	seq := func(yield func(spoofModel.Spoof) bool) {
+		defer func(){ iterError = storeFinish() }()
 		for group := range groups {
 			for _, view := range group.Views {
 				spoof := group.Spoof(view)
@@ -60,11 +61,9 @@ func (r *SpoofRepo) ReadAll() (iter.Iterator[spoofModel.Spoof], func() error) {
 				}
 			}
 		}
-
-		iterError = finish()
 	}
 
-	finish = func() error {
+	finish := func() error {
 		if iterError != nil {
 			return fmt.Errorf("failed to read from storage: %w", iterError)
 		}
