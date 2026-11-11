@@ -361,12 +361,11 @@ func (sm *ServicesManager) RemoveService(id string) error {
 	defer sm.mutex.Unlock()
 
 	sm.scheduledServices.Delete(id)
-	sm.schedulers[interval].RemoveService(svc) // remove the service from its scheduler
-
-	if err := sm.svcGroupRepo.DeleteMember(svc.GetMemberOf(), model.GSLBService{ID: id, MemberOf: svc.GetMemberOf()}); err != nil {
-		return fmt.Errorf("failed to delete servicegroup member: %s: %w", svc.GetID(), err)
+	if sm.schedulers[interval].RemoveService(svc) {
+		sm.cleanupInterval(interval)
 	}
 
+	// in-memory removal first: its reconcile mutates the persisted group, which DeleteMember may delete
 	var empty bool
 	sm.serviceGroups.With(svc.GetMemberOf(), func(sg group.ServiceGroup, unlock group.GroupUnlocker) {
 		empty = sg.RemoveMember(id)
@@ -376,6 +375,11 @@ func (sm *ServicesManager) RemoveService(id string) error {
 		sm.serviceGroups.Delete(svc.GetMemberOf())
 		serviceGroups.Dec()
 	}
+
+	if err := sm.svcGroupRepo.DeleteMember(svc.GetMemberOf(), model.GSLBService{ID: id, MemberOf: svc.GetMemberOf()}); err != nil {
+		return fmt.Errorf("failed to delete servicegroup member: %s: %w", svc.GetID(), err)
+	}
+
 	bslog.Debug("removed service", slog.Any("service", svc))
 	healthcheck.DeleteMetrics(svc.GetMemberOf(), svc.GetID())
 	events.Emit(&events.Event{ // publish delete event for service
@@ -541,7 +545,7 @@ func (sm *ServicesManager) handleServiceHealthChange(ctx context.Context) {
 // reconciles the current state of a group to reflect internal state of the manager
 // and external state
 func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
-    active := group.GetActive(view)
+	active := group.GetActive(view)
 
 	wasPreviouslyActive := false
 	if _, ok := group.SeededActive(view); ok {
@@ -549,25 +553,32 @@ func (sm *ServicesManager) reconcile(group group.ServiceGroup, view string) {
 		group.ClearSeed(view)
 	}
 
-    err := sm.svcGroupRepo.Mutate(group.Name(), func(g *model.GSLBServiceGroup) {
-        if g.Active == nil {
-            g.Active = make(map[string]string)
-        }
-        if active != nil {
-            g.Active[view] = active.GetID()
-        } else {
-            delete(g.Active, view)
-        }
-    })
-    if err != nil {
-        bslog.Error("failed to reconcile service-group", slog.String("reason", err.Error()), slog.Any("group", group))
-        return
-    }
+	err := sm.svcGroupRepo.Mutate(group.Name(), func(g *model.GSLBServiceGroup) {
+		if g.Active == nil {
+			g.Active = make(map[string]string)
+		}
+		if active != nil {
+			g.Active[view] = active.GetID()
+		} else {
+			delete(g.Active, view)
+		}
+	})
+	if err != nil {
+		bslog.Error("failed to reconcile service-group", slog.String("reason", err.Error()), slog.Any("group", group))
+		return
+	}
 
 	if active == nil {
-		if err := sm.dnsGate.Delete(group.ID()); err != nil {
+		if err := sm.dnsGate.Delete(group.ID(), view); err != nil {
 			bslog.Error("failed to reconcile gslb service-group",
 				slog.String("reason", fmt.Errorf("failed to delete DNS records: %w", err).Error()), slog.Any("group", group))
+			return
+		}
+
+		hasMembers := group.Members(view).Count() > 0
+		if !hasMembers {
+			bslog.Info("gslb service group view has no members, DNS record removed",
+				slog.String("service", group.Name()), slog.String("view", view))
 			return
 		}
 

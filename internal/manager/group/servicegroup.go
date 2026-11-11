@@ -305,15 +305,21 @@ func (sg *ServiceGroupV2) RemoveMember(id string) bool {
 }
 
 func (sg *ServiceGroupV2) updateView(view string) {
-	if !sg.setGroupModeForView(view) {
-		delete(sg.activeByView, view)
-		return
-	}
+    if !sg.setGroupModeForView(view) {
+        _, hadActive := sg.activeByView[view]
+        _, seeded := sg.seededActive[view]
+        if hadActive || seeded {
+            sg.promote(view, nil) // view lost its last member: reconcile must withdraw its DNS record
+        }
+        delete(sg.activeByView, view)
+        delete(sg.lastActiveByView, view)
+        return
+    }
 
-	firstHealthy := firstHealthyOf(sg.Members(view))
-	if firstHealthy != sg.activeByView[view] {
-		sg.promote(view, firstHealthy)
-	}
+    firstHealthy := firstHealthyOf(sg.Members(view))
+    if firstHealthy != sg.activeByView[view] {
+        sg.promote(view, firstHealthy)
+    }
 }
 
 // setGroupModeForView recomputes mode in a single pass; returns false if view has no members
