@@ -1,4 +1,4 @@
-FROM golang:1.27-alpine AS build
+FROM golang:1.27.4-alpine AS build
 
 LABEL MAINTAINER="espen.wobbes@nhn.no"
 
