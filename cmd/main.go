@@ -75,7 +75,7 @@ func main() {
 		manager.WithMinRunningWorkers(10),
 		manager.WithNonBlockingBufferSize(15),
 		manager.WithServiceGroupRepository(svcGroupRepo),
-		//manager.WithDryRun(true),
+		manager.WithDryRun(config.Server().DryRun()),
 	)
 
 	updater, err := dnsdist.NewDNSDISTUpdater(servicesStore)

@@ -73,6 +73,7 @@ type GSLBService struct {
 	Port         string     `json:"port"`
 	Datacenter   string     `json:"datacenter"`
 	Views        []string   `json:"views"`
+	Mode         string     `json:"memberMode"`
 	Address      ip.Address `json:"address"`
 	IsHealthy    bool       `json:"isHealthy"`
 	FailureCount int        `json:"failureCount"`

@@ -10,6 +10,15 @@ import (
 )
 
 // JSON - object in the TXT records for the GSLB - config zone
+
+type MemberMode string
+
+const (
+	MemberModeManaged    MemberMode = "MANAGED"
+	MemberModeMonitored  MemberMode = "MONITORED"
+	MemberModeRegistered MemberMode = "REGISTERED"
+)
+
 type GSLBConfig struct {
 	ServiceID        string             `json:"id"`
 	Fqdn             string             `json:"fqdn"`
@@ -23,6 +32,7 @@ type GSLBConfig struct {
 	Priority         int                `json:"priority"`
 	FailureThreshold int                `json:"threshold"`
 	CheckType        string             `json:"check"`
+	Mode             MemberMode         `json:"memberMode"`
 	Script           *LuaScript         `json:"lua,omitempty"`
 }
 

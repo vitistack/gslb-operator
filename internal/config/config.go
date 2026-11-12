@@ -157,12 +157,17 @@ func init() {
 // server configuration
 type server struct {
 	Env         string `mapstructure:"env"`
+	DRY_RUN     bool   `mapstructure:"dry_run"`
 	LUA_SANDBOX string `mapstructure:"lua_sandbox"`
 	LOG_LEVEL   string `mapstructure:"log_level"`
 }
 
 func (s *server) Environment() string {
 	return s.Env
+}
+
+func (s *server) DryRun() bool {
+	return s.DRY_RUN
 }
 
 func (s *server) LuaSandbox() string {
