@@ -14,12 +14,14 @@ import (
 )
 
 var sharedClient valkey.Client // shared valkey client
+const defaultOpTimeout = time.Second * 5
 
 type ValkeyStore[T any] struct {
-	client   valkey.Client
-	baseKey  string
-	cacheTTL time.Duration
-	migrate  persistence.MigrateFunc
+	client    valkey.Client
+	baseKey   string
+	cacheTTL  time.Duration
+	migrate   persistence.MigrateFunc
+	opTimeout time.Duration
 }
 
 func NewClient(opts valkey.ClientOption) (valkey.Client, error) {
@@ -38,9 +40,10 @@ func NewClient(opts valkey.ClientOption) (valkey.Client, error) {
 
 func NewStore[T any](c valkey.Client, base string, ttl time.Duration, opts ...Option[T]) (*ValkeyStore[T], error) {
 	store := &ValkeyStore[T]{
-		client:   c,
-		baseKey:  base,
-		cacheTTL: ttl,
+		client:    c,
+		baseKey:   base,
+		cacheTTL:  ttl,
+		opTimeout: defaultOpTimeout,
 	}
 
 	for _, opt := range opts {
@@ -56,6 +59,12 @@ func NewStore[T any](c valkey.Client, base string, ttl time.Duration, opts ...Op
 	return store, nil
 }
 
+func (s *ValkeyStore[T]) do(cmd valkey.Completed) valkey.ValkeyResult {
+	ctx, cancel := context.WithTimeout(context.Background(), s.opTimeout)
+	defer cancel()
+	return s.client.Do(ctx, cmd)
+}
+
 func (s *ValkeyStore[T]) runMigration() error {
 	keys, err := s.fetchKeys()
 	if err != nil {
@@ -69,7 +78,7 @@ func (s *ValkeyStore[T]) runMigration() error {
 		batch := keys[i:min(i+batchSize, len(keys))]
 
 		cmd := s.client.B().Mget().Key(batch...).Build()
-		results, err := s.client.Do(context.Background(), cmd).ToArray()
+		results, err := s.do(cmd).ToArray()
 		if err != nil {
 			migrationErrors = append(migrationErrors, fmt.Errorf("failed to load records: %w", err))
 			continue
@@ -102,7 +111,7 @@ func (s *ValkeyStore[T]) runMigration() error {
 
 			cmd := s.client.B().Set().Key(batch[idx]).Value(string(newRecordRaw)).Build()
 
-			err = s.client.Do(context.Background(), cmd).Error()
+			err = s.do(cmd).Error()
 			if err != nil {
 				migrationErrors = append(migrationErrors, fmt.Errorf("failed to set key: %s: %w", batch[idx], err))
 				continue
@@ -122,7 +131,7 @@ func (s *ValkeyStore[T]) Save(key string, data T) error {
 
 	key = s.baseKey + ":" + key
 	cmd := s.client.B().Set().Key(key).Value(string(rawData)).Build()
-	return s.client.Do(context.Background(), cmd).Error()
+	return s.do(cmd).Error()
 }
 
 // retrieves a record from valkey
@@ -133,7 +142,7 @@ func (s *ValkeyStore[T]) Load(key string) (T, error) {
 
 	// fetch record
 	cmd := s.client.B().Get().Key(key).Build()
-	result, err := s.client.Do(context.Background(), cmd).ToString()
+	result, err := s.do(cmd).ToString()
 
 	if err == valkey.Nil { // not found
 		return zero, nil
@@ -168,7 +177,7 @@ func (s *ValkeyStore[T]) LoadAll() (iter.Seq[T], func() error) {
 			batch := keys[i:min(i+batchSize, len(keys))]
 
 			cmd := s.client.B().Mget().Key(batch...).Build()
-			results, err := s.client.Do(context.Background(), cmd).ToArray()
+			results, err := s.do(cmd).ToArray()
 			if err != nil {
 				iterErr = fmt.Errorf("failed to load records: %w", err)
 				return
@@ -208,7 +217,7 @@ func (s *ValkeyStore[T]) fetchKeys() ([]string, error) {
 	}
 
 	cmd := factory(uint64(0), int64(1_000))
-	queryResult, err := s.client.Do(context.Background(), cmd).AsScanEntry()
+	queryResult, err := s.do(cmd).AsScanEntry()
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch storage keys: %w", err)
 	}
@@ -218,7 +227,7 @@ func (s *ValkeyStore[T]) fetchKeys() ([]string, error) {
 	cursor := queryResult.Cursor
 	for cursor != 0 {
 		cmd := factory(cursor, int64(1_000))
-		queryResult, err := s.client.Do(context.Background(), cmd).AsScanEntry()
+		queryResult, err := s.do(cmd).AsScanEntry()
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch storage keys: %w", err)
 		}
@@ -232,7 +241,7 @@ func (s *ValkeyStore[T]) fetchKeys() ([]string, error) {
 
 func (s *ValkeyStore[T]) Delete(key string) error {
 	cmd := s.client.B().Del().Key(s.baseKey + ":" + key).Build()
-	err := s.client.Do(context.Background(), cmd).Error()
+	err := s.do(cmd).Error()
 	if err != nil {
 		return fmt.Errorf("failed to delete record: %w", err)
 	}

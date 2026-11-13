@@ -137,7 +137,7 @@ func (f *ZoneFetcher) AXFRTransfer(ctx context.Context, zone chan []dns.RR, tran
 					bslog.Debug("zone-transfer completed")
 					return
 				case <-time.After(f.timeout): // dont block forever
-					bslog.Warn("zone-transfer timed out", slog.String("after", f.timeout.String()), slog.String("reason", "consumer may be blocked"))
+					bslog.Warn("zone-transfer timed out", slog.String("after", f.timeout.String()), slog.String("reason", "consumer blocked"))
 					return
 				}
 			}

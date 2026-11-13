@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"codeberg.org/miekg/dns"
 	"github.com/vitistack/gslb-operator/internal/config"
@@ -235,57 +236,59 @@ func (h *Handler) handleRecord(record dns.RR) *service.Service {
 // reassigned, or the zone went empty) have their grant explicitly cleared
 // rather than left stale.
 func (h *Handler) claimOwnership(ctx context.Context, records []dns.RR) {
-    if h.claimer == nil || h.clientID == nil {
-        return
-    }
+	if h.claimer == nil || h.clientID == nil {
+		return
+	}
 
-    claims := make(map[string][]string)
-    for _, record := range records {
-        txt, ok := record.(*dns.TXT)
-        if !ok {
-            continue
-        }
+	claims := make(map[string][]string)
+	for _, record := range records {
+		txt, ok := record.(*dns.TXT)
+		if !ok {
+			continue
+		}
 
-        clientID, ok := h.clientID(txt.Hdr.Name)
-        if !ok {
-            continue
-        }
+		clientID, ok := h.clientID(txt.Hdr.Name)
+		if !ok {
+			continue
+		}
 
-        if _, exists := claims[clientID]; !exists {
-            claims[clientID] = []string{} // mark present in this snapshot even without a MemberOf claim
-        }
+		if _, exists := claims[clientID]; !exists {
+			claims[clientID] = []string{} // mark present in this snapshot even without a MemberOf claim
+		}
 
-        rawData := strings.Join(txt.Txt, "")
-        data := strings.ReplaceAll(rawData, "\\", "")
-        cfg := model.GSLBConfig{}
-        if err := json.NewDecoder(strings.NewReader(data)).Decode(&cfg); err != nil {
-            continue
-        }
+		rawData := strings.Join(txt.Txt, "")
+		data := strings.ReplaceAll(rawData, "\\", "")
+		cfg := model.GSLBConfig{}
+		if err := json.NewDecoder(strings.NewReader(data)).Decode(&cfg); err != nil {
+			continue
+		}
 
-        if cfg.MemberOf == "" {
-            continue
-        }
+		if cfg.MemberOf == "" {
+			continue
+		}
 
-        claims[clientID] = append(claims[clientID], cfg.MemberOf)
-    }
+		claims[clientID] = append(claims[clientID], cfg.MemberOf)
+	}
 
-    for clientID := range h.knownClients { // reconcile: clear ownership for clients no longer present
-        if _, present := claims[clientID]; !present {
-            claims[clientID] = nil
-        }
-    }
+	for clientID := range h.knownClients { // reconcile: clear ownership for clients no longer present
+		if _, present := claims[clientID]; !present {
+			claims[clientID] = nil
+		}
+	}
 
-    if len(claims) == 0 {
-        return
-    }
+	if len(claims) == 0 {
+		return
+	}
 
-    if err := h.claimer.Materialize(ctx, claims); err != nil {
-        bslog.Error("failed to materialize ownership claims", slog.String("reason", err.Error()))
-    }
+	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
+	defer cancel()
+	if err := h.claimer.Materialize(ctx, claims); err != nil {
+		bslog.Error("failed to materialize ownership claims", slog.String("reason", err.Error()))
+	}
 
-    knownClients := make(map[string]struct{}, len(claims))
-    for clientID := range claims {
-        knownClients[clientID] = struct{}{}
-    }
-    h.knownClients = knownClients
+	knownClients := make(map[string]struct{}, len(claims))
+	for clientID := range claims {
+		knownClients[clientID] = struct{}{}
+	}
+	h.knownClients = knownClients
 }
