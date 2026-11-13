@@ -49,16 +49,25 @@ func Mount(g *router.RouteGroup, deps routes.Dependencies, h Handlers) {
 	authRouter := g.Group("/auth")
 	authRouter.POST("/token", h.Token).Public()
 
-	gslbServiceRouter := g.Group("/service/{memberOf}").Use(deps.SecuredChain)
-	gslbServiceRouter.GET("/members", h.MembersGet).Use(deps.SecuredChain).Action(authz.MembersList)
-	gslbServiceRouter.GET("/members/{id}", h.MembersIdGet).Use(deps.SecuredChain).Action(authz.MembersRead)
-	gslbServiceRouter.GET("/spoofs", h.Spoofs).Use(deps.SecuredChain).Action(authz.SpoofsRead)
-	gslbServiceRouter.GET("/override", h.OverrideGet).Action(authz.OverrideRead)
-	gslbServiceRouter.POST("/override", h.OverrideCreate).Action(authz.OverrideCreate)
-	gslbServiceRouter.DELETE("/override", h.OverrideDelete).Action(authz.OverrideDelete)
+	gslbServicesRouter := g.Group("/services").Use(deps.SecuredChain)
+	gslbServicesRouter.GET("", nil).Action(authz.ServicesList) // TODO
+	gslbServicesRouter.GET("/overrides", nil).Action(authz.OverrideList) // TODO
+	gslbServicesRouter.GET("/status", nil).Action(authz.StatusList) // TODO
+
+	gslbServicesMemberOfRouter := gslbServicesRouter.Group("/{memberOf}").Use(deps.SecuredChain)
+	gslbServicesMemberOfRouter.GET("", nil).Action(authz.ServicesRead) // TODO
+
+	gslbServicesMemberOfRouter.GET("/members", h.MembersGet).Action(authz.MembersList)
+	gslbServicesMemberOfRouter.GET("/members/{id}", h.MembersIdGet).Action(authz.MembersRead)
+
+	gslbServicesMemberOfRouter.GET("/spoofs", h.Spoofs).Action(authz.SpoofsRead)
+	
+	gslbServicesMemberOfRouter.GET("/override", h.OverrideGet).Action(authz.OverrideRead)
+	gslbServicesMemberOfRouter.POST("/override", h.OverrideCreate).Action(authz.OverrideCreate)
+	gslbServicesMemberOfRouter.DELETE("/override", h.OverrideDelete).Action(authz.OverrideDelete)
 
 	if config.GSLB().Status().Enabled() {
-		gslbServiceRouter.GET("/status", h.ServiceStatusGet).Action(authz.StatusRead)
+		gslbServicesMemberOfRouter.GET("/status", h.ServiceStatusGet).Action(authz.StatusRead)
 	}
 
 	dnsdistRouter := g.Group("/dnsdist").Use(deps.SecuredChain)

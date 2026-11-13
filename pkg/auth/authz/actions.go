@@ -4,6 +4,9 @@ package authz
 type Action string
 
 const (
+	ServicesList Action = "services.list"
+	ServicesRead Action = "services.read"
+
 	SpoofsList Action = "spoofs.list"
 	SpoofsRead Action = "spoofs.read"
 
@@ -22,6 +25,8 @@ const (
 // KnownActions is the full action inventory the operator understands; a
 // policy granting anything outside this set is rejected rather than compiled.
 var KnownActions = []Action{
+	ServicesList,
+	ServicesRead,
 	SpoofsList,
 	SpoofsRead,
 	OverrideList,

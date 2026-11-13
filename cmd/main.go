@@ -53,14 +53,14 @@ func main() {
 		bslog.Fatal("failed to establish valkey connection", slog.String("reason", err.Error()))
 	}
 
-	servicesStore, err := valkeyStore.NewStore[model.GSLBServiceGroup](valkeyClient, "gslb:service_groups", time.Second*30)
+	servicesStore, err := valkeyStore.NewStore[model.GSLBServiceGroup](valkeyClient, "gslb:services:groups", time.Second*30)
 	if err != nil {
 		bslog.Fatal("failed to create valkey store for gslb service groups", slog.String("reason", err.Error()))
 	}
 
 	var statusRepo *status.StatusRepo
 	if config.GSLB().Status().Enabled() {
-		statusStore, err := valkeyStore.NewStore[serviceModels.GSLBServiceStatus](valkeyClient, "gslb:service_status", time.Minute*10)
+		statusStore, err := valkeyStore.NewStore[serviceModels.GSLBServiceStatus](valkeyClient, "gslb:services:status", time.Minute*10)
 		if err != nil {
 			bslog.Fatal("failed to create valkey store for gslb service-status", slog.String("reason", err.Error()))
 		}
