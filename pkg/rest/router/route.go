@@ -1,7 +1,6 @@
 package router
 
 import (
-	"github.com/vitistack/gslb-operator/pkg/auth/authz"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 )
 
@@ -10,15 +9,12 @@ import (
 type Route struct {
 	method         string
 	pattern        string
-	action         authz.Action
 	public         bool
 	handler        HandlerFunc
 	mws            []middleware.MiddlewareFunc
 	globalMws      []middleware.MiddlewareFunc
 	globalOverride bool
 }
-
-func (r *Route) Action(a authz.Action) *Route { r.action = a; return r }
 
 func (r *Route) Public() *Route { r.public = true; return r }
 

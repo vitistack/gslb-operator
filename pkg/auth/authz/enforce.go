@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/vitistack/gslb-operator/pkg/auth/authc"
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
 )
@@ -20,81 +21,133 @@ func NewEnforcer(a Authorizer, r Revoker) *Enforcer {
 	return &Enforcer{authorizer: a, revoker: r}
 }
 
-// Enforce builds the policy input from the verified Principal + request, runs
-// the instant kill-switch and key-rotation checks, then asks the policy engine.
-func (e *Enforcer) Enforce(action Action, pattern string, logger *slog.Logger) middleware.MiddlewareFunc {
-	attributeKeys := wildcardNames(pattern)
+func (e *Enforcer) Enforce(objectType, action, pattern string, logger *slog.Logger) middleware.MiddlewareFunc {
+	return middleware.Chain(
+		e.CheckPrincipal(logger),
+		e.Decide(objectType, action, pattern, logger),
+		BuildGrant(logger),
+	)
+}
+
+// CheckPrincipal rejects revoked subjects and tokens minted under a superseded key.
+func (e *Enforcer) CheckPrincipal(logger *slog.Logger) middleware.MiddlewareFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
+			reqLogger := bslog.NewWithCtx(r.Context(), logger)
 			principal, ok := authc.PrincipalFrom(r.Context())
 			if !ok {
-				logger.Info("skipping authz enforce", slog.String("reason", "missing principal"))
+				reqLogger.Info("principal check rejected", slog.String("reason", "missing principal"))
 				response.Err(w, response.ErrUnauthorized, "missing principal")
 				return
 			}
 
-			// 1) instant kill-switch
 			revoked, err := e.revoker.IsRevoked(r.Context(), principal.Subject)
 			if err != nil {
-				logger.Error("revocation check failed", slog.String("reason", err.Error()))
+				reqLogger.Error("revocation check failed", slog.String("reason", err.Error()))
 				response.Err(w, response.ErrInternalError, "authorization unavailable")
 				return
 			}
-
 			if revoked {
-				response.Err(w, response.ErrForbidden, "access revoked")
+				reqLogger.Warn("access revoked")
+				response.Err(w, response.ErrForbidden, "Forbidden")
 				return
 			}
-			
+
 			// TODO: blacklisted
 
-			// 2) key rotation: reject tokens minted under a superseded key
 			if principal.Class != authc.C2M {
-				cur, err := e.revoker.KeyVersion(r.Context(), principal.Subject)
+				currentKeyVersion, err := e.revoker.KeyVersion(r.Context(), principal.Subject)
 				switch {
 				case errors.Is(err, authc.ErrClientNotFound):
-					response.Err(w, response.ErrUnauthorized, "client no longer enrolled")
+					reqLogger.Warn("client not found")
+					response.Err(w, response.ErrUnauthorized, "UnAuthorized")
 					return
 				case err != nil:
-					logger.Error("key version check failed", slog.String("reason", err.Error()))
+					reqLogger.Error("key version check failed", slog.String("reason", err.Error()))
 					response.Err(w, response.ErrInternalError, "authorization unavailable")
 					return
-				case principal.KeyVersion < cur:
-					response.Err(w, response.ErrUnauthorized, "token superseded by key rotation")
+				case principal.KeyVersion < currentKeyVersion:
+					reqLogger.Warn("token superseded by key rotation")
+					response.Err(w, response.ErrUnauthorized, "UnAuthorized")
 					return
 				}
 			}
 
-			// 3) policy decision
+			next.ServeHTTP(w, r)
+		}
+	}
+}
+
+// Decide asks the policy engine and stores the Decision for BuildGrant.
+func (e *Enforcer) Decide(objectType, action, pattern string, logger *slog.Logger) middleware.MiddlewareFunc {
+	attributeKeys := wildcardNames(pattern)
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			r = r.WithContext(
+				bslog.CtxWithAttrs(
+					r.Context(),
+					slog.String("objectType", objectType),
+					slog.String("action", action),
+				),
+			)
+			reqLogger := bslog.NewWithCtx(r.Context(), logger)
+			principal, ok := authc.PrincipalFrom(r.Context())
+			if !ok {
+				reqLogger.Warn("policy decision rejected", slog.String("reason", "missing principal"))
+				response.Err(w, response.ErrUnauthorized, "UnAuthorized")
+				return
+			}
+
 			in := Input{
-				Subject: principal.Subject,
-				Method:  principal.Method,
-				Class:   string(principal.Class),
-				Roles:   principal.Roles,
-				Action:  string(action),
-				//Resource: resource,
-				Attrs: pathAttrs(r, attributeKeys),
+				Subject:  principal.Subject,
+				Method:   principal.Method,
+				Class:    string(principal.Class),
+				Roles:    principal.Roles,
+				Action:   action,
+				Resource: objectType,
+				Attrs:    pathAttrs(r, attributeKeys),
 			}
 
 			dec, err := e.authorizer.Authorize(r.Context(), in)
 			if err != nil {
-				logger.Error("policy evaluation failed", slog.String("reason", err.Error()))
+				reqLogger.Error("policy evaluation failed", slog.String("reason", err.Error()))
 				response.Err(w, response.ErrInternalError, "authorization unavailable")
 				return
 			}
 
 			if !dec.Allow {
-				logger.Warn("access denied",
-					slog.String("subject", principal.Subject),
-					slog.String("action", in.Action),
-					slog.String("resource", in.Resource),
+				reqLogger.Warn("access denied",
 					slog.String("reason", dec.Reason),
 				)
-				response.Err(w, response.ErrForbidden, "insufficient permissions")
+				response.Err(w, response.ErrForbidden, "Forbidden")
 				return
 			}
 
-			next.ServeHTTP(w, r)
+			if len(dec.Obligations) > 0 {
+				reqLogger.Error("unfulfilled policy obligations",
+					slog.Any("obligations", dec.Obligations),
+				)
+				response.Err(w, response.ErrInternalError, "authorization unavailable")
+				return
+			}
+
+			next.ServeHTTP(w, r.WithContext(withDecision(r.Context(), dec)))
+		}
+	}
+}
+
+// BuildGrant turns the request's Decision into the Grant handlers consult.
+func BuildGrant(logger *slog.Logger) middleware.MiddlewareFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			dec, ok := decisionFrom(r.Context())
+			if !ok {
+				logger.Error("grant build failed", slog.String("reason", "no decision in context"))
+				response.Err(w, response.ErrInternalError, "authorization unavailable")
+				return
+			}
+
+			next.ServeHTTP(w, r.WithContext(withGrant(r.Context(), Grant{allowed: dec.Allow, constraints: dec.Constraints})))
 		}
 	}
 }
@@ -119,15 +172,15 @@ func wildcardNames(pattern string) []string {
 			break
 		}
 		rest := pattern[open+1:]
-		end := strings.IndexByte(rest, '}')
-		if end < 0 {
+		before, after, ok := strings.Cut(rest, "}")
+		if !ok {
 			break
 		}
-		name := strings.TrimSuffix(rest[:end], "...")
+		name := strings.TrimSuffix(before, "...")
 		if name != "" && name != "$" {
 			names = append(names, name)
 		}
-		pattern = rest[end+1:]
+		pattern = after
 	}
 	return names
 }

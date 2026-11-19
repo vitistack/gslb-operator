@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -9,6 +8,8 @@ import (
 	"strings"
 	"time"
 	"uuid"
+
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 )
 
 type MiddlewareFunc func(next http.HandlerFunc) http.HandlerFunc
@@ -46,37 +47,33 @@ func WithRequestLogging(logger *slog.Logger, level slog.Level, trustedPrefixes [
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			parent := r.Context() // re-use request context
 
-			r = r.WithContext(context.WithValue(parent, "id", uuid.NewV7().String()))
-			requestID := slog.Any("request_id", r.Context().Value("id"))
-
-			logger.Log(context.Background(), level, "incoming request",
+			attrs := []slog.Attr{
+				slog.String("requestId", uuid.NewV7().String()),
 				slog.GroupAttrs(
-					"meta_data",
-					requestID,
+					"requestMetaData",
+					slog.String("http", r.Proto),
 					slog.String("method", r.Method),
-					slog.String("remote_host", Addr(r.RemoteAddr, r.Header, trustedPrefixes)),
-					slog.String("route", r.URL.String()),
-					slog.String("query", r.URL.RawQuery),
-					slog.String("user_agent", r.UserAgent()),
+					slog.String("remoteHost", Addr(r.RemoteAddr, r.Header, trustedPrefixes)),
+					slog.String("route", r.URL.Path),
+					slog.String("query", r.URL.Query().Encode()),
+					slog.String("userAgent", r.UserAgent()),
 				),
-			)
+			}
+
+			parent := r.Context()
+			r = r.WithContext(bslog.CtxWithAttrs(parent, attrs...))
+			reqLogger := bslog.NewWithCtx(r.Context(), logger)
 
 			rw := &ResponseWriter{ResponseWriter: w, StatusCode: http.StatusOK}
 			next.ServeHTTP(rw, r)
 
-			logger.Log(r.Context(), level, "response",
-				slog.GroupAttrs(
-					"meta_data",
-					requestID,
-					slog.String("method", r.Method),
-					slog.String("route", r.URL.Path),
-					slog.Int("status_code", rw.StatusCode),
-					slog.Int("bytes", rw.Bytes),
-					slog.String("content_type", rw.Header().Get("Content-Type")),
-					slog.String("took", time.Since(start).String()),
-				),
+			reqLogger.Log(r.Context(), level,
+				"incoming request",
+				slog.Int("status_code", rw.StatusCode),
+				slog.Int("bytes", rw.Bytes),
+				slog.String("content_type", rw.Header().Get("Content-Type")),
+				slog.Int64("tookMs", time.Since(start).Milliseconds()),
 			)
 		}
 	}

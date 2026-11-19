@@ -1,40 +1,42 @@
 package authz
 
-// Action is the logical, transport-independent authorization key for a route.
-type Action string
-
-const (
-	ServicesList Action = "services.list"
-	ServicesRead Action = "services.read"
-
-	SpoofsList Action = "spoofs.list"
-	SpoofsRead Action = "spoofs.read"
-
-	OverrideList   Action = "override.list"
-	OverrideRead   Action = "override.read"
-	OverrideCreate Action = "override.create"
-	OverrideDelete Action = "override.Delete"
-
-	StatusList Action = "status.list"
-	StatusRead Action = "status.read"
-
-	MembersList Action = "members.list"
-	MembersRead Action = "members.read"
+import (
+	"net/http"
+	"strings"
 )
 
-// KnownActions is the full action inventory the operator understands; a
-// policy granting anything outside this set is rejected rather than compiled.
-var KnownActions = []Action{
-	ServicesList,
-	ServicesRead,
-	SpoofsList,
-	SpoofsRead,
-	OverrideList,
-	OverrideRead,
-	OverrideCreate,
-	OverrideDelete,
-	StatusList,
-	StatusRead,
-	MembersList,
-	MembersRead,
+const (
+	ActionRead   = "read"
+	ActionWrite  = "write"
+	ActionUpdate = "update"
+	ActionDelete = "delete"
+)
+
+var knownActions = []string{ActionRead, ActionWrite, ActionUpdate, ActionDelete}
+
+// ActionFor maps an HTTP method to its action; ok is false for unmapped methods.
+func ActionFor(method string) (string, bool) {
+	switch method {
+	case http.MethodGet, http.MethodHead:
+		return ActionRead, true
+	case http.MethodPost:
+		return ActionWrite, true
+	case http.MethodPut, http.MethodPatch:
+		return ActionUpdate, true
+	case http.MethodDelete:
+		return ActionDelete, true
+	}
+	return "", false
+}
+
+// ObjectType drops wildcard segments: "/services/{memberOf}/members/{id}" -> "services/members".
+func ObjectType(pattern string) string {
+	var segs []string
+	for s := range strings.SplitSeq(pattern, "/") {
+		if s == "" || strings.HasPrefix(s, "{") {
+			continue
+		}
+		segs = append(segs, s)
+	}
+	return strings.Join(segs, "/")
 }

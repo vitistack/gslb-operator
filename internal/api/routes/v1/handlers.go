@@ -6,7 +6,6 @@ import (
 	"github.com/vitistack/gslb-operator/internal/api/handlers/v1/spoofs"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
 	"github.com/vitistack/gslb-operator/internal/config"
-	"github.com/vitistack/gslb-operator/pkg/auth/authz"
 	"github.com/vitistack/gslb-operator/pkg/rest/router"
 )
 
@@ -18,6 +17,9 @@ type Handlers struct {
 	OverrideGet      router.HandlerFunc
 	OverrideCreate   router.HandlerFunc
 	OverrideDelete   router.HandlerFunc
+	ServicesGet      router.HandlerFunc
+	ServiceGet       router.HandlerFunc
+	StatusGet        router.HandlerFunc
 	ServiceStatusGet router.HandlerFunc
 	MembersGet       router.HandlerFunc
 	MembersIdGet     router.HandlerFunc
@@ -36,6 +38,9 @@ func DefaultHandlers(deps routes.Dependencies) Handlers {
 		OverrideGet:      spoofsHandler.GetOverride,
 		OverrideCreate:   spoofsHandler.CreateOverride,
 		OverrideDelete:   spoofsHandler.DeleteOverride,
+		ServicesGet:      serviceHandler.GetServices,
+		ServiceGet:       serviceHandler.GetService,
+		StatusGet:        serviceHandler.GetStatus,
 		ServiceStatusGet: serviceHandler.GetServiceStatus,
 		MembersGet:       serviceHandler.GetMembers,
 		MembersIdGet:     serviceHandler.GetMembersId,
@@ -50,26 +55,26 @@ func Mount(g *router.RouteGroup, deps routes.Dependencies, h Handlers) {
 	authRouter.POST("/token", h.Token).Public()
 
 	gslbServicesRouter := g.Group("/services").Use(deps.SecuredChain)
-	gslbServicesRouter.GET("", nil).Action(authz.ServicesList) // TODO
-	gslbServicesRouter.GET("/overrides", nil).Action(authz.OverrideList) // TODO
-	gslbServicesRouter.GET("/status", nil).Action(authz.StatusList) // TODO
+	gslbServicesRouter.GET("", h.ServicesGet)
+	gslbServicesRouter.GET("/overrides", nil) // TODO
+	gslbServicesRouter.GET("/status", h.StatusGet)
 
-	gslbServicesMemberOfRouter := gslbServicesRouter.Group("/{memberOf}").Use(deps.SecuredChain)
-	gslbServicesMemberOfRouter.GET("", nil).Action(authz.ServicesRead) // TODO
+	gslbServicesMemberOfRouter := gslbServicesRouter.Group("/{memberOf}")
+	gslbServicesMemberOfRouter.GET("", h.ServiceGet)
 
-	gslbServicesMemberOfRouter.GET("/members", h.MembersGet).Action(authz.MembersList)
-	gslbServicesMemberOfRouter.GET("/members/{id}", h.MembersIdGet).Action(authz.MembersRead)
+	gslbServicesMemberOfRouter.GET("/members", h.MembersGet)
+	gslbServicesMemberOfRouter.GET("/members/{id}", h.MembersIdGet)
 
-	gslbServicesMemberOfRouter.GET("/spoofs", h.Spoofs).Action(authz.SpoofsRead)
-	
-	gslbServicesMemberOfRouter.GET("/override", h.OverrideGet).Action(authz.OverrideRead)
-	gslbServicesMemberOfRouter.POST("/override", h.OverrideCreate).Action(authz.OverrideCreate)
-	gslbServicesMemberOfRouter.DELETE("/override", h.OverrideDelete).Action(authz.OverrideDelete)
+	gslbServicesMemberOfRouter.GET("/spoofs", h.Spoofs)
+
+	gslbServicesMemberOfRouter.GET("/override", h.OverrideGet)
+	gslbServicesMemberOfRouter.POST("/override", h.OverrideCreate)
+	gslbServicesMemberOfRouter.DELETE("/override", h.OverrideDelete)
 
 	if config.GSLB().Status().Enabled() {
-		gslbServicesMemberOfRouter.GET("/status", h.ServiceStatusGet).Action(authz.StatusRead)
+		gslbServicesMemberOfRouter.GET("/status", h.ServiceStatusGet)
 	}
 
 	dnsdistRouter := g.Group("/dnsdist").Use(deps.SecuredChain)
-	dnsdistRouter.GET("/config", h.DNSDistConfigGet).Action(authz.SpoofsList)
+	dnsdistRouter.GET("/config", h.DNSDistConfigGet)
 }

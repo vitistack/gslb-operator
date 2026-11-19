@@ -4,11 +4,23 @@ import (
 	"context"
 	"log/slog"
 	"os"
+
+	"github.com/vitistack/gslb-operator/pkg/bslog/handlers"
 )
 
 func New(handler slog.Handler) *Logger {
 	return &Logger{
 		Logger: *slog.New(handler),
+	}
+}
+
+func NewWithCtx(ctx context.Context, base *slog.Logger) *Logger {
+	if base == nil {
+		base = slog.Default()
+	}
+
+	return &Logger{
+		Logger: *slog.New(handlers.NewContextHandler(ctx, base.Handler())),
 	}
 }
 
@@ -66,4 +78,8 @@ func With(args ...any) *Logger {
 	return &Logger{
 		Logger: *slog.With(args...),
 	}
+}
+
+func CtxWithAttrs(ctx context.Context, attrs ...slog.Attr) context.Context {
+	return handlers.CtxWithAttrs(ctx, attrs...)
 }

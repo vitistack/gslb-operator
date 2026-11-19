@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -44,12 +45,12 @@ func (b *BootstrapKey) Detect(r *http.Request) bool {
 func (b *BootstrapKey) Authenticate(r *http.Request) (Principal, error) {
 	payload, ok := LoginPayloadFrom(r.Context())
 	if !ok || payload.ClientID == "" || payload.PublicKey == "" {
-		return Principal{}, ErrUnauthorized
+		return Principal{}, fmt.Errorf("%w: clientId and publicKey required", ErrUnauthorized)
 	}
 
 	pub, err := base64.StdEncoding.DecodeString(payload.PublicKey)
 	if err != nil || len(pub) != ed25519.PublicKeySize {
-		return Principal{}, ErrUnauthorized
+		return Principal{}, fmt.Errorf("%w: publicKey must be base64 of a %d-byte ed25519 key", ErrUnauthorized, ed25519.PublicKeySize)
 	}
 	// FCFS: bind the key now; later private-key-jwt assertions verify against it.
 	if err := b.registry.Register(r.Context(), payload.ClientID, ed25519.PublicKey(pub)); err != nil {
@@ -90,7 +91,7 @@ func (c *ClientAssertion) Detect(r *http.Request) bool {
 func (c *ClientAssertion) Authenticate(r *http.Request) (Principal, error) {
 	payload, ok := LoginPayloadFrom(r.Context())
 	if !ok || payload.ClientAssertion == "" {
-		return Principal{}, ErrUnauthorized
+		return Principal{}, fmt.Errorf("%w: clientAssertion required", ErrUnauthorized)
 	}
 
 	claims := &jwt.RegisteredClaims{}
@@ -98,7 +99,7 @@ func (c *ClientAssertion) Authenticate(r *http.Request) (Principal, error) {
 	token, err := jwt.ParseWithClaims(payload.ClientAssertion, claims,
 		func(t *jwt.Token) (any, error) {
 			if claims.Subject == "" {
-				return nil, ErrUnauthorized
+				return nil, errors.New("assertion has no sub")
 			}
 			key, version, err := c.registry.PublicKey(r.Context(), claims.Subject)
 			if err != nil {
@@ -113,13 +114,17 @@ func (c *ClientAssertion) Authenticate(r *http.Request) (Principal, error) {
 		jwt.WithExpirationRequired(),
 		jwt.WithLeeway(c.leeway),
 	)
-	if err != nil || !token.Valid || claims.ID == "" {
-		return Principal{}, fmt.Errorf("%w:%w", ErrUnauthorized, err)
+	if err != nil {
+		return Principal{}, newVerifyError(payload.ClientAssertion, fmt.Errorf("%w: %w", ErrUnauthorized, err))
+	}
+
+	if !token.Valid || claims.ID == "" {
+		return Principal{}, fmt.Errorf("%w: assertion has no jti", ErrUnauthorized)
 	}
 
 	remaining := time.Until(claims.ExpiresAt.Time)
 	if remaining > time.Second*5 {
-		return Principal{}, ErrTooLongClientAssertionTTL
+		return Principal{}, fmt.Errorf("%w: %s remaining", ErrTooLongClientAssertionTTL, remaining.Round(time.Millisecond))
 	}
 
 	if err := c.replay.Once(r.Context(), claims.ID, remaining+c.leeway); err != nil {

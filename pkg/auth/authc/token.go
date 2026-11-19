@@ -84,7 +84,9 @@ func (ti *TokenIssuer) Issue(p Principal) (string, int, error) {
 // Verify validates an access token and reconstructs the Principal.
 func (ti *TokenIssuer) Verify(tokenString string) (Principal, error) {
 	claims := &accessClaims{}
-	token, err := jwt.ParseWithClaims(tokenString, claims,
+	token, err := jwt.ParseWithClaims(
+		tokenString,
+		claims,
 		func(t *jwt.Token) (any, error) { return ti.signingSecret, nil },
 		jwt.WithValidMethods([]string{"HS512"}),
 		jwt.WithIssuer(ti.issuer),
@@ -92,8 +94,9 @@ func (ti *TokenIssuer) Verify(tokenString string) (Principal, error) {
 		jwt.WithExpirationRequired(),
 	)
 	if err != nil || !token.Valid {
-		return Principal{}, ErrUnauthorized
+		return Principal{}, newVerifyError(tokenString, err)
 	}
+
 	return Principal{
 		Subject:    claims.Subject,
 		Method:     claims.Method,

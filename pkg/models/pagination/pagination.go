@@ -2,19 +2,20 @@ package pagination
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/vitistack/gslb-operator/pkg/rest/request"
 )
 
 type Pagination[T any] struct {
-	TotalItems int  `json:"total_items"`
-	NumItems   int  `json:"num_items"`
-	NumPages   int  `json:"num_pages"`
-	Page       int  `json:"page"`
-	Next       *int `json:"next,omitempty"`
-	Previous   *int `json:"prev,omitempty"`
-	Items      []T  `json:"items"`
+	Count    int     `json:"count"`
+	NumItems int     `json:"limit"`
+	Offset   int     `json:"offset"`
+	Next     *string `json:"next"`
+	Previous *string `json:"prev"`
+	Items    []T     `json:"results"`
 }
 
 type PaginationParams struct {
@@ -48,32 +49,49 @@ func EnsureDefaults(params *PaginationParams) *PaginationParams {
 	return params
 }
 
-func NewPaginationResult[T any](params *PaginationParams, totalItems int, pageItems []T) Pagination[T] {
-	if params.PageSize < 1 {
-		params.PageSize = 50
-	}
-	if params.Page < 1 {
-		params.Page = 1
-	}
+func NewPaginationResult[T any](r *http.Request, params *PaginationParams, count int, pageItems []T) Pagination[T] {
+	EnsureDefaults(params)
 
-	numPages := (totalItems + params.PageSize - 1) / params.PageSize
+	numPages := (count + params.PageSize - 1) / params.PageSize
 
 	page := Pagination[T]{
-		TotalItems: totalItems,
-		NumItems:   len(pageItems),
-		Page:       params.Page,
-		NumPages:   numPages,
-		Items:      pageItems,
+		Count:    count,
+		NumItems: len(pageItems),
+		Offset:   params.Page,
+		Items:    pageItems,
 	}
 
 	if params.Page < numPages {
-		next := params.Page + 1
-		page.Next = &next
+		page.Next = pageLink(r, params.Page+1, params.PageSize)
 	}
 	if params.Page > 1 {
-		prev := params.Page - 1
-		page.Previous = &prev
+		page.Previous = pageLink(r, params.Page-1, params.PageSize)
 	}
 
 	return page
+}
+
+func pageLink(r *http.Request, page, pageSize int) *string {
+	u := *r.URL
+	q := u.Query()
+	q.Set("page", strconv.Itoa(page))
+	q.Set("pageSize", strconv.Itoa(pageSize))
+	u.RawQuery = q.Encode()
+	u.Scheme = requestScheme(r)
+	u.Host = r.Host
+	link := u.String()
+	return &link
+}
+
+func requestScheme(r *http.Request) string {
+	// Behind a TLS-terminating proxy r.TLS is nil, so prefer the forwarded proto.
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto == "http" || proto == "https" {
+		return proto
+	}
+
+	if r.TLS != nil {
+		return "https"
+	}
+
+	return "http"
 }

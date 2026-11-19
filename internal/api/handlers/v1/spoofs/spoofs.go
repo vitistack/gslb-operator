@@ -37,7 +37,7 @@ func (ss *SpoofsService) GetSpoofs(w http.ResponseWriter, r *router.Request) {
 		return
 	}
 
-	resp := pagination.NewPaginationResult(params, total, items)
+	resp := pagination.NewPaginationResult(r.Request, params, total, items)
 	response.JSON(w, http.StatusOK, resp)
 }
 
@@ -54,34 +54,3 @@ func (ss *SpoofsService) GetFQDNSpoof(w http.ResponseWriter, r *router.Request) 
 
 	response.JSON(w, http.StatusOK, spoof)
 }
-
-//func (ss *SpoofsService) GetSpoofsHash(w http.ResponseWriter, r *router.Request) {
-//	data, err := ss.spoofRepo.ReadAll()
-//	if err != nil {
-//		response.Err(w, response.ErrInternalError, "unable to fetch spoofs from storage")
-//		bslog.Error("unable to read spoofs from storage", slog.String("reason", err.Error()))
-//		return
-//	}
-//
-//	// IMPORTANT!! that spoofs are sorted alphabetically sorted on fqdn.
-//	// To get consistent hashes
-//	slices.SortFunc(data, func(a, b spoofs.Spoof) int {
-//		return cmp.Compare(a.FQDN, b.FQDN)
-//	})
-//
-//	marshalledSpoofs, err := json.Marshal(data)
-//	if err != nil {
-//		response.Err(w, response.ErrInternalError, "could not create spoofs-hash")
-//		bslog.Error("unable to marshall spoofs", slog.String("reason", err.Error()))
-//		return
-//	}
-//
-//	rawHash := sha256.Sum256(marshalledSpoofs) // creating bytes representation of spoofs
-//	hash := spoofs.Hash{
-//		Hash: hex.EncodeToString(rawHash[:]),
-//	}
-//
-//	if err = response.JSON(w, http.StatusOK, hash); err != nil {
-//		bslog.Error("could not write response to client", slog.String("reason", err.Error()))
-//	}
-//}

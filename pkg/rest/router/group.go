@@ -12,12 +12,15 @@ type RouteGroup struct {
 	prefix         string
 	public         bool
 	versionSegment bool // see VersionGroup
+	objectRoot     bool
 	mws            []middleware.MiddlewareFunc
 	globalMws      []middleware.MiddlewareFunc
 	globalOverride bool
 	routes         []*Route
 	children       []*RouteGroup
 }
+
+func (g *RouteGroup) Root() *RouteGroup { g.objectRoot = true; return g }
 
 func (g *RouteGroup) Group(prefix string) *RouteGroup {
 	child := &RouteGroup{prefix: prefix}

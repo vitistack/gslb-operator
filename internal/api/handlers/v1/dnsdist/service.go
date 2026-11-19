@@ -28,6 +28,13 @@ func NewDNSDistService(store persistence.Store[model.GSLBServiceGroup]) *DNSDist
 }
 
 func (s *DNSDistService) GetConfig(w http.ResponseWriter, r *router.Request) {
+	grant, ok := r.Grant()
+	if !ok {
+		r.Log().Error("no grants for handler")
+		response.Err(w, response.ErrInternalError, "unable to authorize request")
+		return
+	}
+
 	params := dnsdist.GetConfigParams{}
 	err := request.UnmarshalParams(r.URL.Query(), &params)
 	if err != nil {
@@ -52,9 +59,10 @@ func (s *DNSDistService) GetConfig(w http.ResponseWriter, r *router.Request) {
 	}
 
 	allSpoofs, finish := s.spoofRepo.ReadAll()
-	result := allSpoofs.Filter(
-		func(s spoofs.Spoof) bool { return slices.Contains(views, s.View) },
-	).Collect()
+	result := allSpoofs.
+		Filter(grant.Filter("memberOf", func(s spoofs.Spoof) string { return s.FQDN })).
+		Filter(func(s spoofs.Spoof) bool { return slices.Contains(views, s.View) }).
+		Collect()
 
 	if err := finish(); err != nil {
 		r.Log().Error("failed to iterate spoofs", slog.String("reason", err.Error()))

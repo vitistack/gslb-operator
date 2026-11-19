@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/vitistack/gslb-operator/pkg/auth/authc"
+	"github.com/vitistack/gslb-operator/pkg/auth/authz"
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
 )
@@ -17,38 +20,36 @@ type Request struct {
 	params map[string]string
 }
 
-func NewRequest(r *http.Request, logger *slog.Logger, pathParams ...string) *Request {
-	if logger == nil {
-		logger = slog.Default()
-	}
-
+func NewRequest(r *http.Request, logger *slog.Logger, pathValues ...string) *Request {
 	req := &Request{
 		Request: r,
-		logger:  logger,
-		params:  make(map[string]string, len(pathParams)),
+		logger: &bslog.NewWithCtx(r.Context(), logger).Logger,
+		params: make(map[string]string, len(pathValues)),
 	}
 
-	attrs := make([]any, 0, len(pathParams)+1)
-	attrs = append(attrs, slog.Any("request_id", r.Context().Value("id")))
-	for _, name := range pathParams {
-		v := r.PathValue(name)
-		req.params[name] = v
-		attrs = append(attrs, slog.String(name, v))
+	for _, name := range pathValues {
+		req.params[name] = r.PathValue(name)
 	}
-
-	req.logger = logger.With(attrs...)
 
 	return req
 }
 
 func (r *Request) Param(name string) string { return r.params[name] }
 
+func (r *Request) Principal() (authc.Principal, bool) { return authc.PrincipalFrom(r.Context()) }
+
+func (r *Request) Grant() (authz.Grant, bool) { return authz.GrantFrom(r.Context()) }
+
 func (r *Request) Log() *slog.Logger { return r.logger }
 
 func (rt *Router) adapt(pattern string, h HandlerFunc) http.HandlerFunc {
 	names, _ := pathValues(pattern)
 	return func(w http.ResponseWriter, r *http.Request) {
-		h(w, NewRequest(r, rt.logger, names...))
+		attrs := make([]slog.Attr, 0, len(names))
+		for _, name := range names {
+			attrs = append(attrs, slog.String(name, r.PathValue(name)))
+		}
+		h(w, NewRequest(r.WithContext(bslog.CtxWithAttrs(r.Context(), attrs...)), rt.logger, names...))
 	}
 }
 
@@ -58,23 +59,20 @@ func (rt *Router) requirePathValues(pattern string) middleware.MiddlewareFunc {
 		return middleware.Passthrough()
 	}
 
-	logger := rt.logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
+			logger := rt.logger
+
 			for _, name := range required {
 				if r.PathValue(name) == "" {
-					logger.Info("skipping due to insufficient input parameter",
-						slog.Any("request_id", r.Context().Value("id")),
-						slog.String("reason", "missing path-value "+name),
+					bslog.NewWithCtx(r.Context(), logger).Info("skipping due to insufficient input parameter",
+						slog.String("reason", "missing path-value: "+name),
 					)
-					response.Err(w, response.ErrInvalidInput, "missing path-value: "+name)
+					response.Err(w, response.ErrInvalidInput, "invalid path")
 					return
 				}
 			}
+
 			next(w, r)
 		}
 	}

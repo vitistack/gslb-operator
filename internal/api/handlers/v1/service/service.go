@@ -33,6 +33,99 @@ func NewGSLBServiceHandler(statusRepo *status.StatusRepo, serviceStore persisten
 	}
 }
 
+func (h *GSLBServiceHandler) GetServices(w http.ResponseWriter, r *router.Request) {
+	grant, ok := r.Grant()
+	if !ok {
+		r.Log().Error("no grants for handler")
+		response.Err(w, response.ErrInternalError, "unable to authorize request")
+		return
+	}
+
+	page, err := pagination.NewPaginationParams(r.URL.Query())
+	if err != nil {
+		r.Log().Error("failed to parse pagination parameters", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInvalidInput, "invalid pagination params")
+		return
+	}
+
+	reader, finish := h.svcGroupRepo.ReadAll()
+	result := reader.Filter(
+		grant.Filter(
+			"memberOf",
+			func(sg model.GSLBServiceGroup) string {
+				memberOf := ""
+				for _, m := range sg.Members {
+					memberOf = m.MemberOf
+					break
+				}
+				return memberOf
+			}),
+	).Collect()
+
+	if err := finish(); err != nil {
+		r.Log().Error("failed to get services", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInternalError, "unexpected error")
+		return
+	}
+
+	skip := (page.Page - 1) * page.PageSize
+	items := iter.FromSlice(result).Skip(skip).Take(page.PageSize).Collect()
+
+	resp := pagination.NewPaginationResult(r.Request, page, len(result), items)
+	response.JSON(w, http.StatusOK, resp)
+}
+
+func (h *GSLBServiceHandler) GetService(w http.ResponseWriter, r *router.Request) {
+	memberOf := r.Param("memberOf")
+
+	service, err := h.svcGroupRepo.Read(memberOf)
+	if err != nil {
+		r.Log().Error("failed to get service-group", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInternalError, "unexpected error")
+		return
+	}
+
+	if service.Members == nil {
+		r.Log().Info("could not find service group")
+		response.Err(w, response.ErrNotFound, "no service group: "+memberOf)
+		return
+	}
+
+	response.JSON(w, http.StatusOK, service)
+}
+
+func (h *GSLBServiceHandler) GetStatus(w http.ResponseWriter, r *router.Request) {
+	grant, ok := r.Grant()
+	if !ok {
+		r.Log().Error("no grants for handler")
+		response.Err(w, response.ErrInternalError, "unable to authorize request")
+		return
+	}
+
+	page, err := pagination.NewPaginationParams(r.URL.Query())
+	if err != nil {
+		r.Log().Error("failed to parse pagination parameters", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInvalidInput, "invalid pagination params")
+		return
+	}
+
+	reader, finish := h.statusRepo.ReadAll()
+	result := reader.
+		Filter(grant.Filter("memberOf", func(s service.GSLBServiceStatus) string { return s.MemberOf })).
+		Collect()
+	if err := finish(); err != nil {
+		r.Log().Error("failed to fetch status list", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInternalError, "unexpected error")
+		return
+	}
+
+	skip := (page.Page - 1) * page.PageSize
+	items := iter.FromSlice(result).Skip(skip).Take(page.PageSize).Collect()
+
+	resp := pagination.NewPaginationResult(r.Request, page, len(result), items)
+	response.JSON(w, http.StatusOK, resp)
+}
+
 func (h *GSLBServiceHandler) GetServiceStatus(w http.ResponseWriter, r *router.Request) {
 	memberOf := r.Param("memberOf") // can assume populated
 
@@ -54,7 +147,6 @@ func (h *GSLBServiceHandler) GetServiceStatus(w http.ResponseWriter, r *router.R
 
 func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *router.Request) {
 	memberOf := r.Param("memberOf")
-
 	queryParameters := service.GetMembersParams{
 		Views: strings.Join(append(slices.Clone(config.DNS().DNSViews()), config.DNS().DefaultView()), ","), // defaults to all views
 	}
@@ -101,7 +193,7 @@ func (h *GSLBServiceHandler) GetMembers(w http.ResponseWriter, r *router.Request
 	skip := (page.Page - 1) * page.PageSize
 	items := iter.FromSlice(matches).Skip(skip).Take(page.PageSize).Collect()
 
-	resp := pagination.NewPaginationResult(page, len(matches), items)
+	resp := pagination.NewPaginationResult(r.Request, page, len(matches), items)
 	response.JSON(w, http.StatusOK, resp)
 }
 

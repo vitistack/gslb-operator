@@ -6,11 +6,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/vitistack/gslb-operator/internal/config"
 	"github.com/vitistack/gslb-operator/pkg/auth/authc"
 	"github.com/vitistack/gslb-operator/pkg/auth/authz"
+	"github.com/vitistack/gslb-operator/pkg/bslog"
 	"github.com/vitistack/gslb-operator/pkg/models/auth"
 	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
@@ -37,15 +39,11 @@ func Init(store authc.KVStore) (*AuthService, error) {
 		return nil, fmt.Errorf("failed to parse policy: %w", err)
 	}
 
-	if err := policy.Validate(authz.KnownActions); err != nil {
+	if err := policy.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid policy: %w", err)
 	}
 
-	scopeGuard := authz.NewScopeGuard(
-		authz.NewAttributeScopeGuard(registry, "memberOf"),
-	)
-
-	authorizer := authz.NewRBACAuthorizer(policy, scopeGuard)
+	authorizer := authz.NewOwnershipAuthorizer(authz.NewRBACAuthorizer(policy), registry, "memberOf")
 	enforcer := authz.NewEnforcer(authorizer, registry)
 
 	tokenIssuerOpts := []authc.TokenIssuerOption{
@@ -87,28 +85,34 @@ func (a *AuthService) Token(w http.ResponseWriter, r *router.Request) {
 	principal, err := a.dispatcher.Authenticate(r.Request)
 	switch {
 	case errors.Is(err, authc.ErrNoMethodDetected), errors.Is(err, authc.ErrUnknownMethod):
-		r.Log().Info("token exchange failed", slog.String("reason", "no usable authentication method"))
+		r.Log().Warn("token exchange failed", slog.String("reason", "no usable authentication method"))
 		response.Err(w, response.ErrInvalidInput, "no usable authentication method")
 		return
 	case errors.Is(err, authc.ErrKeyMismatch):
-		r.Log().Info("token exchange failed", slog.String("reason", "client_id registered to different key"))
-		response.Err(w, response.ErrConflict, "client_id already registered to a different key")
+		r.Log().Warn("token exchange failed", slog.String("reason", "client_id registered to different key"))
+		response.Err(w, response.ErrConflict, "Conflict")
 		return
 	case errors.Is(err, authc.ErrClientExists):
-		r.Log().Info("token exchange failed", slog.String("reason", "client enrolled"))
-		response.Err(w, response.ErrConflict, "client already enrolled: use private-key-jwt")
+		r.Log().Warn("token exchange failed", slog.String("reason", "client already enrolled"))
+		response.Err(w, response.ErrConflict, "Conflict")
 		return
 	case errors.Is(err, authc.ErrReplayed):
-		r.Log().Info("token exchange failed", slog.String("reason", "client assertion replay"))
-		response.Err(w, response.ErrUnauthorized, "client assertion already used")
+		r.Log().Warn("token exchange failed", slog.String("reason", "client assertion replay"))
+		response.Err(w, response.ErrUnauthorized, "UnAuthorized")
 		return
 	case errors.Is(err, authc.ErrTooLongClientAssertionTTL):
-		r.Log().Info("token exchange failed", slog.String("reason", "client-assertion ttl exceeds max ttl value"))
-		response.Err(w, response.ErrForbidden, "too long TTL on client-assertion")
+		r.Log().Warn("token exchange failed", slog.String("reason", "client-assertion ttl exceeds max ttl value"))
+		response.Err(w, response.ErrForbidden, "Forbidden")
 		return
 	case errors.Is(err, authc.ErrUnauthorized):
-		r.Log().Info("token exchange failed", slog.String("reason", "invalid credentials"))
-		response.Err(w, response.ErrUnauthorized, "invalid credentials")
+		var errorAttributes slog.Attr
+		if verify, ok := errors.AsType[*authc.VerifyError](err); ok {
+			errorAttributes = slog.Any("token", verify)
+		} else {
+			errorAttributes = slog.String("reason", err.Error())
+		}
+		r.Log().Warn("token exchange failed", errorAttributes)
+		response.Err(w, response.ErrUnauthorized, "UnAuthorized")
 		return
 	case err != nil:
 		r.Log().Error("authentication failed", slog.String("reason", err.Error()))
@@ -119,12 +123,12 @@ func (a *AuthService) Token(w http.ResponseWriter, r *router.Request) {
 	token, expiresIn, err := a.issuer.Issue(principal)
 	if err != nil {
 		r.Log().Error("token issue failed", slog.String("reason", err.Error()))
-		response.Err(w, response.ErrInternalError, "could not issue token")
+		response.Err(w, response.ErrInternalError, "Unexpected error ocurred")
 		return
 	}
 
 	r.Log().Info(
-		"authenticated",
+		"issuing token",
 		slog.String("subject", principal.Subject),
 		slog.String("method", principal.Method),
 		slog.String("class", string(principal.Class)),
@@ -140,20 +144,52 @@ func (a *AuthService) Token(w http.ResponseWriter, r *router.Request) {
 func (a *AuthService) Verify() middleware.MiddlewareFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
+			logger := bslog.NewWithCtx(r.Context(), nil)
 			raw := bearerToken(r)
 			if raw == "" {
-				response.Err(w, response.ErrUnauthorized, "missing auth token")
+				logger.Warn("token verification failed",
+					slog.String("reason", "missing Bearer token"),
+					slog.String("authScheme", authScheme(r)),
+				)
+				response.Err(w, response.ErrUnauthorized, "UnAuthorized")
 				return
 			}
 
 			principal, err := a.issuer.Verify(raw)
 			if err != nil {
-				response.Err(w, response.ErrUnauthorized, "invalid access token")
+				logger.Warn("token verification failed",
+					slog.Any("token", err),
+				)
+				response.Err(w, response.ErrUnauthorized, "UnAuthorized")
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(authc.WithPrincipal(r.Context(), principal)))
+
+			ctx := authc.WithPrincipal(r.Context(), principal)
+			ctx = bslog.CtxWithAttrs(ctx,
+				slog.Group("auth",
+					slog.String("subject", principal.Subject),
+					slog.String("method", principal.Method),
+					slog.String("class", string(principal.Class)),
+				),
+			)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		}
 	}
+}
+
+var knownSchemes = []string{"basic", "bearer", "digest", "dpop", "negotiate"}
+
+// authScheme never returns the credential itself, only a recognised scheme.
+func authScheme(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if h == "" {
+		return "none"
+	}
+	scheme, _, ok := strings.Cut(h, " ")
+	if !ok || !slices.Contains(knownSchemes, strings.ToLower(scheme)) {
+		return "unrecognised"
+	}
+	return scheme
 }
 
 func bearerToken(r *http.Request) string {

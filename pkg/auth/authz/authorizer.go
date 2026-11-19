@@ -16,12 +16,24 @@ type Input struct {
 // Decision is the engine's answer. Reason/Obligations are optional but let
 // policies explain denials or attach constraints without changing this contract.
 type Decision struct {
-	Allow       bool     `json:"allow"`
-	Reason      string   `json:"reason,omitempty"`
-	Obligations []string `json:"obligations,omitempty"`
+	Allow       bool                `json:"allow"`
+	Reason      string              `json:"reason,omitempty"`
+	Obligations []string            `json:"obligations,omitempty"`
+	Constraints map[string][]string `json:"constraints,omitempty"`
 }
 
 // Authorizer decides whether an Input is permitted.
 type Authorizer interface {
 	Authorize(ctx context.Context, in Input) (Decision, error)
+}
+
+type decisionKey struct{}
+
+func withDecision(ctx context.Context, d Decision) context.Context {
+	return context.WithValue(ctx, decisionKey{}, d)
+}
+
+func decisionFrom(ctx context.Context) (Decision, bool) {
+	d, ok := ctx.Value(decisionKey{}).(Decision)
+	return d, ok
 }
