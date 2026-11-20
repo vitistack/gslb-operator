@@ -22,7 +22,6 @@ func Init(deps routes.Dependencies) (*http.Server, error) {
 	}
 
 	router := router.New(
-		deps.AuthService.Enforcer(),
 		slog.Default(),
 		middleware.WithRequestLogging(slog.Default(), slog.LevelInfo, prefixes),
 	)
@@ -38,7 +37,7 @@ func Init(deps routes.Dependencies) (*http.Server, error) {
 	v1Routes.RegisterLatest(apiRouter, deps)
 	testRoutes.Register(apiRouter, deps)
 
-	api, err := router.Build()
+	api, err := router.Build(deps.AuthEnforcer)
 	if err != nil {
 		return nil, fmt.Errorf("API scheme build failed: %w", err)
 	}

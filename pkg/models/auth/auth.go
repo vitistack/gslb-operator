@@ -16,11 +16,13 @@ type LoginPayload struct {
 	ClientAssertion string `json:"clientAssertion"` // signed JWT (private-key-jwt)
 }
 
-type AssignRoles struct {
-	Roles []string `json:"roles"`
+type Grant struct {
+	Roles      *[]string            `json:"roles,omitempty"`
+	Attributes *map[string][]string `json:"attributes,omitempty"`
 }
 
-type AssignAttributes struct {
-	Key    string   `json:"key"`
-	Values []string `json:"values"`
+type Enrollment struct {
+	ID         string              `json:"id"`
+	Roles      []string            `json:"roles"`
+	Attributes map[string][]string `json:"attrs,omitempty"`
 }

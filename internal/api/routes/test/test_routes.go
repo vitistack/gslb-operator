@@ -26,7 +26,7 @@ func Register(parent *router.RouteGroup, deps routes.Dependencies) *router.Route
 }
 
 func Mount(g *router.RouteGroup, deps routes.Dependencies, handlers Handlers) {
-	v1.Mount(g, deps, handlers.Handlers)
+	v1.Mount(g, &deps, handlers.Handlers)
 
 	g.GET("/ping", func(w http.ResponseWriter, r *router.Request) {
 		w.Write([]byte("pong"))
@@ -34,6 +34,6 @@ func Mount(g *router.RouteGroup, deps routes.Dependencies, handlers Handlers) {
 }
 
 func handlers(deps routes.Dependencies) Handlers {
-	h := Handlers{Handlers: v1.DefaultHandlers(deps)}
+	h := Handlers{Handlers: v1.DefaultHandlers(&deps)}
 	return h
 }

@@ -17,17 +17,15 @@ import (
 type Router struct {
 	*RouteGroup
 	mux         *http.ServeMux
-	enforcer    *authz.Enforcer
 	logger      *slog.Logger
 	global      []middleware.MiddlewareFunc
 	objectTypes map[string]struct{}
 }
 
-func New(enforcer *authz.Enforcer, logger *slog.Logger, global ...middleware.MiddlewareFunc) *Router {
+func New(logger *slog.Logger, global ...middleware.MiddlewareFunc) *Router {
 	return &Router{
 		RouteGroup:  &RouteGroup{},
 		mux:         http.NewServeMux(),
-		enforcer:    enforcer,
 		logger:      logger,
 		global:      global,
 		objectTypes: map[string]struct{}{},
@@ -38,7 +36,7 @@ func New(enforcer *authz.Enforcer, logger *slog.Logger, global ...middleware.Mid
 // (from its path) and action (from its method), wires middleware +
 // enforcement, and returns the handler. It fails fast so a misconfigured route
 // can never reach serving.
-func (rt *Router) Build() (http.Handler, error) {
+func (rt *Router) Build(enforcer *authz.Enforcer) (http.Handler, error) {
 	logger := rt.logger
 	if logger == nil {
 		logger = slog.Default()
@@ -94,8 +92,8 @@ func (rt *Router) Build() (http.Handler, error) {
 					return fmt.Errorf("route %s: path yields no object type (mark Public to opt out)", key)
 				}
 				rt.objectTypes[objectType] = struct{}{}
-				if rt.enforcer != nil {
-					chain = append(chain, rt.enforcer.Enforce(objectType, action, full, logger))
+				if enforcer != nil {
+					chain = append(chain, enforcer.Enforce(objectType, action, full, logger))
 				}
 			}
 

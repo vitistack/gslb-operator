@@ -11,7 +11,8 @@ import (
 // Register wires v1's endpoints under parent as a version-tagged "/v1" group.
 func Register(parent *router.RouteGroup, deps routes.Dependencies) *router.RouteGroup {
 	g := parent.VersionGroup("/v1")
-	Mount(g, deps, DefaultHandlers(deps))
+	handlers := DefaultHandlers(&deps)
+	Mount(g, &deps, handlers)
 	bslog.Info("mounted API version", slog.String("version", "v1"), slog.String("prefix", g.Prefix()))
 	return g
 }
@@ -20,6 +21,7 @@ func Register(parent *router.RouteGroup, deps routes.Dependencies) *router.Route
 // "/vN" segment, for the unversioned "latest" alias (e.g. /api/*)
 func RegisterLatest(parent *router.RouteGroup, deps routes.Dependencies) *router.RouteGroup {
 	g := parent.Group("")
-	Mount(g, deps, DefaultHandlers(deps))
+	handlers := DefaultHandlers(&deps)
+	Mount(g, &deps, handlers)
 	return g
 }

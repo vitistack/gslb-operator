@@ -11,7 +11,6 @@ import (
 
 	"github.com/valkey-io/valkey-go"
 	"github.com/vitistack/gslb-operator/internal/api"
-	v1Auth "github.com/vitistack/gslb-operator/internal/api/handlers/v1/auth"
 	"github.com/vitistack/gslb-operator/internal/api/routes"
 	"github.com/vitistack/gslb-operator/internal/brokers"
 	"github.com/vitistack/gslb-operator/internal/config"
@@ -27,7 +26,6 @@ import (
 	"github.com/vitistack/gslb-operator/pkg/lua"
 	serviceModels "github.com/vitistack/gslb-operator/pkg/models/service"
 	valkeyStore "github.com/vitistack/gslb-operator/pkg/persistence/store/valkey"
-	"github.com/vitistack/gslb-operator/pkg/rest/middleware"
 )
 
 func main() {
@@ -101,19 +99,8 @@ func main() {
 
 	dnsHandler.Start(ctx, cancel)
 
-	authService, err := v1Auth.Init(authStore)
-	if err != nil {
-		bslog.Fatal("failed to init auth service", slog.String("reason", err.Error()))
-	}
-
-	// middleware chains
-	securedChain := middleware.Chain(
-		authService.Verify(),
-	)
-
 	deps := routes.Dependencies{
-		AuthService:   authService,
-		SecuredChain:  securedChain,
+		AuthStore:     authStore,
 		ServicesStore: servicesStore,
 		Manager:       mgr,
 		StatusRepo:    statusRepo,

@@ -2,76 +2,125 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/vitistack/gslb-operator/pkg/auth/authc"
-	"github.com/vitistack/gslb-operator/pkg/bslog"
+	"github.com/vitistack/gslb-operator/pkg/iter"
 	"github.com/vitistack/gslb-operator/pkg/models/auth"
+	"github.com/vitistack/gslb-operator/pkg/models/pagination"
 	"github.com/vitistack/gslb-operator/pkg/rest/response"
+	"github.com/vitistack/gslb-operator/pkg/rest/router"
 )
 
 type ClientRegistry interface {
-	SetAttribute(ctx context.Context, clientID, key string, values []string) error
+	Enrollments(ctx context.Context) ([]authc.Enrollment, error)
+	EnrollmentOf(ctx context.Context, id string) (authc.Enrollment, error)
+	SetAttributes(ctx context.Context, clientID string, attributes map[string][]string) error
 	Attributes(ctx context.Context, clientID string) (map[string][]string, error)
 	AssignRoles(ctx context.Context, clientID string, roles ...string) error
-	Identity(ctx context.Context, clientID string) (roles []string, keyVersion string, err error)
+	Identity(ctx context.Context, clientID string) (roles []string, keyVersion int, err error)
 }
 
 type AdminService struct {
 	registry ClientRegistry
 }
 
-func (a *AdminService) GrantAttribute(w http.ResponseWriter, r *http.Request) {
-	logger := bslog.With(slog.Any("request_id", r.Context().Value("id")))
-	clientID := r.PathValue("clientID")
-
-	if clientID == "" {
-		logger.Info("skipping attribute grant", slog.String("reason", "missing path-value clientID"))
-		response.Err(w, response.ErrInvalidInput, "invalid request input")
-		return
+func NewAdminService(registry ClientRegistry) *AdminService {
+	return &AdminService{
+		registry: registry,
 	}
-
-	grantRequest := auth.AssignAttributes{}
-	if err := json.NewDecoder(r.Body).Decode(&grantRequest); err != nil {
-		logger.Info("failed to decode request body", slog.String("reason", err.Error()))
-		response.Err(w, response.ErrInvalidInput, "invalid request body")
-		return
-	}
-
-	if grantRequest.Key == "" {
-		logger.Info("skipping attribute grant", slog.String("reason", "attribute key required"))
-		response.Err(w, response.ErrInvalidInput, "attribute key required")
-		return
-	}
-
-	if err := a.registry.SetAttribute(r.Context(), clientID, grantRequest.Key, grantRequest.Values); err != nil {
-		if errors.Is(err, authc.ErrClientNotFound) {
-			logger.Info("skipping grant", slog.String("clientID", clientID), slog.String("reason", err.Error()))
-			response.Err(w, response.ErrNotFound, "client not enrolled")
-			return
-		}
-
-		logger.Error("failed to grant attribute",
-			slog.String("clientID", clientID),
-			slog.String("key", grantRequest.Key),
-			slog.String("reason", err.Error()),
-		)
-		response.Err(w, response.ErrInternalError, "something unexpected occurred")
-		return
-	}
-
-	logger.Info(
-		"grant attribute request succeeded",
-		slog.String("clientID", clientID),
-		slog.String("key", grantRequest.Key),
-		slog.Any("values", grantRequest.Values),
-	)
-	response.JSON(w, http.StatusOK, map[string]any{"clientID": clientID, grantRequest.Key: grantRequest.Values})
 }
 
-func (a *AdminService) GrantRole(w http.ResponseWriter, r *http.Request) {
+func (a *AdminService) GetAPIEnrollments(w http.ResponseWriter, r *router.Request) {
+	queryParams, err := pagination.NewPaginationParams(r.URL.Query())
+	if err != nil {
+		r.Log().Error("failed to parse pagination parameters", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInvalidInput, "invalid input")
+		return
+	}
 
+	enrollments, err := a.registry.Enrollments(r.Context())
+	if err != nil {
+		r.Log().Error("failed to list API enrollments", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInternalError, "unexpected error")
+		return
+	}
+	skip := (queryParams.Page - 1) * queryParams.PageSize
+	result := iter.FromSlice(enrollments).
+		Skip(skip).
+		Map(
+			func(e authc.Enrollment) auth.Enrollment {
+				return auth.Enrollment{
+					ID:         "", // TODO!
+					Roles:      e.Roles,
+					Attributes: e.Attributes,
+				}
+			},
+		).
+		Take(queryParams.PageSize).
+		Collect()
+
+	resp := pagination.NewPaginationResult(r.Request, queryParams, len(enrollments), result)
+	response.JSON(w, http.StatusOK, resp)
+}
+
+func (a *AdminService) GetAPIEnrollment(w http.ResponseWriter, r *router.Request) {
+	id := r.Param("id")
+
+	enrollment, err := a.registry.EnrollmentOf(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, authc.ErrClientNotFound) {
+			response.Err(w, response.ErrNotFound, "not found")
+			return
+		}
+		r.Log().Error("failed to get enrollment", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInternalError, "unexpected error")
+		return
+	}
+
+	response.JSON(w, http.StatusOK,
+		auth.Enrollment{
+			ID:         id,
+			Roles:      enrollment.Roles,
+			Attributes: enrollment.Attributes,
+		},
+	)
+}
+
+func (a *AdminService) PutGrants(w http.ResponseWriter, r *router.Request) {
+	id := r.Param("id")
+
+	grants := auth.Grant{}
+	if err := json.UnmarshalRead(r.Body, &grants,
+		json.RejectUnknownMembers(true),
+		json.RejectUnknownMembers(true),
+	); err != nil {
+		r.Log().Error("failed to unmarshall request body", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInvalidInput, "invalid input")
+		return
+	}
+
+	err := a.registry.SetAttributes(r.Context(), id, *grants.Attributes)
+	if err != nil {
+		if errors.Is(err, authc.ErrClientNotFound) {
+			r.Log().Info("skipping grant request", slog.String("reason", err.Error()))
+			response.Err(w, response.ErrNotFound, "not found")
+			return
+		}
+		r.Log().Error("failed to grant attributes", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInternalError, "unexpected error")
+		return
+	}
+
+	err = a.registry.AssignRoles(r.Context(), id, *grants.Roles...)
+	if err != nil {
+		r.Log().Error("failed to grant roles", slog.String("reason", err.Error()))
+		response.Err(w, response.ErrInternalError, "unexpected error")
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
 }
