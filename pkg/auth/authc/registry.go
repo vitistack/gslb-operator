@@ -98,7 +98,9 @@ func (r *Registry) SetOwned(ctx context.Context, clientID, key string, values []
 	return r.save(ctx, clientID, rec)
 }
 
-func (r *Registry) SetAttributes(ctx context.Context, id string, attrs map[string][]string) error
+func (r *Registry) SetAttributes(ctx context.Context, id string, attrs map[string][]string) error {
+	return nil
+}
 
 // SetAttribute replaces one attribute key, preserving the others — the coarse
 // grant and the materialized set are independent keys, written by different callers.

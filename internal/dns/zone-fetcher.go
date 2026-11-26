@@ -111,45 +111,116 @@ func (f *ZoneFetcher) AXFRTransfer(ctx context.Context, zone chan []dns.RR, tran
 		return // context is cancelled
 	}
 
-	bslog.Debug("starting zone-transfer")
+	transferID := fmt.Sprintf("%s:%d", f.Zone, time.Now().Unix())
+	transferStart := time.Now()
+	envelopeCount := 0
+
+	bslog.Info("zone-transfer started",
+		slog.String("zone", f.Zone),
+		slog.String("server", f.Server),
+		slog.String("transfer_id", transferID),
+	)
+
 	msg := dns.NewMsg(f.Zone, dns.TypeAXFR)
 
 	envelopes, err := f.client.TransferIn(ctx, msg, f.Server, nil)
 	if err != nil {
-		transferErrors <- fmt.Errorf("could not transfer zone: %v from server: %v:%w", f.Zone, f.Server, err)
+		transferErr := fmt.Errorf("could not transfer zone: %v from server: %v:%w", f.Zone, f.Server, err)
+		bslog.Error("zone-transfer failed to initiate",
+			slog.String("zone", f.Zone),
+			slog.String("server", f.Server),
+			slog.String("transfer_id", transferID),
+			slog.String("error", err.Error()),
+		)
+		transferErrors <- transferErr
 		return
 	}
+
 	records := make([]dns.RR, 0)
 	for {
 		select {
 		case <-ctx.Done():
-			bslog.Debug("zone-transfer cancelled before sending records")
+			bslog.Warn("zone-transfer cancelled before sending records",
+				slog.String("zone", f.Zone),
+				slog.String("transfer_id", transferID),
+				slog.Int("envelopes_received", envelopeCount),
+				slog.Int("records_accumulated", len(records)),
+				slog.String("duration", time.Since(transferStart).String()),
+			)
 			return
 
 		case envelope, ok := <-envelopes:
 			if !ok { // transfer completed
+				duration := time.Since(transferStart)
+				bslog.Info("zone-transfer completed",
+					slog.String("zone", f.Zone),
+					slog.String("server", f.Server),
+					slog.String("transfer_id", transferID),
+					slog.Int("total_records", len(records)),
+					slog.Int("total_envelopes", envelopeCount),
+					slog.String("duration", duration.String()),
+					slog.Int64("duration_ms", duration.Milliseconds()),
+				)
+
 				// safe publish to consumer
 				select {
 				case <-ctx.Done():
-					bslog.Debug("zone-transfer cancelled before sending records")
+					bslog.Warn("zone-transfer cancelled before sending records to consumer",
+						slog.String("zone", f.Zone),
+						slog.String("transfer_id", transferID),
+					)
 					return
 				case zone <- records:
-					bslog.Debug("zone-transfer completed")
+					bslog.Debug("zone-transfer records delivered to consumer",
+						slog.String("transfer_id", transferID),
+						slog.Int("record_count", len(records)),
+					)
 					return
 				case <-time.After(f.timeout): // dont block forever
-					bslog.Warn("zone-transfer timed out", slog.String("after", f.timeout.String()), slog.String("reason", "consumer blocked"))
+					bslog.Warn("zone-transfer timed out while sending records to consumer",
+						slog.String("zone", f.Zone),
+						slog.String("transfer_id", transferID),
+						slog.String("timeout", f.timeout.String()),
+						slog.Int("records_pending", len(records)),
+					)
 					return
 				}
 			}
 
 			if envelope.Error != nil {
+				bslog.Error("zone-transfer envelope error",
+					slog.String("zone", f.Zone),
+					slog.String("transfer_id", transferID),
+					slog.String("error", envelope.Error.Error()),
+					slog.Int("envelopes_received", envelopeCount),
+					slog.Int("records_accumulated", len(records)),
+				)
 				transferErrors <- envelope.Error
 				return
 			}
+
+			envelopeCount++
 			records = append(records, envelope.Answer...)
 
+			if envelopeCount%2 == 0 {
+				bslog.Debug("zone-transfer progress",
+					slog.String("transfer_id", transferID),
+					slog.Int("envelopes_received", envelopeCount),
+					slog.Int("records_accumulated", len(records)),
+					slog.Int64("elapsed_ms", time.Since(transferStart).Milliseconds()),
+				)
+			}
+
 		case <-time.After(f.timeout):
-			bslog.Warn("zone-transfer timed out", slog.String("after", f.timeout.String()), slog.String("reason", "stopped receiving records, but connection did not terminate"))
+			bslog.Warn("zone-transfer timed out receiving records",
+				slog.String("zone", f.Zone),
+				slog.String("server", f.Server),
+				slog.String("transfer_id", transferID),
+				slog.String("timeout", f.timeout.String()),
+				slog.Int("envelopes_received", envelopeCount),
+				slog.Int("records_accumulated", len(records)),
+				slog.String("duration", time.Since(transferStart).String()),
+			)
 			return
 		}
 	}

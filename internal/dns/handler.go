@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -150,7 +151,7 @@ func (h *Handler) handleZoneUpdates(ctx context.Context, zone <-chan []dns.RR, p
 			}
 
 			for key := range h.knownServices { // remove any services that dont exist in the current batch
-				if _, exists := servicesInBatch[key]; !exists {
+				if _, exists := servicesInBatch[key]; !exists && !h.configRecordExist(key) {
 					bslog.Info("service no longer exists in GSLB - config zone", slog.String("action", "removing"), slog.String("serviceID", key))
 					err := h.svcManager.RemoveService(key)
 					if err != nil {
@@ -291,4 +292,32 @@ func (h *Handler) claimOwnership(ctx context.Context, records []dns.RR) {
 		knownClients[clientID] = struct{}{}
 	}
 	h.knownClients = knownClients
+}
+
+func (h *Handler) configRecordExist(name string) bool {
+	recordName := fmt.Sprintf("%s.%s", name, config.GSLB().Zone())
+	server := h.fetcher.Server
+
+	msg := dns.NewMsg(recordName, dns.TypeTXT)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, _, err := dns.NewClient().Exchange(ctx, msg, "udp", server)
+	if err != nil {
+		bslog.Warn("failed to query config record",
+			slog.String("record", recordName),
+			slog.String("server", server),
+			slog.String("error", err.Error()),
+		)
+		return false
+	}
+
+	bslog.Debug("queried config record",
+		slog.String("record", recordName),
+		slog.String("server", server),
+		slog.Int("answer_count", len(resp.Answer)),
+	)
+
+	return len(resp.Answer) > 0
 }
